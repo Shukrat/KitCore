@@ -240,8 +240,9 @@ C.BASE_CHAR = {
 --   slots         { slot, ... } (below)
 --   ring          { keys = { slotKey, ... }, from = deg, to = deg, radius = r }
 --                 slots spread evenly along this arc round the kit (degrees,
---                 0 = right, 90 = up); a slot that's hidden gives its room to
---                 the rest, and the others glide over
+--                 0 = right, 90 = up), evenly spaced as if all were there;
+--                 when some are hidden the rest close up round the middle of
+--                 the arc, gliding over
 --   edgeCols      { { slotKey, ... }, ... } columns on a screen edge, from the edge in
 --   edgeBeside    { beforeKey, afterKey } small slots that sit right beside the
 --                 kit button on a screen edge, along the edge (before = above
@@ -1672,9 +1673,14 @@ function Kit:LayoutRing()
         local btn = self.slots[key]
         if btn and not btn.hidden then avail[#avail + 1] = btn end
     end
+    -- The full ring's spacing, centred on the arc's middle: with fewer slots
+    -- the whole set (ends included) gathers round the top.
     local n, moved = #avail, false
+    local full = #ring.keys
+    local step = full > 1 and (ring.to - ring.from) / (full - 1) or 0
+    local mid = (ring.from + ring.to) / 2
     for i, btn in ipairs(avail) do
-        local a = n == 1 and (ring.from + ring.to) / 2 or ring.from + (ring.to - ring.from) * (i - 1) / (n - 1)
+        local a = mid + (i - (n + 1) / 2) * step
         local x = math.floor(ring.radius * math.cos(math.rad(a)) + 0.5)
         local y = math.floor(ring.radius * math.sin(math.rad(a)) + 0.5)
         if btn.homeX ~= x or btn.homeY ~= y then
