@@ -204,7 +204,7 @@ C.BASE_DEFAULTS = {
     shown = true,          -- false: the whole kit is hidden (settings or the shared minimap menu)
     locked = false,
     fadeIdle = false,
-    tooltipDefault = false, -- tooltips in the game's usual spot instead of beside the button
+    tooltipDefault = false, -- tooltips in the game's usual spot instead of at the mouse
     roundSlots = true,
     hideInCombat = false,
     minimapButton = true,
@@ -344,8 +344,10 @@ local function DefaultAnchor(owner)
     end
 end
 
+-- Tooltips (the kit button's and every slot's) follow the mouse, or sit
+-- where the game puts its own ("Default tooltip position").
 function Kit:TipOwner(owner)
-    if self.db.tooltipDefault then DefaultAnchor(owner) else GameTooltip:SetOwner(owner, "ANCHOR_RIGHT") end
+    if self.db.tooltipDefault then DefaultAnchor(owner) else GameTooltip:SetOwner(owner, "ANCHOR_CURSOR") end
 end
 
 function Kit:Hover(on)
@@ -696,7 +698,7 @@ function Kit:BuildKit()
     end)
     kit:SetScript("OnEnter", function(b)
         self:Hover(true)
-        DefaultAnchor(b)
+        self:TipOwner(b)
         GameTooltip:AddLine(self.name)
         if cfg.KitTooltip then cfg.KitTooltip(self) end
         GameTooltip:AddLine("Left-click: open / close", 1, 1, 1)
@@ -2137,7 +2139,7 @@ function Kit:BuildSettings()
         "Left-click for these settings, right-click to open the kit, drag to move it.", true,
         function() self:ApplyMinimap() end)
     S.Checkbox(db, "tooltipDefault", "Default tooltip position",
-        "Show slot tooltips where the game normally shows tooltips, instead of beside the slot.", false)
+        "Show tooltips where the game normally shows them (usually the bottom right of the screen) instead of at your mouse.", false)
     S.Checkbox(db, "roundSlots", "Round slots",
         "Round icons with a gold ring instead of square bag slots.", true, function() self:ApplyShapes() end)
     S.Checkbox(db, "fadeIdle", "Fade when idle",
