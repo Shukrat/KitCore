@@ -251,10 +251,13 @@ C.BASE_CHAR = {
 --                 when some are hidden the rest close up round the middle of
 --                 the arc, gliding over
 --   edgeCols      { { slotKey, ... }, ... } columns on a screen edge, from the edge in
---   EdgeExtraCol(kit, hypothetical)  one more column after those (non-slot
+--   EdgeExtraCol(kit, hypothetical, asOpen)  one more column after those (non-slot
 --                 frames, like timers): { { frame = f, size = n }, ... }
 --   extraFrames(kit)  those frames (any that can show), so they're scaled
 --                 and glide along when the kit moves
+--   PlaceExtras(kit, angle)  place those frames off an edge: angle is nil
+--                 normally, or the fan's direction while shrunk on the dock
+--   PinSettings(kit, S)  more "Always show" boxes in the Slots section
 --   menuOrder     { slotKey, ... } the order slots are listed in the settings
 --   minimapArt    full-size art for the minimap button (it has its own rim)
 --   glowColor     { r, g, b } the kit's glow colour
@@ -1620,7 +1623,7 @@ function Kit:EdgeCols(asOpen, hypothetical)
         end
         cols[#cols + 1] = col
     end
-    if self.cfg.EdgeExtraCol then cols[#cols + 1] = self.cfg.EdgeExtraCol(self, hypothetical) or {} end
+    if self.cfg.EdgeExtraCol then cols[#cols + 1] = self.cfg.EdgeExtraCol(self, hypothetical, asOpen) or {} end
     return cols
 end
 
@@ -1856,6 +1859,7 @@ function Kit:PlaceSlots()
             end
         end
         for _, btn in pairs(self.slots) do self:PlaceAt(btn, btn.homeX, btn.homeY) end
+        if self.cfg.PlaceExtras then self.cfg.PlaceExtras(self) end
         if from then
             for f, b in pairs(from) do self.Dock.Glide(f, b[1], b[2], b[3]) end
         end
@@ -1867,6 +1871,7 @@ function Kit:PlaceSlots()
     -- fan opens toward (away from the pin); the fan starts a little further
     -- out so nothing lands on them.
     local rimOut = self:PlaceRim(angle)
+    if self.cfg.PlaceExtras then self.cfg.PlaceExtras(self, angle) end
     local shown = {}
     for _, btn in pairs(self.slots) do
         if btn:IsShown() and not btn.closing and not btn.slot.rim then shown[#shown + 1] = btn end
@@ -1901,6 +1906,8 @@ function Kit:Reach()
     local ks = (self.kit:GetWidth() / 2) * s * (self.db.kitSize or 1) + 4
     local l, r, t, b = ks, ks, ks, ks
     for _, slot in ipairs(self.cfg.slots) do
+        local btn = self.slots[slot.key]
+        if not (btn and btn.hidden) then -- (a slot that isn't there doesn't need room)
         local x, y = self:Face(slot.pos[1], slot.pos[2])
         local h = slot.small and 15 or half
         local extra = slot.sub and 8 or 0
@@ -1910,6 +1917,7 @@ function Kit:Reach()
         r = math.max(r, (math.max(x, x + bx) + h + extra) * s)
         t = math.max(t, (math.max(y, y + by) + h) * s)
         b = math.max(b, (h + extra - math.min(y, y + by)) * s)
+        end
     end
     return l, r, t, b
 end
@@ -2413,6 +2421,7 @@ function Kit:BuildSettings()
                 false, refresh, "pin_" .. slot.key)
         end
     end
+    if cfg.PinSettings then cfg.PinSettings(self, S) end
     S.Button("Slot choices", "Reset", "Put every slot back to its starting choice, and every list back in its starting order.", function()
         if InCombatLockdown() then self:Print("That can only change out of combat.") return end
         wipe(cdb.picks)
