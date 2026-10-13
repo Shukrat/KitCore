@@ -737,7 +737,7 @@ end
 -- Out of combat a flyout closes when you click anywhere else (insecure, see
 -- GLOBAL_MOUSE_DOWN). In combat that isn't allowed, so it closes itself a
 -- moment after the mouse leaves it and its slot instead.
-local AUTOHIDE = 1.5
+local AUTOHIDE = 1
 local TOGGLE_PRE = [[
     local fly = self:GetFrameRef("kcfly")
     if not fly then return end
