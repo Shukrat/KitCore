@@ -714,11 +714,15 @@ local TOGGLE_PRE = [[
     end
 ]]
 
--- After a choice does its thing (on the release): a choice that's assigned
--- to its slot copies its action onto the slot, so a plain click on the slot
--- repeats it. The flyout stays open (unless the choice says to close it).
+-- A choice clicked (on the release): one that's assigned to its slot copies
+-- its action onto the slot, so a plain click on the slot repeats it. Runs
+-- before the choice's own action (which uses the choice's attributes, so
+-- the order doesn't matter). The game only runs an after-click snippet when
+-- the before-click one returns a message, so closing (for choices that ask
+-- for it) goes through that message.
+-- The flyout stays open otherwise.
 local ASSIGN_KEYS = { "type", "spell", "item", "macrotext", "shift-type1", "shift-macrotext1" }
-local CHOICE_POST = [[
+local CHOICE_PRE = [[
     if down then return end
     if self:GetAttribute("kcassign") then
         local slot = self:GetFrameRef("kcslot")
@@ -730,7 +734,10 @@ local CHOICE_POST = [[
         slot:SetAttribute("shift-macrotext1", self:GetAttribute("shift-macrotext1"))
         slot:SetAttribute("kcvalue", self:GetAttribute("kcvalue"))
     end
-    if self:GetAttribute("kcclose") then
+    if self:GetAttribute("kcclose") then return nil, "close" end
+]]
+local CHOICE_POST = [[
+    if message == "close" then
         for i = 1, NFLY do FLYOUTS[i]:Hide() end
     end
 ]]
@@ -1050,7 +1057,7 @@ function Kit:FlyButton(fly, i)
     if b then return b end
     b = self:MakeItemButton(fly:GetName() .. i, fly, true)
     b:SetFrameLevel(fly.panel:GetFrameLevel() + 2)
-    SecureHandlerWrapScript(b, "OnClick", self.header, "", CHOICE_POST)
+    SecureHandlerWrapScript(b, "OnClick", self.header, CHOICE_PRE, CHOICE_POST)
     SecureHandlerSetFrameRef(b, "kcslot", fly.slotBtn)
     b:SetAttribute("_kcpick", function(btn)
         if self:Debounced() and btn.choice then self:Pick(fly.slotBtn, btn.choice.pick) end
