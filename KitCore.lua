@@ -239,6 +239,9 @@ C.BASE_CHAR = {
 --   AfterBuild(kit)  once the kit and its slots exist (add extra buttons)
 --   slots         { slot, ... } (below)
 --   edgeCols      { { slotKey, ... }, ... } columns on a screen edge, from the edge in
+--   edgeBeside    { beforeKey, afterKey } small slots that sit right beside the
+--                 kit button on a screen edge, along the edge (before = above
+--                 or left of it, after = below or right); leave them out of edgeCols
 --   divider       { y, width, texture, below = { slotKey, ... }, edgeAfter = n }
 --                 a line across the kit at y while it's open and any of the
 --                 "below" slots show; on an edge, between column n and n + 1
@@ -1584,10 +1587,26 @@ function Kit:EdgeDivAfter(asOpen)
     return asOpen and d and d.edgeAfter or nil
 end
 
+-- The edgeBeside slots: either side of the kit button, along the edge.
+local BESIDE_GAP = 6
+function Kit:BesideSpots(side)
+    local d = self:KitHalfUnits() + BESIDE_GAP + 11
+    if side == "left" or side == "right" then return { 0, d }, { 0, -d } end
+    return { -d, 0 }, { d, 0 }
+end
+
 function Kit:PlaceEdge()
     local cols = self:EdgeCols(self.open, false)
     local pos, div = self.Dock.EdgeArrange(self.edgeSide, self:KitHalfUnits(), cols, self:EdgeDivAfter(self.open))
     for f, p in pairs(pos) do self:PlaceAt(f, p[1], p[2]) end
+    local beside = self.cfg.edgeBeside
+    if beside then
+        local spots = { self:BesideSpots(self.edgeSide) }
+        for i, key in ipairs(beside) do
+            local btn = self.slots[key]
+            if btn and spots[i] then self:PlaceAt(btn, spots[i][1], spots[i][2]) end
+        end
+    end
     for _, btn in pairs(self.slots) do self:PlaceSub(btn) end
     local dv = self.divider
     if dv then
@@ -1621,6 +1640,15 @@ end
 function Kit:EdgeExtent(side, asOpen)
     local cols = self:EdgeCols(asOpen, true)
     local _, _, ext = self.Dock.EdgeArrange(side, self:KitHalfUnits(), cols, self:EdgeDivAfter(asOpen))
+    if self.cfg.edgeBeside then
+        -- Room for the slots beside the button, if any would show.
+        for _, key in ipairs(self.cfg.edgeBeside) do
+            local btn = self.slots[key]
+            if btn and ((asOpen and not btn.hidden) or btn.wouldShow) then
+                ext = math.max(ext, 2 * (self:KitHalfUnits() + BESIDE_GAP + 22))
+            end
+        end
+    end
     local any = next(self.slots) and select(2, next(self.slots))
     local k = any and (any:GetEffectiveScale() / UIParent:GetEffectiveScale()) or self.db.scale
     return ext * k
