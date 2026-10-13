@@ -233,6 +233,9 @@ C.BASE_CHAR = {
 --   edgesOnly     never joins the pin, only the screen edges
 --   kitSize, slotSize  (60, 37)
 --   roundKit      the kit button is a round icon with a ring
+--   kitRing, kitIconInset  art name for that ring ("kit_ring": kit_ring_32..256,
+--                 covering the whole button) and how far in the icon sits
+--   AfterBuild(kit)  once the kit and its slots exist (add extra buttons)
 --   slots         { slot, ... } (below)
 --   edgeCols      { { slotKey, ... }, ... } columns on a screen edge, from the edge in
 --   divider       { y, width, texture, below = { slotKey, ... }, edgeAfter = n }
@@ -598,12 +601,14 @@ function Kit:BuildKit()
     kit.icon = kit:CreateTexture(nil, "ARTWORK")
     kit.icon:SetAllPoints()
     if cfg.roundKit then
-        -- A round icon with a gold ring, like the slots. The ring sits 3 in
-        -- from the button's edge, so it's the same size on screen as the
-        -- other kits' art (their gold rim is about 54 across in a 60 button).
+        -- A round icon in a ring. With cfg.kitRing (art covering the whole
+        -- button, like the other kits' rim) the icon sits inside it;
+        -- otherwise a slot's gold ring, 3 in from the edge, so it's the same
+        -- size on screen as the other kits' art.
+        local inset = cfg.kitRing and (cfg.kitIconInset or 7) or 5
         kit.icon:ClearAllPoints()
-        kit.icon:SetPoint("TOPLEFT", 5, -5)
-        kit.icon:SetPoint("BOTTOMRIGHT", -5, 5)
+        kit.icon:SetPoint("TOPLEFT", inset, -inset)
+        kit.icon:SetPoint("BOTTOMRIGHT", -inset, inset)
         local mask = kit:CreateMaskTexture()
         mask:SetTexture(self.media .. "circle_mask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
         mask:SetAllPoints(kit.icon)
@@ -613,8 +618,12 @@ function Kit:BuildKit()
         kit.shade:SetColorTexture(0, 0, 0, 0.35)
         kit.shade:AddMaskTexture(mask)
         kit.ring = kit:CreateTexture(nil, "OVERLAY", nil, 6)
-        kit.ring:SetPoint("TOPLEFT", 3, -3)
-        kit.ring:SetPoint("BOTTOMRIGHT", -3, 3)
+        if cfg.kitRing then
+            kit.ring:SetAllPoints()
+        else
+            kit.ring:SetPoint("TOPLEFT", 3, -3)
+            kit.ring:SetPoint("BOTTOMRIGHT", -3, 3)
+        end
         kit.text = kit:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
         kit.text:SetPoint("CENTER", 0, 1)
         kit.text:SetTextColor(1, 1, 1)
@@ -700,8 +709,9 @@ end
 function Kit:SetKitArt()
     local kit = self.kit
     if kit.ring then
-        local px = ArtSize(ScreenPx(kit, kit:GetWidth() - 6), ART_SIZES)
-        kit.ring:SetTexture(self.media .. "ring_slot_" .. px, nil, nil, "LINEAR")
+        local ring = self.cfg.kitRing
+        local px = ArtSize(ScreenPx(kit, kit:GetWidth() - (ring and 0 or 6)), ART_SIZES)
+        kit.ring:SetTexture(self.media .. (ring or "ring_slot") .. "_" .. px, nil, nil, "LINEAR")
     end
     if self.cfg.KitArt then self.cfg.KitArt(self) end
 end
@@ -2088,6 +2098,21 @@ function Kit:BuildSettings()
         registered[#registered + 1] = { setting = s, tbl = tbl, key = key }
         return s
     end
+    -- list: { { value, label }, ... } (string values)
+    function S.Dropdown(tbl, key, name, tooltip, default, list, fn)
+        if not (Settings.CreateDropdown and Settings.CreateControlTextContainer) then return end
+        local VAR_STR = (Settings.VarType and Settings.VarType.String) or "string"
+        local s = Settings.RegisterAddOnSetting(category, P .. "_" .. key, key, tbl, VAR_STR, name, default)
+        local function Options()
+            local c = Settings.CreateControlTextContainer()
+            for _, o in ipairs(list) do c:Add(o[1], o[2]) end
+            return c:GetData()
+        end
+        Settings.CreateDropdown(category, s, Options, tooltip)
+        OnChange(s, fn)
+        registered[#registered + 1] = { setting = s, tbl = tbl, key = key }
+        return s
+    end
     function S.Button(name, text, tooltip, fn)
         if CreateSettingsButtonInitializer then
             layout:AddInitializer(CreateSettingsButtonInitializer(name, text, fn, tooltip, true))
@@ -2318,6 +2343,7 @@ function Kit:Build()
     self:RegisterDock()
     self:ApplyCombatHide()
     self.kit:SetShown(self.db.shown ~= false)
+    if cfg.AfterBuild then cfg.AfterBuild(self) end
     self:SetupSettings()
     self:SetupMinimap()
 
