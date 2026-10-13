@@ -1152,11 +1152,14 @@ function Kit:FlyButton(fly, i)
             GameTooltip:Hide()
             btn:SetFrameLevel(fly.panel:GetFrameLevel() + 6)
             btn.dragging = true
+            self:DragBegin(fly, btn)
             btn:StartMoving()
+            btn:SetScript("OnUpdate", function(f, dt) self:DragTick(fly, f, dt) end)
         end)
         b:SetScript("OnDragStop", function(btn)
             if not btn.dragging then return end
             btn.dragging = nil
+            btn:SetScript("OnUpdate", nil)
             btn:StopMovingOrSizing()
             Try(btn.SetUserPlaced, btn, false) -- (the game mustn't remember where it was dropped)
             btn:SetFrameLevel(fly.panel:GetFrameLevel() + 2)
@@ -1167,35 +1170,83 @@ function Kit:FlyButton(fly, i)
     return b
 end
 
--- A choice dragged and let go: it takes the place of the choice nearest
--- where it was dropped (if it was dropped over the flyout), and the new
--- order is saved for that slot.
+-- Dragging a choice along its flyout: the others slide aside, live, to show
+-- where everything will end up; letting go there saves the new order.
+-- Dropped away from the flyout, nothing changes.
+
+-- Where a frame's centre is, in the choices' units from the kit's centre.
+function Kit:FromKit(f)
+    local x, y = f:GetCenter()
+    local kx, ky = self.kit:GetCenter()
+    if not (x and kx) then return nil end
+    local k = self.kit:GetEffectiveScale() / f:GetEffectiveScale()
+    return x - kx * k, y - ky * k
+end
+
+function Kit:DragBegin(fly, dragged)
+    fly.dragFrom, fly.dragTo = nil, nil
+    for i = 1, fly.count or 0 do
+        local b = fly.buttons[i]
+        if b == dragged then fly.dragFrom = i end
+        local p = fly.pts and fly.pts[i]
+        if p then b.curX, b.curY = p[1], p[2] end
+    end
+    fly.dragTo = fly.dragFrom
+end
+
+-- Which spot the dragged choice is over: the nearest one, if it's close
+-- enough; else its own.
+function Kit:DragTarget(fly, dragged)
+    local x, y = self:FromKit(dragged)
+    if not x or not fly.pts then return fly.dragFrom end
+    local to, best
+    for i = 1, fly.count or 0 do
+        local p = fly.pts[i]
+        local d = (p[1] - x) ^ 2 + (p[2] - y) ^ 2
+        if not best or d < best then best, to = d, i end
+    end
+    local reach = self.BTN * 1.2
+    if best and best <= reach * reach then return to end
+    return fly.dragFrom
+end
+
+function Kit:DragTick(fly, dragged, dt)
+    if InCombatLockdown() or not fly.dragFrom then return end
+    local from, to = fly.dragFrom, self:DragTarget(fly, dragged)
+    fly.dragTo = to
+    local k = math.min(1, (dt or 0) * 14)
+    for i = 1, fly.count or 0 do
+        local b = fly.buttons[i]
+        if b ~= dragged then
+            -- Its place once the dragged one moves from "from" to "to".
+            local j = i
+            if from < to and i > from and i <= to then j = i - 1
+            elseif from > to and i >= to and i < from then j = i + 1 end
+            local p = fly.pts[j]
+            b.curX = (b.curX or p[1]) + (p[1] - (b.curX or p[1])) * k
+            b.curY = (b.curY or p[2]) + (p[2] - (b.curY or p[2])) * k
+            b:ClearAllPoints()
+            b:SetPoint("CENTER", self.kit, "CENTER", b.curX, b.curY)
+        end
+    end
+end
+
 function Kit:DropChoice(fly, dragged)
     if InCombatLockdown() then return end
     local slot = fly.slotBtn.slot
-    local x, y = dragged:GetCenter()
-    local from, to, best
-    local vals = {}
-    for i = 1, fly.count or 0 do
-        local b = fly.buttons[i]
-        vals[i] = b.choice and b.choice.value
-        if b == dragged then
-            from = i
-        elseif x then
-            local bx, by = b:GetCenter()
-            if bx then
-                local d = (bx - x) ^ 2 + (by - y) ^ 2
-                if not best or d < best then best, to = d, i end
-            end
+    local from, to = fly.dragFrom, self:DragTarget(fly, dragged)
+    fly.dragFrom, fly.dragTo = nil, nil
+    if from and to and from ~= to then
+        local vals = {}
+        for i = 1, fly.count or 0 do
+            local b = fly.buttons[i]
+            vals[i] = b.choice and b.choice.value
         end
-    end
-    local reach = self.BTN * 1.2
-    if from and to and best and best <= reach * reach then
         local v = table.remove(vals, from)
         table.insert(vals, to, v)
         self.cdb.order[slot.key] = vals
     end
-    self:LayoutFlyout(fly.slotBtn) -- back in line either way
+    self:LayoutFlyout(fly.slotBtn) -- every choice back in line, in its (new) place
     if fly:IsShown() then self:PaintFlyout(fly) end
 end
 
@@ -1340,6 +1391,7 @@ function Kit:LayoutFlyout(btn)
         fly.buttons[i]:Hide()
     end
     fly.count = #choices
+    fly.pts = pts
     fly:SetScale(self.db.scale)
 
     if #choices > 0 then
