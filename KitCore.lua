@@ -209,6 +209,7 @@ C.BASE_DEFAULTS = {
     hideInCombat = false,
     minimapButton = true,
     minimapAngle = 200,
+    flyoutHide = 0.5,      -- seconds a drawer stays open in combat after the mouse leaves it
 }
 
 C.BASE_CHAR = {
@@ -737,7 +738,9 @@ end
 -- Out of combat a flyout closes when you click anywhere else (insecure, see
 -- GLOBAL_MOUSE_DOWN). In combat that isn't allowed, so it closes itself a
 -- moment after the mouse leaves it and its slot instead.
-local AUTOHIDE = 1
+-- In combat a flyout closes itself this long after the mouse leaves it: the
+-- kit's "flyoutHide" setting, handed to the secure code as the header's
+-- "kchide" attribute when combat starts.
 local TOGGLE_PRE = [[
     local fly = self:GetFrameRef("kcfly")
     if not fly then return end
@@ -749,7 +752,7 @@ local TOGGLE_PRE = [[
             if show then
                 fly:Show()
                 if owner:GetAttribute("kccombat") then
-                    fly:RegisterAutoHide(]] .. AUTOHIDE .. [[)
+                    fly:RegisterAutoHide(owner:GetAttribute("kchide") or 0.5)
                     fly:AddToAutoHide(self)
                 end
             end
@@ -2141,6 +2144,9 @@ function Kit:BuildSettings()
         "The kit and pinned slots fade until you mouse over them.", false, refresh)
     S.Checkbox(db, "hideInCombat", "Hide in combat", "Hide the kit while you're in combat.", false,
         function() self:ApplyCombatHide() end)
+    S.Slider(db, "flyoutHide", "Drawer close delay in combat",
+        "In combat a drawer can't close when you click elsewhere, so it closes by itself this long after the mouse leaves it and its slot.",
+        0.5, 0.2, 2, 0.1, function(v) return ("%.1fs"):format(v) end)
 
     if cfg.Settings then cfg.Settings(self, S) end
 
@@ -2310,6 +2316,9 @@ function Kit:OnEvent(event, ...)
         -- here on, and any open already, close themselves once the mouse
         -- leaves them, since a click elsewhere can't close them in combat.
         if not InCombatLockdown() then
+            local delay = tonumber(self.db.flyoutHide) or 0.5
+            delay = math.min(2, math.max(0.2, delay))
+            self.header:SetAttribute("kchide", delay)
             self.header:SetAttribute("kccombat", true)
             pcall(self.header.Execute, self.header, ([[
                 for i = 1, NFLY do
@@ -2319,7 +2328,7 @@ function Kit:OnEvent(event, ...)
                         f:AddToAutoHide(FLYSLOTS[i])
                     end
                 end
-            ]]):format(AUTOHIDE))
+            ]]):format(delay))
         end
     elseif event == "PLAYER_REGEN_ENABLED" then
         self.header:SetAttribute("kccombat", false)
