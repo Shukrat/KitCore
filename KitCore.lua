@@ -23,7 +23,7 @@ local addonName, ns = ...
 -- is worked out out of combat, whenever the kit refreshes.
 ---------------------------------------------------------------------------
 
-local VERSION = 1
+local VERSION = 2
 local C = _G.KitCore
 if C and (C.version or 0) >= VERSION then
     ns.Core = C
@@ -290,6 +290,8 @@ C.BASE_CHAR = {
 --   OnDrop(kit, btn)   something was dropped on the slot (cursor item)
 --   Setup(kit, btn)    once, after the slot is made (extra scripts)
 --   noPin         can't be pinned
+--   tier          shrunk on the dock, lower tiers fan out nearest the button
+--                 (before the pinned-first, slot-order rule)
 --   binding       key binding label (default "Use <label>")
 --   flyout        "right": right-click opens its flyout; "left": any click does
 --   Choices(kit, btn)  the flyout's choices (out of combat; see LayoutFlyout)
@@ -1866,7 +1868,8 @@ function Kit:PlaceSlots()
         return
     end
     -- Shrunk on the dock: whatever's out fans round the button in its slice,
-    -- in rings of 4, pinned slots first, then the rest, each in slot order.
+    -- in rings of 4, by tier (if the kit gives them), then pinned slots
+    -- first, then the rest, each in slot order.
     -- Small rim slots keep a place on the button's rim, on the side the
     -- fan opens toward (away from the pin); the fan starts a little further
     -- out so nothing lands on them.
@@ -1877,6 +1880,8 @@ function Kit:PlaceSlots()
         if btn:IsShown() and not btn.closing and not btn.slot.rim then shown[#shown + 1] = btn end
     end
     table.sort(shown, function(a, b)
+        local ta, tb = a.slot.tier or 0, b.slot.tier or 0 -- (slot.tier: nearest ring first)
+        if ta ~= tb then return ta < tb end
         local pa, pb = self.cdb.pinned[a.slot.key] and 1 or 0, self.cdb.pinned[b.slot.key] and 1 or 0
         if pa ~= pb then return pa > pb end
         return (a.order or 0) < (b.order or 0)
