@@ -598,10 +598,12 @@ function Kit:BuildKit()
     kit.icon = kit:CreateTexture(nil, "ARTWORK")
     kit.icon:SetAllPoints()
     if cfg.roundKit then
-        -- A round icon with a gold ring, like the slots.
+        -- A round icon with a gold ring, like the slots. The ring sits 3 in
+        -- from the button's edge, so it's the same size on screen as the
+        -- other kits' art (their gold rim is about 54 across in a 60 button).
         kit.icon:ClearAllPoints()
-        kit.icon:SetPoint("TOPLEFT", 3, -3)
-        kit.icon:SetPoint("BOTTOMRIGHT", -3, 3)
+        kit.icon:SetPoint("TOPLEFT", 5, -5)
+        kit.icon:SetPoint("BOTTOMRIGHT", -5, 5)
         local mask = kit:CreateMaskTexture()
         mask:SetTexture(self.media .. "circle_mask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
         mask:SetAllPoints(kit.icon)
@@ -611,8 +613,8 @@ function Kit:BuildKit()
         kit.shade:SetColorTexture(0, 0, 0, 0.35)
         kit.shade:AddMaskTexture(mask)
         kit.ring = kit:CreateTexture(nil, "OVERLAY", nil, 6)
-        kit.ring:SetPoint("TOPLEFT", -1, 1)
-        kit.ring:SetPoint("BOTTOMRIGHT", 1, -1)
+        kit.ring:SetPoint("TOPLEFT", 3, -3)
+        kit.ring:SetPoint("BOTTOMRIGHT", -3, 3)
         kit.text = kit:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
         kit.text:SetPoint("CENTER", 0, 1)
         kit.text:SetTextColor(1, 1, 1)
@@ -697,7 +699,10 @@ end
 
 function Kit:SetKitArt()
     local kit = self.kit
-    if kit.ring then kit.ring:SetTexture(self:RingArt(kit), nil, nil, "LINEAR") end
+    if kit.ring then
+        local px = ArtSize(ScreenPx(kit, kit:GetWidth() - 6), ART_SIZES)
+        kit.ring:SetTexture(self.media .. "ring_slot_" .. px, nil, nil, "LINEAR")
+    end
     if self.cfg.KitArt then self.cfg.KitArt(self) end
 end
 
