@@ -234,6 +234,9 @@ C.BASE_CHAR = {
 --   roundKit      the kit button is a round icon with a ring
 --   slots         { slot, ... } (below)
 --   edgeCols      { { slotKey, ... }, ... } columns on a screen edge, from the edge in
+--   divider       { y, width, texture, below = { slotKey, ... }, edgeAfter = n }
+--                 a line across the kit at y while it's open and any of the
+--                 "below" slots show; on an edge, between column n and n + 1
 --   slash         { "/wk", "/warlockkit" }
 --   bindingHeader "WARLOCKKIT" (as in Bindings.xml)
 --   KitArt(kit), KitTooltip(kit), BeforeRefresh(kit), Tick(kit)
@@ -617,6 +620,27 @@ function Kit:BuildKit()
     kit.hl:SetAlpha(0.35)
     self.kit = kit
     self:AddGlow(kit, "glow_ring", 1.35)
+
+    -- A divider line between the slots round the kit and a row below it.
+    local d = cfg.divider
+    if d then
+        local dv = CreateFrame("Frame", P .. "Divider", holder)
+        dv:SetSize(d.width or 200, 16)
+        dv:SetFrameLevel(11)
+        dv.tex = dv:CreateTexture(nil, "ARTWORK")
+        dv.tex:SetPoint("CENTER")
+        dv.tex:SetSize(d.width or 200, 16)
+        dv.tex:SetTexture(self.media .. (d.texture or "divider"), nil, nil, "LINEAR")
+        dv:SetPoint("CENTER", kit, "CENTER", 0, d.y)
+        dv:Hide()
+        local ag = dv:CreateAnimationGroup()
+        local a = ag:CreateAnimation("Alpha")
+        a:SetFromAlpha(0)
+        a:SetToAlpha(1)
+        a:SetDuration(0.2)
+        dv.fadeIn = ag
+        self.divider = dv
+    end
 
     kit:SetScript("OnDragStart", function(b)
         if self.db.locked or InCombatLockdown() then return end
@@ -1406,17 +1430,49 @@ function Kit:PlaceAt(f, x, y)
     end
 end
 
+-- The divider goes between two edge columns while the kit is open.
+function Kit:EdgeDivAfter(asOpen)
+    local d = self.cfg.divider
+    return asOpen and d and d.edgeAfter or nil
+end
+
 function Kit:PlaceEdge()
     local cols = self:EdgeCols(self.open, false)
-    local pos = self.Dock.EdgeArrange(self.edgeSide, self:KitHalfUnits(), cols, nil)
+    local pos, div = self.Dock.EdgeArrange(self.edgeSide, self:KitHalfUnits(), cols, self:EdgeDivAfter(self.open))
     for f, p in pairs(pos) do self:PlaceAt(f, p[1], p[2]) end
     for _, btn in pairs(self.slots) do self:PlaceSub(btn) end
+    local dv = self.divider
+    if dv then
+        dv:ClearAllPoints()
+        if div then
+            dv:SetPoint("CENTER", self.kit, "CENTER", div[1], div[2])
+            dv:SetSize(div[4] and 16 or div[3], div[4] and div[3] or 16)
+            dv.tex:SetSize(div[3], 16)
+            dv.tex:SetRotation(div[4] and math.pi / 2 or 0)
+        else
+            dv:SetPoint("CENTER", self.kit, "CENTER", 0, self.cfg.divider.y)
+        end
+        dv.edged = true
+    end
+end
+
+-- Back from an edge: the divider in its usual spot across the kit.
+function Kit:UnEdgeDivider()
+    local dv = self.divider
+    if not dv or not dv.edged then return end
+    dv.edged = nil
+    local d = self.cfg.divider
+    dv:ClearAllPoints()
+    dv:SetPoint("CENTER", self.kit, "CENTER", 0, d.y)
+    dv:SetSize(d.width or 200, 16)
+    dv.tex:SetSize(d.width or 200, 16)
+    dv.tex:SetRotation(0)
 end
 
 -- How much room along the edge the kit takes (UI units).
 function Kit:EdgeExtent(side, asOpen)
     local cols = self:EdgeCols(asOpen, true)
-    local _, _, ext = self.Dock.EdgeArrange(side, self:KitHalfUnits(), cols, nil)
+    local _, _, ext = self.Dock.EdgeArrange(side, self:KitHalfUnits(), cols, self:EdgeDivAfter(asOpen))
     local any = next(self.slots) and select(2, next(self.slots))
     local k = any and (any:GetEffectiveScale() / UIParent:GetEffectiveScale()) or self.db.scale
     return ext * k
@@ -1427,6 +1483,7 @@ end
 -- round the outside of the button in its own slice. Out of combat only.
 function Kit:PlaceSlots()
     if self.edgeSide and self.Dock then return self:PlaceEdge() end
+    self:UnEdgeDivider()
     for _, btn in pairs(self.slots) do self:PlaceSub(btn) end
     local angle, span = self.compactAngle, self.compactSpan
     if not angle then
@@ -1543,6 +1600,24 @@ function Kit:Refresh(animate)
             if btn.hidden then btn:Hide() else PlayClose(btn, i, total) end
         end
         btn.wouldShow = available and (cdb.pinned[slot.key] or pop) and true or false
+    end
+
+    -- The divider shows while the kit is open and its row below is out.
+    local dv = self.divider
+    if dv then
+        local rowOut = false
+        if self.open then
+            for _, key in ipairs(cfg.divider.below or {}) do
+                local b = self.slots[key]
+                if b and b:IsShown() and not b.closing then rowOut = true end
+            end
+        end
+        if rowOut and not dv:IsShown() then
+            dv:Show()
+            dv.fadeIn:Play()
+        elseif not rowOut then
+            dv:Hide()
+        end
     end
 
     self:PlaceSlots()
@@ -1705,6 +1780,7 @@ function Kit:ApplyPosition()
     end
     for _, btn in pairs(self.slots) do btn:SetScale(db.scale) end
     for _, fly in pairs(self.flyouts) do fly:SetScale(db.scale) end
+    if self.divider then self.divider:SetScale(db.scale) end
     self:SetKitArt()
     self:ApplyShapes()
 end
