@@ -671,6 +671,7 @@ function Kit:BuildKit()
     kit:SetScript("OnDragStart", function(b)
         if self.db.locked or InCombatLockdown() then return end
         self:CloseFlyouts()
+        GameTooltip:Hide() -- it would follow the mouse along
         if self.Dock then self.Dock.DragStart(self.key) else
             b.moving = true
             b:StartMoving()
