@@ -249,8 +249,11 @@ C.BASE_CHAR = {
 --   small         a small round button (22) instead of a full slot
 --   noPin         can't be pinned
 --   binding       key binding label (default "Use <label>")
---   flyout        "left": a click opens its flyout; "right": right-click does
+--   flyout        "right": right-click opens its flyout; "left": any click does
 --   Choices(kit, btn)  the flyout's choices (out of combat; see LayoutFlyout)
+--   assign        a click on the slot does its assigned choice: the last one
+--                 you clicked in its flyout (saved), else default
+--   default       the assigned choice's value until you pick one (or a function)
 --   Update(kit, btn)   out of combat: set its attributes; btn.hidden hides it
 --   Paint(kit, btn)    cosmetic, any time: icon, count, glow, cooldown
 --   Tooltip(kit, btn)  fill GameTooltip (already owned)
@@ -572,7 +575,7 @@ function Kit:BuildKit()
 
     -- Runs the flyouts' open and close, in combat too.
     local header = CreateFrame("Frame", P .. "Secure", holder, "SecureHandlerBaseTemplate")
-    header:Execute([[ FLYOUTS = newtable() NFLY = 0 ]])
+    header:Execute([[ FLYOUTS = newtable() FLYSLOTS = newtable() NFLY = 0 ]])
     self.header = header
 
     local kit = CreateFrame("Button", P .. "Button", holder)
@@ -683,10 +686,14 @@ end
 -- Slots
 ---------------------------------------------------------------------------
 
--- Opening or closing a flyout from a slot, in combat too. "left": any
--- click but shift-right; "right": right-click (shift-right-click pins).
+-- Opening or closing a flyout from a slot, in combat too. "right":
+-- right-click (shift-right-click pins); "left": any click but shift-right.
 -- Acts on the release only and swallows the press, so the slot's own action
 -- doesn't run on a click that's meant for the flyout.
+-- Out of combat a flyout closes when you click anywhere else (insecure, see
+-- GLOBAL_MOUSE_DOWN). In combat that isn't allowed, so it closes itself a
+-- moment after the mouse leaves it and its slot instead.
+local AUTOHIDE = 1.5
 local TOGGLE_PRE = [[
     local fly = self:GetFrameRef("kcfly")
     if not fly then return end
@@ -695,15 +702,35 @@ local TOGGLE_PRE = [[
         if not down then
             local show = not fly:IsShown()
             for i = 1, NFLY do FLYOUTS[i]:Hide() end
-            if show then fly:Show() end
+            if show then
+                fly:Show()
+                if owner:GetAttribute("kccombat") then
+                    fly:RegisterAutoHide(]] .. AUTOHIDE .. [[)
+                    fly:AddToAutoHide(self)
+                end
+            end
         end
         return false
     end
 ]]
 
--- After a choice does its thing (on the release), every flyout closes.
+-- After a choice does its thing (on the release): a choice that's assigned
+-- to its slot copies its action onto the slot, so a plain click on the slot
+-- repeats it. The flyout stays open (unless the choice says to close it).
+local ASSIGN_KEYS = { "type", "spell", "item", "macrotext", "shift-type1", "shift-macrotext1" }
 local CHOICE_POST = [[
-    if not down then
+    if down then return end
+    if self:GetAttribute("kcassign") then
+        local slot = self:GetFrameRef("kcslot")
+        slot:SetAttribute("type", self:GetAttribute("type"))
+        slot:SetAttribute("spell", self:GetAttribute("spell"))
+        slot:SetAttribute("item", self:GetAttribute("item"))
+        slot:SetAttribute("macrotext", self:GetAttribute("macrotext"))
+        slot:SetAttribute("shift-type1", self:GetAttribute("shift-type1"))
+        slot:SetAttribute("shift-macrotext1", self:GetAttribute("shift-macrotext1"))
+        slot:SetAttribute("kcvalue", self:GetAttribute("kcvalue"))
+    end
+    if self:GetAttribute("kcclose") then
         for i = 1, NFLY do FLYOUTS[i]:Hide() end
     end
 ]]
@@ -761,6 +788,15 @@ function Kit:CreateSlot(slot)
     end)
     btn:SetScript("OnLeave", function() self:Hover(false) end)
     btn:HookScript("OnAttributeChanged", function(b, name, value)
+        -- A choice from the flyout became this slot's (maybe in combat).
+        if name == "kcvalue" and slot.assign and not b.updating and value ~= nil then
+            self.cdb.picks[slot.key] = value
+            for _, fb in ipairs(b.fly and b.fly.buttons or {}) do
+                if fb.choice and fb.choice.value == value then b.assigned = fb.choice end
+            end
+            self:PaintSlot(b)
+            if b.fly and b.fly:IsShown() then self:PaintFlyout(b.fly) end
+        end
         if slot.OnAttribute then slot.OnAttribute(self, b, name, value) end
     end)
     if slot.Setup then slot.Setup(self, btn) end
@@ -932,8 +968,15 @@ end
 --   set = value        sets the slot's "kcset" attribute (in combat too);
 --                      the slot's OnAttribute sees it
 --   setAttr = { name, value }   sets any attribute on the slot, in combat too
---   selected, dim, count   (values or functions; repainted any time)
+--   value, assign      (slots with assign = true) with attrs: clicking it does
+--                      its action and makes it the slot's own, so a plain
+--                      click on the slot repeats it; saved in picks[slot]
+--   close              close the flyout after this choice
+--   selected, dim, count   (values or functions; repainted any time).
+--                      An assigned choice shows selected while it's the slot's.
 -- }
+-- A flyout stays open until it's toggled from its slot or you click
+-- elsewhere (in combat: until the mouse has been off it for a moment).
 ---------------------------------------------------------------------------
 
 function Kit:AddFlyout(btn)
@@ -961,10 +1004,18 @@ function Kit:AddFlyout(btn)
         t:SetAllPoints()
         t:SetColorTexture(0.04, 0.03, 0.05, 0.88)
     end
+    -- The flyout frame itself covers its choices (LayoutFlyout sizes it),
+    -- so "the mouse is over it" means over the choices.
+    pnl:SetAllPoints(fly)
     fly.panel = pnl
 
     self.header:SetFrameRef("kcnew", fly)
-    self.header:Execute([[ NFLY = NFLY + 1 FLYOUTS[NFLY] = self:GetFrameRef("kcnew") ]])
+    self.header:SetFrameRef("kcnewslot", btn)
+    self.header:Execute([[
+        NFLY = NFLY + 1
+        FLYOUTS[NFLY] = self:GetFrameRef("kcnew")
+        FLYSLOTS[NFLY] = self:GetFrameRef("kcnewslot")
+    ]])
     SecureHandlerSetFrameRef(btn, "kcfly", fly) -- (a plain secure button has no SetFrameRef of its own)
     btn:SetAttribute("kcflymode", slot.flyout or "right")
     SecureHandlerWrapScript(btn, "OnClick", self.header, TOGGLE_PRE)
@@ -1000,6 +1051,7 @@ function Kit:FlyButton(fly, i)
     b = self:MakeItemButton(fly:GetName() .. i, fly, true)
     b:SetFrameLevel(fly.panel:GetFrameLevel() + 2)
     SecureHandlerWrapScript(b, "OnClick", self.header, "", CHOICE_POST)
+    SecureHandlerSetFrameRef(b, "kcslot", fly.slotBtn)
     b:SetAttribute("_kcpick", function(btn)
         if self:Debounced() and btn.choice then self:Pick(fly.slotBtn, btn.choice.pick) end
     end)
@@ -1162,6 +1214,11 @@ function Kit:LayoutFlyout(btn)
             Set("attribute-name", c.setAttr and c.setAttr[1] or "kcset")
             Set("attribute-value", c.setAttr and c.setAttr[2] or c.set)
         end
+        if c.assign and c.attrs then
+            Set("kcassign", true)
+            Set("kcvalue", c.value)
+        end
+        if c.close then Set("kcclose", true) end
         b.attrKeys = keys
         local x, y = pts[i][1], pts[i][2]
         b:ClearAllPoints()
@@ -1185,14 +1242,41 @@ function Kit:LayoutFlyout(btn)
             y0, y1 = math.min(y0, p[2]), math.max(y1, p[2])
         end
         local pad = BTN / 2 + 7
-        fly.panel:ClearAllPoints()
-        fly.panel:SetPoint("TOPLEFT", self.kit, "CENTER", x0 - pad, y1 + pad)
-        fly.panel:SetPoint("BOTTOMRIGHT", self.kit, "CENTER", x1 + pad, y0 - pad)
+        fly:ClearAllPoints()
+        fly:SetPoint("TOPLEFT", self.kit, "CENTER", x0 - pad, y1 + pad)
+        fly:SetPoint("BOTTOMRIGHT", self.kit, "CENTER", x1 + pad, y0 - pad)
         fly.panel:Show()
     else
+        fly:ClearAllPoints()
+        fly:SetAllPoints(self.kit)
         fly.panel:Hide()
     end
     if fly:IsShown() then self:PaintFlyout(fly) end
+end
+
+-- Out of combat: a slot whose flyout choices are assigned to it does what
+-- its chosen one does (your pick, else its default, else the first).
+-- Copies the same attributes a choice copies when you click it in combat.
+function Kit:ApplyAssigned(btn)
+    local slot = btn.slot
+    local choices = slot.Choices(self, btn) or {}
+    local want = self.cdb.picks[slot.key]
+    if want == nil then want = Val(slot.default, self, btn) end
+    local found, first
+    for _, c in ipairs(choices) do
+        if c.assign and c.attrs then
+            first = first or c
+            if c.value == want then found = c end
+        end
+    end
+    local c = found or first
+    btn.assigned = c
+    btn.updating = true
+    local a = c and c.attrs or {}
+    for _, k in ipairs(ASSIGN_KEYS) do btn:SetAttribute(k, a[k]) end
+    btn:SetAttribute("kcvalue", c and c.value or nil)
+    btn.updating = nil
+    if not c then btn.hidden = true end
 end
 
 function Kit:LayoutFlyouts()
@@ -1205,7 +1289,12 @@ function Kit:PaintFlyout(fly)
         local c = i <= (fly.count or 0) and b.choice
         if c then
             U.SetIcon(b, Val(c.icon) or 134400, Val(c.dim))
-            b.sel:SetShown(Val(c.selected) and true or false)
+            local sel = Val(c.selected)
+            if sel == nil and c.assign then
+                local a = fly.slotBtn.assigned
+                sel = a and a.value == c.value
+            end
+            b.sel:SetShown(sel and true or false)
             local n = Val(c.count)
             b.count:SetText(n and n > 1 and n or "")
             if c.cooldown then U.SetCooldown(b.cooldown, c.cooldown()) else b.cooldown:Clear() end
@@ -1404,6 +1493,7 @@ function Kit:Refresh(animate)
         local btn = self.slots[slot.key]
         btn.hidden = nil
         if slot.Update then slot.Update(self, btn) end
+        if slot.assign and not btn.hidden then self:ApplyAssigned(btn) end
         local sb = btn.sub
         if sb then
             sb.hidden = nil
@@ -1974,7 +2064,24 @@ function Kit:OnEvent(event, ...)
     elseif event == "PLAYER_REGEN_DISABLED" then
         GameTooltip:Hide()
         if self.db.hideInCombat and not InCombatLockdown() then self.holder:Hide() end
+        -- Combat is about to start (still allowed now): flyouts opened from
+        -- here on, and any open already, close themselves once the mouse
+        -- leaves them, since a click elsewhere can't close them in combat.
+        if not InCombatLockdown() then
+            self.header:SetAttribute("kccombat", true)
+            pcall(self.header.Execute, self.header, ([[
+                for i = 1, NFLY do
+                    local f = FLYOUTS[i]
+                    if f:IsShown() then
+                        f:RegisterAutoHide(%s)
+                        f:AddToAutoHide(FLYSLOTS[i])
+                    end
+                end
+            ]]):format(AUTOHIDE))
+        end
     elseif event == "PLAYER_REGEN_ENABLED" then
+        self.header:SetAttribute("kccombat", false)
+        pcall(self.header.Execute, self.header, [[ for i = 1, NFLY do FLYOUTS[i]:UnregisterAutoHide() end ]])
         if self.db.hideInCombat then self.holder:Show() end
         if self.pending then
             self:ApplyPosition()
