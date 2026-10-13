@@ -209,6 +209,7 @@ C.BASE_DEFAULTS = {
     hideInCombat = false,
     minimapButton = true,
     minimapAngle = 200,
+    facing = "up",         -- which way the layout points while the kit floats: up, down, left, right
     flyoutHide = 0.5,      -- seconds a drawer stays open in combat after the mouse leaves it
 }
 
@@ -237,6 +238,8 @@ C.BASE_CHAR = {
 --   kitRing, kitIconInset  art name for that ring ("kit_ring": kit_ring_32..256,
 --                 covering the whole button) and how far in the icon sits
 --   AfterBuild(kit)  once the kit and its slots exist (add extra buttons)
+--   OnFacing(kit)    the layout direction changed (kit:Face(x, y) turns a
+--                    spot the same way; kit:FaceDir("down") a direction)
 --   slots         { slot, ... } (below)
 --   ring          { keys = { slotKey, ... }, from = deg, to = deg, radius = r }
 --                 (or a list of them)
@@ -1362,7 +1365,7 @@ function Kit:LayoutFlyout(btn)
     while #choices > 24 do table.remove(choices) end
     fly.nothing = slot.nothing
     local sx, sy = btn.placedX or slot.pos[1], btn.placedY or slot.pos[2]
-    local grid = slot.grid or FanDir(sx, sy)
+    local grid = slot.grid and self:FaceDir(slot.grid) or FanDir(sx, sy)
     if self.compactAngle then grid = FanDir(sx, sy) end
     if self.edgeSide then grid = TOWARD_MIDDLE[self.edgeSide] end
     local BTN = self.BTN
@@ -1641,12 +1644,7 @@ function Kit:UnEdgeDivider()
     local dv = self.divider
     if not dv or not dv.edged then return end
     dv.edged = nil
-    local d = self.cfg.divider
-    dv:ClearAllPoints()
-    dv:SetPoint("CENTER", self.kit, "CENTER", 0, d.y)
-    dv:SetSize(d.width or 200, 16)
-    dv.tex:SetSize(d.width or 200, 16)
-    dv.tex:SetRotation(0)
+    self:FaceDivider()
 end
 
 -- How much room along the edge the kit takes (UI units).
@@ -1673,20 +1671,50 @@ end
 -- Where shown slots sit: their home spot round the kit; on a screen edge,
 -- in columns toward the middle of the screen; shrunk on the dock, fanned
 -- round the outside of the button in its own slice. Out of combat only.
--- cfg.ring: the slots that are there (not hidden) share the arc evenly.
--- Sets their home spots; true if any moved.
-function Kit:LayoutRing()
-    local rings = self.cfg.ring
-    if not rings then return false end
-    if rings.keys then rings = { rings } end
-    local moved = false
-    for _, ring in ipairs(rings) do
-        if self:LayoutOneRing(ring) then moved = true end
-    end
-    return moved
+-- Facing (the "Layout direction" setting): the whole layout turns so its
+-- top points up, down, left or right. Down is the layout mirrored top to
+-- bottom; left and right turn it on its side, with slots that read left to
+-- right reading top to bottom.
+local FACE = {
+    up = function(x, y) return x, y end,
+    down = function(x, y) return x, -y end,
+    left = function(x, y) return -y, -x end,
+    right = function(x, y) return y, -x end,
+}
+C.FACINGS = { "up", "down", "left", "right" }
+
+function Kit:Face(x, y)
+    return (FACE[self.db and self.db.facing] or FACE.up)(x, y)
 end
 
-function Kit:LayoutOneRing(ring)
+function Kit:SetFacing(f)
+    if not FACE[f] then return end
+    if InCombatLockdown() then self:Print("That can only change out of combat.") return end
+    self.db.facing = f
+    self:Refresh(false)
+    self:KeepOnScreen()
+    if self.cfg.OnFacing then self.cfg.OnFacing(self) end
+    self:SettingsChanged()
+end
+
+function Kit:Sideways()
+    local f = self.db and self.db.facing
+    return f == "left" or f == "right"
+end
+
+-- A direction ("up", "left", ...) in the layout, turned the way it faces.
+local DIR_VEC = { up = { 0, 1 }, down = { 0, -1 }, left = { -1, 0 }, right = { 1, 0 } }
+function Kit:FaceDir(dir)
+    local v = DIR_VEC[dir]
+    if not v then return dir end
+    local x, y = self:Face(v[1], v[2])
+    if x > 0.5 then return "right" elseif x < -0.5 then return "left" elseif y > 0.5 then return "up" end
+    return "down"
+end
+
+-- cfg.ring: the slots that are there (not hidden) share the arc evenly.
+-- Fills base[btn] = { x, y } (before facing).
+function Kit:LayoutOneRing(ring, base)
     local avail = {}
     for _, key in ipairs(ring.keys) do
         local btn = self.slots[key]
@@ -1694,14 +1722,29 @@ function Kit:LayoutOneRing(ring)
     end
     -- The full ring's spacing, centred on the arc's middle: with fewer slots
     -- the whole set (ends included) gathers round the top.
-    local n, moved = #avail, false
+    local n = #avail
     local full = #ring.keys
     local step = full > 1 and (ring.to - ring.from) / (full - 1) or 0
     local mid = (ring.from + ring.to) / 2
     for i, btn in ipairs(avail) do
         local a = mid + (i - (n + 1) / 2) * step
-        local x = math.floor(ring.radius * math.cos(math.rad(a)) + 0.5)
-        local y = math.floor(ring.radius * math.sin(math.rad(a)) + 0.5)
+        base[btn] = { math.floor(ring.radius * math.cos(math.rad(a)) + 0.5), math.floor(ring.radius * math.sin(math.rad(a)) + 0.5) }
+    end
+end
+
+-- Every slot's home spot: its place in a ring (cfg.ring) or its pos, turned
+-- the way the layout faces. True if any moved.
+function Kit:LayoutHomes()
+    local base = {}
+    local rings = self.cfg.ring
+    if rings then
+        if rings.keys then rings = { rings } end
+        for _, ring in ipairs(rings) do self:LayoutOneRing(ring, base) end
+    end
+    local moved = false
+    for _, btn in pairs(self.slots) do
+        local b = base[btn] or btn.slot.pos
+        local x, y = self:Face(b[1], b[2])
         if btn.homeX ~= x or btn.homeY ~= y then
             btn.homeX, btn.homeY = x, y
             moved = true
@@ -1710,10 +1753,25 @@ function Kit:LayoutOneRing(ring)
     return moved
 end
 
+-- The divider across the kit, turned with the layout.
+function Kit:FaceDivider()
+    local dv, d = self.divider, self.cfg.divider
+    if not dv or dv.edged then return end
+    local x, y = self:Face(0, d.y)
+    local w = d.width or 200
+    local side = self:Sideways()
+    dv:ClearAllPoints()
+    dv:SetPoint("CENTER", self.kit, "CENTER", x, y)
+    dv:SetSize(side and 16 or w, side and w or 16)
+    dv.tex:SetSize(w, 16)
+    dv.tex:SetRotation(side and math.pi / 2 or 0)
+end
+
 function Kit:PlaceSlots()
-    local ringMoved = self:LayoutRing()
+    local ringMoved = self:LayoutHomes()
     if self.edgeSide and self.Dock then return self:PlaceEdge() end
     self:UnEdgeDivider()
+    self:FaceDivider()
     for _, btn in pairs(self.slots) do self:PlaceSub(btn) end
     local angle, span = self.compactAngle, self.compactSpan
     if not angle then
@@ -1771,7 +1829,7 @@ function Kit:Reach()
     local ks = (self.kit:GetWidth() / 2) * s * (self.db.kitSize or 1) + 4
     local l, r, t, b = ks, ks, ks, ks
     for _, slot in ipairs(self.cfg.slots) do
-        local x, y = slot.pos[1], slot.pos[2]
+        local x, y = self:Face(slot.pos[1], slot.pos[2])
         local h = slot.small and 15 or half
         local extra = slot.sub and 8 or 0
         l = math.max(l, (h - x) * s)
@@ -2243,6 +2301,14 @@ function Kit:BuildSettings()
         "The kit and pinned slots fade until you mouse over them.", false, refresh)
     S.Checkbox(db, "hideInCombat", "Hide in combat", "Hide the kit while you're in combat.", false,
         function() self:ApplyCombatHide() end)
+    S.Dropdown(db, "facing", "Layout direction",
+        "Which way the slots lay out round the kit while it's floating (on a screen edge they always face the middle of the screen).",
+        "up", {
+            { "up", "Up (as made)" },
+            { "down", "Down (upside down)" },
+            { "left", "Left (on its side)" },
+            { "right", "Right (on its side)" },
+        }, function() self:SetFacing(db.facing) end)
     S.Slider(db, "flyoutHide", "Drawer close delay in combat",
         "In combat a drawer can't close when you click elsewhere, so it closes by itself this long after the mouse leaves it and its slot.",
         0.5, 0.2, 2, 0.1, function(v) return ("%.1fs"):format(v) end)
@@ -2309,6 +2375,7 @@ function Kit:Slash(msg)
     elseif cmd == "help" then
         self:Print(slash .. " - settings   " .. slash .. " lock | unlock | show | hide | reset")
         self:Print(slash .. " minimap - show or hide the minimap button")
+        self:Print(slash .. " face up | down | left | right - which way the layout points")
         if self.Dock and not cfg.edgesOnly then self:Print(slash .. " dock - dock every kit on the pin   " .. slash .. " flip") end
         for _, line in ipairs(cfg.helpLines or {}) do self:Print(line) end
     elseif InCombatLockdown() then
@@ -2325,6 +2392,13 @@ function Kit:Slash(msg)
             self:Print("Kits docked together on the pin.")
         else
             self:Print("Docking needs another kit installed.")
+        end
+    elseif cmd == "face" then
+        local f = (rest or ""):lower():match("^(%a+)")
+        if f and FACE[f] then
+            self:SetFacing(f)
+        else
+            self:Print(slash .. " face up | down | left | right   (now " .. (self.db.facing or "up") .. ")")
         end
     elseif cmd == "flip" and self.Dock and not cfg.edgesOnly then
         self.Dock.Flip()
