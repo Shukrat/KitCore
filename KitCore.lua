@@ -257,6 +257,7 @@ C.BASE_CHAR = {
 --   assign        a click on the slot does its assigned choice: the last one
 --                 you clicked in its flyout (saved), else default
 --   default       the assigned choice's value until you pick one (or a function)
+--   keepEmpty     with nothing to assign yet, the slot still shows (empty) rather than hiding
 --   Update(kit, btn)   out of combat: set its attributes; btn.hidden hides it
 --   Paint(kit, btn)    cosmetic, any time: icon, count, glow, cooldown
 --   Tooltip(kit, btn)  fill GameTooltip (already owned)
@@ -1307,7 +1308,7 @@ function Kit:ApplyAssigned(btn)
     for _, k in ipairs(ASSIGN_KEYS) do btn:SetAttribute(k, a[k]) end
     btn:SetAttribute("kcvalue", c and c.value or nil)
     btn.updating = nil
-    if not c then btn.hidden = true end
+    if not c and not slot.keepEmpty then btn.hidden = true end
 end
 
 function Kit:LayoutFlyouts()
