@@ -238,6 +238,10 @@ C.BASE_CHAR = {
 --                 covering the whole button) and how far in the icon sits
 --   AfterBuild(kit)  once the kit and its slots exist (add extra buttons)
 --   slots         { slot, ... } (below)
+--   ring          { keys = { slotKey, ... }, from = deg, to = deg, radius = r }
+--                 slots spread evenly along this arc round the kit (degrees,
+--                 0 = right, 90 = up); a slot that's hidden gives its room to
+--                 the rest, and the others glide over
 --   edgeCols      { { slotKey, ... }, ... } columns on a screen edge, from the edge in
 --   edgeBeside    { beforeKey, afterKey } small slots that sit right beside the
 --                 kit button on a screen edge, along the edge (before = above
@@ -1657,13 +1661,52 @@ end
 -- Where shown slots sit: their home spot round the kit; on a screen edge,
 -- in columns toward the middle of the screen; shrunk on the dock, fanned
 -- round the outside of the button in its own slice. Out of combat only.
+-- cfg.ring: the slots that are there (not hidden) share the arc evenly.
+-- Sets their home spots; true if any moved.
+function Kit:LayoutRing()
+    local ring = self.cfg.ring
+    if not ring then return false end
+    local avail = {}
+    for _, key in ipairs(ring.keys) do
+        local btn = self.slots[key]
+        if btn and not btn.hidden then avail[#avail + 1] = btn end
+    end
+    local n, moved = #avail, false
+    for i, btn in ipairs(avail) do
+        local a = n == 1 and (ring.from + ring.to) / 2 or ring.from + (ring.to - ring.from) * (i - 1) / (n - 1)
+        local x = math.floor(ring.radius * math.cos(math.rad(a)) + 0.5)
+        local y = math.floor(ring.radius * math.sin(math.rad(a)) + 0.5)
+        if btn.homeX ~= x or btn.homeY ~= y then
+            btn.homeX, btn.homeY = x, y
+            moved = true
+        end
+    end
+    return moved
+end
+
 function Kit:PlaceSlots()
+    local ringMoved = self:LayoutRing()
     if self.edgeSide and self.Dock then return self:PlaceEdge() end
     self:UnEdgeDivider()
     for _, btn in pairs(self.slots) do self:PlaceSub(btn) end
     local angle, span = self.compactAngle, self.compactSpan
     if not angle then
+        -- Slots already out glide to new home spots (the ring closing up
+        -- round a slot that went away, or opening back out).
+        local from
+        if ringMoved and self.Dock and self.Dock.Glide then
+            from = {}
+            for _, btn in pairs(self.slots) do
+                if btn:IsShown() and not btn.closing and not (btn.slideAnim and btn.slideAnim:IsPlaying()) then
+                    local x, y = btn:GetCenter()
+                    if x then from[btn] = { x, y, btn:GetEffectiveScale() } end
+                end
+            end
+        end
         for _, btn in pairs(self.slots) do self:PlaceAt(btn, btn.homeX, btn.homeY) end
+        if from then
+            for f, b in pairs(from) do self.Dock.Glide(f, b[1], b[2], b[3]) end
+        end
         return
     end
     -- Shrunk on the dock: whatever's out fans round the button in its slice,
