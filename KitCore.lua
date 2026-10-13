@@ -214,6 +214,7 @@ C.BASE_DEFAULTS = {
 C.BASE_CHAR = {
     pinned = {}, -- [slotKey] = true: out even with the kit closed
     picks = {},  -- [slotKey] = what the slot holds, when you chose it
+    order = {},  -- [slotKey] = { value, ... } your order for that slot's flyout
 }
 
 ---------------------------------------------------------------------------
@@ -257,6 +258,8 @@ C.BASE_CHAR = {
 --   assign        a click on the slot does its assigned choice: the last one
 --                 you clicked in its flyout (saved), else default
 --   default       the assigned choice's value until you pick one (or a function)
+--   reorder       its flyout's choices (those with a value) can be dragged into
+--                 your own order, saved per character
 --   keepEmpty     with nothing to assign yet, the slot still shows (empty) rather
 --                 than hiding (or a function deciding it)
 --   Update(kit, btn)   out of combat: set its attributes; btn.hidden hides it
@@ -1132,13 +1135,84 @@ function Kit:FlyButton(fly, i)
             elseif c.spell then Try(GameTooltip.SetSpellByID, GameTooltip, c.spell)
             else GameTooltip:AddLine(c.label or "") end
             if c.hint then GameTooltip:AddLine(c.hint, 0.3, 1, 0.4, true) end
+            if fly.slotBtn.slot.reorder and c.value ~= nil and not InCombatLockdown() then
+                GameTooltip:AddLine("Drag: move it in this list", 1, 0.82, 0)
+            end
         end
         GameTooltip:Show()
     end)
     b:SetScript("OnLeave", GameTooltip_Hide)
     self:ApplyShape(b, self.db.roundSlots)
+    -- Drag a choice along its flyout to change the order (out of combat).
+    if fly.slotBtn.slot.reorder then
+        b:SetMovable(true)
+        b:RegisterForDrag("LeftButton")
+        b:SetScript("OnDragStart", function(btn)
+            if InCombatLockdown() or not (btn.choice and btn.choice.value ~= nil) then return end
+            GameTooltip:Hide()
+            btn:SetFrameLevel(fly.panel:GetFrameLevel() + 6)
+            btn.dragging = true
+            btn:StartMoving()
+        end)
+        b:SetScript("OnDragStop", function(btn)
+            if not btn.dragging then return end
+            btn.dragging = nil
+            btn:StopMovingOrSizing()
+            Try(btn.SetUserPlaced, btn, false) -- (the game mustn't remember where it was dropped)
+            btn:SetFrameLevel(fly.panel:GetFrameLevel() + 2)
+            self:DropChoice(fly, btn)
+        end)
+    end
     fly.buttons[i] = b
     return b
+end
+
+-- A choice dragged and let go: it takes the place of the choice nearest
+-- where it was dropped (if it was dropped over the flyout), and the new
+-- order is saved for that slot.
+function Kit:DropChoice(fly, dragged)
+    if InCombatLockdown() then return end
+    local slot = fly.slotBtn.slot
+    local x, y = dragged:GetCenter()
+    local from, to, best
+    local vals = {}
+    for i = 1, fly.count or 0 do
+        local b = fly.buttons[i]
+        vals[i] = b.choice and b.choice.value
+        if b == dragged then
+            from = i
+        elseif x then
+            local bx, by = b:GetCenter()
+            if bx then
+                local d = (bx - x) ^ 2 + (by - y) ^ 2
+                if not best or d < best then best, to = d, i end
+            end
+        end
+    end
+    local reach = self.BTN * 1.2
+    if from and to and best and best <= reach * reach then
+        local v = table.remove(vals, from)
+        table.insert(vals, to, v)
+        self.cdb.order[slot.key] = vals
+    end
+    self:LayoutFlyout(fly.slotBtn) -- back in line either way
+    if fly:IsShown() then self:PaintFlyout(fly) end
+end
+
+-- A slot's choices in your saved order (any not in it yet keep their place
+-- after the ones that are).
+function Kit:OrderChoices(slot, choices)
+    local saved = slot.reorder and self.cdb.order[slot.key]
+    if not saved then return choices end
+    local rank, at = {}, {}
+    for i, v in ipairs(saved) do rank[v] = i end
+    for i, c in ipairs(choices) do at[c] = i end
+    table.sort(choices, function(a, b)
+        local ra = a.value ~= nil and rank[a.value] or (1000 + at[a])
+        local rb = b.value ~= nil and rank[b.value] or (1000 + at[b])
+        return ra < rb
+    end)
+    return choices
 end
 
 -- Keep a flyout on screen: flip it to the other side of its slot when it
@@ -1202,7 +1276,7 @@ function Kit:LayoutFlyout(btn)
     local fly = btn.fly
     if not fly then return end
     local slot = btn.slot
-    local choices = slot.Choices(self, btn) or {}
+    local choices = self:OrderChoices(slot, slot.Choices(self, btn) or {})
     while #choices > 24 do table.remove(choices) end
     fly.nothing = slot.nothing
     local sx, sy = btn.placedX or slot.pos[1], btn.placedY or slot.pos[2]
@@ -1996,9 +2070,10 @@ function Kit:BuildSettings()
                 false, refresh, "pin_" .. slot.key)
         end
     end
-    S.Button("Slot choices", "Reset", "Put every slot back to its starting choice.", function()
+    S.Button("Slot choices", "Reset", "Put every slot back to its starting choice, and every list back in its starting order.", function()
         if InCombatLockdown() then self:Print("That can only change out of combat.") return end
         wipe(cdb.picks)
+        wipe(cdb.order)
         self:Refresh(false)
         self:Print("Slot choices reset.")
     end)
