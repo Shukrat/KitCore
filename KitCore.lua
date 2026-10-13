@@ -239,14 +239,16 @@ C.BASE_CHAR = {
 --   AfterBuild(kit)  once the kit and its slots exist (add extra buttons)
 --   slots         { slot, ... } (below)
 --   ring          { keys = { slotKey, ... }, from = deg, to = deg, radius = r }
+--                 (or a list of them)
 --                 slots spread evenly along this arc round the kit (degrees,
 --                 0 = right, 90 = up), evenly spaced as if all were there;
 --                 when some are hidden the rest close up round the middle of
 --                 the arc, gliding over
 --   edgeCols      { { slotKey, ... }, ... } columns on a screen edge, from the edge in
---   edgeBeside    { beforeKey, afterKey } small slots that sit right beside the
---                 kit button on a screen edge, along the edge (before = above
---                 or left of it, after = below or right); leave them out of edgeCols
+--   edgeBeside    { slotKey, ... } small slots that sit right beside the kit
+--                 button on a screen edge, along the edge: the ones showing
+--                 take turns before (above / left of) and after it, working
+--                 outward; leave them out of edgeCols
 --   divider       { y, width, texture, below = { slotKey, ... }, edgeAfter = n }
 --                 a line across the kit at y while it's open and any of the
 --                 "below" slots show; on an edge, between column n and n + 1
@@ -1594,11 +1596,13 @@ function Kit:EdgeDivAfter(asOpen)
 end
 
 -- The edgeBeside slots: either side of the kit button, along the edge.
-local BESIDE_GAP = 6
-function Kit:BesideSpots(side)
-    local d = self:KitHalfUnits() + BESIDE_GAP + 11
-    if side == "left" or side == "right" then return { 0, d }, { 0, -d } end
-    return { -d, 0 }, { d, 0 }
+-- The i-th one showing: odd before the button, even after, outward in pairs.
+local BESIDE_GAP, BESIDE_STEP = 6, 26
+function Kit:BesideSpot(side, i)
+    local d = self:KitHalfUnits() + BESIDE_GAP + 11 + math.floor((i - 1) / 2) * BESIDE_STEP
+    local sign = (i % 2 == 1) and -1 or 1
+    if side == "left" or side == "right" then return 0, -sign * d end
+    return sign * d, 0
 end
 
 function Kit:PlaceEdge()
@@ -1607,10 +1611,13 @@ function Kit:PlaceEdge()
     for f, p in pairs(pos) do self:PlaceAt(f, p[1], p[2]) end
     local beside = self.cfg.edgeBeside
     if beside then
-        local spots = { self:BesideSpots(self.edgeSide) }
-        for i, key in ipairs(beside) do
+        local i = 0
+        for _, key in ipairs(beside) do
             local btn = self.slots[key]
-            if btn and spots[i] then self:PlaceAt(btn, spots[i][1], spots[i][2]) end
+            if btn and not btn.hidden then
+                i = i + 1
+                self:PlaceAt(btn, self:BesideSpot(self.edgeSide, i))
+            end
         end
     end
     for _, btn in pairs(self.slots) do self:PlaceSub(btn) end
@@ -1647,12 +1654,15 @@ function Kit:EdgeExtent(side, asOpen)
     local cols = self:EdgeCols(asOpen, true)
     local _, _, ext = self.Dock.EdgeArrange(side, self:KitHalfUnits(), cols, self:EdgeDivAfter(asOpen))
     if self.cfg.edgeBeside then
-        -- Room for the slots beside the button, if any would show.
+        -- Room for the slots beside the button that would show.
+        local n = 0
         for _, key in ipairs(self.cfg.edgeBeside) do
             local btn = self.slots[key]
-            if btn and ((asOpen and not btn.hidden) or btn.wouldShow) then
-                ext = math.max(ext, 2 * (self:KitHalfUnits() + BESIDE_GAP + 22))
-            end
+            if btn and ((asOpen and not btn.hidden) or btn.wouldShow) then n = n + 1 end
+        end
+        if n > 0 then
+            local pairsOut = math.ceil(n / 2)
+            ext = math.max(ext, 2 * (self:KitHalfUnits() + BESIDE_GAP + 22 + (pairsOut - 1) * BESIDE_STEP))
         end
     end
     local any = next(self.slots) and select(2, next(self.slots))
@@ -1666,8 +1676,17 @@ end
 -- cfg.ring: the slots that are there (not hidden) share the arc evenly.
 -- Sets their home spots; true if any moved.
 function Kit:LayoutRing()
-    local ring = self.cfg.ring
-    if not ring then return false end
+    local rings = self.cfg.ring
+    if not rings then return false end
+    if rings.keys then rings = { rings } end
+    local moved = false
+    for _, ring in ipairs(rings) do
+        if self:LayoutOneRing(ring) then moved = true end
+    end
+    return moved
+end
+
+function Kit:LayoutOneRing(ring)
     local avail = {}
     for _, key in ipairs(ring.keys) do
         local btn = self.slots[key]
