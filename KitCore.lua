@@ -2188,21 +2188,32 @@ function Kit:SetShownKit(show)
     self:SettingsChanged()
 end
 
+-- A docked kit (on the pin or a screen edge) is anchored by offsets in its
+-- own scale, so resizing it before the dock places it would fling it away,
+-- and the dock would then glide it back from there. The dock resizes it
+-- itself (BaseScale) as it lays it out, from where it really stood. Slots
+-- are resized inside one BeginMove / EndMove, so they glide to their new
+-- spots with the button instead of snapping.
 function Kit:ApplyPosition()
     if InCombatLockdown() then self.pending = true return end
     local db = self.db
-    self.kit:SetScale(db.scale * (db.kitSize or 1))
-    if self.Dock and self.Dock.IsDocked(self.key) then
-        self.Dock.Layout()
-    else
-        self:PlaceFree()
-    end
+    local scale = db.scale * (db.kitSize or 1)
+    self:BeginMove()
     for _, btn in pairs(self.slots) do btn:SetScale(db.scale) end
     for _, fly in pairs(self.flyouts) do fly:SetScale(db.scale) end
     if self.divider then self.divider:SetScale(db.scale) end
     for _, f in ipairs(self:Extras()) do f:SetScale(db.scale) end
+    if self.Dock and self.Dock.IsDocked(self.key) then
+        self.Dock.Layout()
+        -- (the dock skips a layout already under way; size it here then)
+        if math.abs(self.kit:GetScale() - scale) > 0.001 then self.kit:SetScale(scale) end
+    else
+        self.kit:SetScale(scale)
+        self:PlaceFree()
+    end
     self:SetKitArt()
     self:ApplyShapes()
+    self:EndMove()
 end
 
 function Kit:SettingsChanged()
