@@ -2204,9 +2204,9 @@ function Kit:ApplyPosition()
     if self.divider then self.divider:SetScale(db.scale) end
     for _, f in ipairs(self:Extras()) do f:SetScale(db.scale) end
     if self.Dock and self.Dock.IsDocked(self.key) then
+        -- (the dock glides the kit from its old size, so its scale is short
+        -- of the new one until the glide ends: never set it here)
         self.Dock.Layout()
-        -- (the dock skips a layout already under way; size it here then)
-        if math.abs(self.kit:GetScale() - scale) > 0.001 then self.kit:SetScale(scale) end
     else
         self.kit:SetScale(scale)
         self:PlaceFree()
