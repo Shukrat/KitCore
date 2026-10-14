@@ -23,7 +23,7 @@ local addonName, ns = ...
 -- is worked out out of combat, whenever the kit refreshes.
 ---------------------------------------------------------------------------
 
-local VERSION = 1
+local VERSION = 2
 local C = _G.KitCore
 if C and (C.version or 0) >= VERSION then
     ns.Core = C
@@ -173,6 +173,9 @@ local function ScreenPx(frame, units)
     return units
 end
 
+U.ArtSize, U.ScreenPx = ArtSize, ScreenPx
+C.ART_SIZES = ART_SIZES
+
 -- Things that only exist on newer clients: tried, and skipped if missing.
 local function Try(f, ...) if f then return pcall(f, ...) end end
 
@@ -204,16 +207,19 @@ C.BASE_DEFAULTS = {
     shown = true,          -- false: the whole kit is hidden (settings or the shared minimap menu)
     locked = false,
     fadeIdle = false,
-    tooltipDefault = false, -- tooltips in the game's usual spot instead of beside the button
+    tooltipDefault = false, -- tooltips in the game's usual spot instead of at the mouse
     roundSlots = true,
     hideInCombat = false,
     minimapButton = true,
     minimapAngle = 200,
+    facing = "up",         -- which way the layout points while the kit floats: up, down, left, right
+    flyoutHide = 0.5,      -- seconds a drawer stays open in combat after the mouse leaves it
 }
 
 C.BASE_CHAR = {
     pinned = {}, -- [slotKey] = true: out even with the kit closed
     picks = {},  -- [slotKey] = what the slot holds, when you chose it
+    order = {},  -- [slotKey] = { value, ... } your order for that slot's flyout
 }
 
 ---------------------------------------------------------------------------
@@ -232,11 +238,41 @@ C.BASE_CHAR = {
 --   edgesOnly     never joins the pin, only the screen edges
 --   kitSize, slotSize  (60, 37)
 --   roundKit      the kit button is a round icon with a ring
+--   kitRing, kitIconInset  art name for that ring ("kit_ring": kit_ring_32..256,
+--                 covering the whole button) and how far in the icon sits
+--   AfterBuild(kit)  once the kit and its slots exist (add extra buttons)
+--   OnFacing(kit)    the layout direction changed (kit:Face(x, y) turns a
+--                    spot the same way; kit:FaceDir("down") a direction)
 --   slots         { slot, ... } (below)
+--   ring          { keys = { slotKey, ... }, from = deg, to = deg, radius = r }
+--                 (or a list of them)
+--                 slots spread evenly along this arc round the kit (degrees,
+--                 0 = right, 90 = up), evenly spaced as if all were there;
+--                 when some are hidden the rest close up round the middle of
+--                 the arc, gliding over
 --   edgeCols      { { slotKey, ... }, ... } columns on a screen edge, from the edge in
+--   EdgeExtraCol(kit, hypothetical, asOpen)  one more column after those (non-slot
+--                 frames, like timers): { { frame = f, size = n }, ... }
+--   extraFrames(kit)  those frames (any that can show), so they're scaled
+--                 and glide along when the kit moves
+--   PlaceExtras(kit, angle)  place those frames off an edge: angle is nil
+--                 normally, or the fan's direction while shrunk on the dock
+--   PinSettings(kit, S)  more "Always show" boxes in the Slots section
+--   menuOrder     { slotKey, ... } the order slots are listed in the settings
+--   minimapArt    full-size art for the minimap button (it has its own rim)
+--   glowColor     { r, g, b } the kit's glow colour
+--   edgeBeside    { slotKey, ... } small slots that sit right beside the kit
+--                 button on a screen edge, along the edge: the ones showing
+--                 take turns before (above / left of) and after it, working
+--                 outward; leave them out of edgeCols
+--   divider       { y, width, texture, below = { slotKey, ... }, edgeAfter = n }
+--                 a line across the kit at y while it's open and any of the
+--                 "below" slots show; on an edge, between column n and n + 1
 --   slash         { "/wk", "/warlockkit" }
 --   bindingHeader "WARLOCKKIT" (as in Bindings.xml)
 --   KitArt(kit), KitTooltip(kit), BeforeRefresh(kit), Tick(kit)
+--   OnShapes(kit)     after slot shapes / ring art are (re)applied
+--   Busy(kit)         true while the kit shouldn't fade (fade when idle)
 --   events        { EVENT = function(kit, ...) end }
 --   unitEvents    { EVENT = { units = { "player" }, fn = function(kit, ...) end } }
 --   Settings(kit, S)    the kit's own section of the settings panel
@@ -247,10 +283,25 @@ C.BASE_CHAR = {
 --   key, label, pos = { x, y } (from the kit's centre, +y up)
 --   grid          which way its flyout opens: "up", "down", "left", "right"
 --   small         a small round button (22) instead of a full slot
+--   rim           (small slots) on a screen edge or shrunk on the dock it
+--                 sits on the kit's rim: toward the middle of the screen, or
+--                 away from the pin
+--   flyGap        extra room between the slot and its flyout (a sub below it)
+--   OnDrop(kit, btn)   something was dropped on the slot (cursor item)
+--   Setup(kit, btn)    once, after the slot is made (extra scripts)
 --   noPin         can't be pinned
+--   tier          shrunk on the dock, lower tiers fan out nearest the button
+--                 (before the pinned-first, slot-order rule)
 --   binding       key binding label (default "Use <label>")
---   flyout        "left": a click opens its flyout; "right": right-click does
+--   flyout        "right": right-click opens its flyout; "left": any click does
 --   Choices(kit, btn)  the flyout's choices (out of combat; see LayoutFlyout)
+--   assign        a click on the slot does its assigned choice: the last one
+--                 you clicked in its flyout (saved), else default
+--   default       the assigned choice's value until you pick one (or a function)
+--   reorder       its flyout's choices (those with a value) can be dragged into
+--                 your own order, saved per character
+--   keepEmpty     with nothing to assign yet, the slot still shows (empty) rather
+--                 than hiding (or a function deciding it)
 --   Update(kit, btn)   out of combat: set its attributes; btn.hidden hides it
 --   Paint(kit, btn)    cosmetic, any time: icon, count, glow, cooldown
 --   Tooltip(kit, btn)  fill GameTooltip (already owned)
@@ -258,7 +309,8 @@ C.BASE_CHAR = {
 --   OnAttribute(kit, btn, name, value)  a flyout choice changed an attribute
 --   OnPick(kit, btn, value)             a flyout "pick" choice (out of combat)
 --   sub = { key, label, Update(kit, sb), Paint(kit, sb), Tooltip(kit, sb) }
---         a small round button on the slot's corner
+--         a small round button on the slot's corner (below = true: under the
+--         slot instead, except on a screen edge, where it's on the corner)
 ---------------------------------------------------------------------------
 
 function C.NewKit(cfg)
@@ -329,8 +381,10 @@ local function DefaultAnchor(owner)
     end
 end
 
+-- Tooltips (the kit button's and every slot's) follow the mouse, or sit
+-- where the game puts its own ("Default tooltip position").
 function Kit:TipOwner(owner)
-    if self.db.tooltipDefault then DefaultAnchor(owner) else GameTooltip:SetOwner(owner, "ANCHOR_RIGHT") end
+    if self.db.tooltipDefault then DefaultAnchor(owner) else GameTooltip:SetOwner(owner, "ANCHOR_CURSOR") end
 end
 
 function Kit:Hover(on)
@@ -528,6 +582,7 @@ function Kit:MakeSmallRound(b)
     mask:SetTexture(self.media .. "circle_mask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
     mask:SetAllPoints(b.icon)
     b.icon:AddMaskTexture(mask)
+    b.roundMask = mask
     b.ring = b:CreateTexture(nil, "OVERLAY", nil, 6)
     b.ring:SetAllPoints()
     b.ring:SetTexture(self:SmallRingArt(b), nil, nil, "LINEAR")
@@ -536,6 +591,7 @@ function Kit:MakeSmallRound(b)
     hl:SetBlendMode("ADD")
     hl:SetPoint("CENTER")
     hl:SetSize(30, 30)
+    b.roundHl = hl
     if b.hotkey then b.hotkey:Hide() end
     if b.count then b.count:Hide() end
 end
@@ -549,6 +605,7 @@ function Kit:ApplyShapes()
     for _, fly in pairs(self.flyouts) do
         for _, b in ipairs(fly.buttons) do self:ApplyShape(b, self.db.roundSlots) end
     end
+    if self.cfg.OnShapes then self.cfg.OnShapes(self) end
 end
 
 -- Icon, greyed (and dimmed) when it can't be used right now.
@@ -572,7 +629,7 @@ function Kit:BuildKit()
 
     -- Runs the flyouts' open and close, in combat too.
     local header = CreateFrame("Frame", P .. "Secure", holder, "SecureHandlerBaseTemplate")
-    header:Execute([[ FLYOUTS = newtable() NFLY = 0 ]])
+    header:Execute([[ FLYOUTS = newtable() FLYSLOTS = newtable() NFLY = 0 ]])
     self.header = header
 
     local kit = CreateFrame("Button", P .. "Button", holder)
@@ -587,10 +644,14 @@ function Kit:BuildKit()
     kit.icon = kit:CreateTexture(nil, "ARTWORK")
     kit.icon:SetAllPoints()
     if cfg.roundKit then
-        -- A round icon with a gold ring, like the slots.
+        -- A round icon in a ring. With cfg.kitRing (art covering the whole
+        -- button, like the other kits' rim) the icon sits inside it;
+        -- otherwise a slot's gold ring, 3 in from the edge, so it's the same
+        -- size on screen as the other kits' art.
+        local inset = cfg.kitRing and (cfg.kitIconInset or 7) or 5
         kit.icon:ClearAllPoints()
-        kit.icon:SetPoint("TOPLEFT", 3, -3)
-        kit.icon:SetPoint("BOTTOMRIGHT", -3, 3)
+        kit.icon:SetPoint("TOPLEFT", inset, -inset)
+        kit.icon:SetPoint("BOTTOMRIGHT", -inset, inset)
         local mask = kit:CreateMaskTexture()
         mask:SetTexture(self.media .. "circle_mask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
         mask:SetAllPoints(kit.icon)
@@ -600,8 +661,12 @@ function Kit:BuildKit()
         kit.shade:SetColorTexture(0, 0, 0, 0.35)
         kit.shade:AddMaskTexture(mask)
         kit.ring = kit:CreateTexture(nil, "OVERLAY", nil, 6)
-        kit.ring:SetPoint("TOPLEFT", -1, 1)
-        kit.ring:SetPoint("BOTTOMRIGHT", 1, -1)
+        if cfg.kitRing then
+            kit.ring:SetAllPoints()
+        else
+            kit.ring:SetPoint("TOPLEFT", 3, -3)
+            kit.ring:SetPoint("BOTTOMRIGHT", -3, 3)
+        end
         kit.text = kit:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
         kit.text:SetPoint("CENTER", 0, 1)
         kit.text:SetTextColor(1, 1, 1)
@@ -615,9 +680,31 @@ function Kit:BuildKit()
     self.kit = kit
     self:AddGlow(kit, "glow_ring", 1.35)
 
+    -- A divider line between the slots round the kit and a row below it.
+    local d = cfg.divider
+    if d then
+        local dv = CreateFrame("Frame", P .. "Divider", holder)
+        dv:SetSize(d.width or 200, 16)
+        dv:SetFrameLevel(11)
+        dv.tex = dv:CreateTexture(nil, "ARTWORK")
+        dv.tex:SetPoint("CENTER")
+        dv.tex:SetSize(d.width or 200, 16)
+        dv.tex:SetTexture(self.media .. (d.texture or "divider"), nil, nil, "LINEAR")
+        dv:SetPoint("CENTER", kit, "CENTER", 0, d.y)
+        dv:Hide()
+        local ag = dv:CreateAnimationGroup()
+        local a = ag:CreateAnimation("Alpha")
+        a:SetFromAlpha(0)
+        a:SetToAlpha(1)
+        a:SetDuration(0.2)
+        dv.fadeIn = ag
+        self.divider = dv
+    end
+
     kit:SetScript("OnDragStart", function(b)
         if self.db.locked or InCombatLockdown() then return end
         self:CloseFlyouts()
+        GameTooltip:Hide() -- it would follow the mouse along
         if self.Dock then self.Dock.DragStart(self.key) else
             b.moving = true
             b:StartMoving()
@@ -652,7 +739,7 @@ function Kit:BuildKit()
     end)
     kit:SetScript("OnEnter", function(b)
         self:Hover(true)
-        DefaultAnchor(b)
+        self:TipOwner(b)
         GameTooltip:AddLine(self.name)
         if cfg.KitTooltip then cfg.KitTooltip(self) end
         GameTooltip:AddLine("Left-click: open / close", 1, 1, 1)
@@ -665,7 +752,11 @@ end
 
 function Kit:SetKitArt()
     local kit = self.kit
-    if kit.ring then kit.ring:SetTexture(self:RingArt(kit), nil, nil, "LINEAR") end
+    if kit.ring then
+        local ring = self.cfg.kitRing
+        local px = ArtSize(ScreenPx(kit, kit:GetWidth() - (ring and 0 or 6)), ART_SIZES)
+        kit.ring:SetTexture(self.media .. (ring or "ring_slot") .. "_" .. px, nil, nil, "LINEAR")
+    end
     if self.cfg.KitArt then self.cfg.KitArt(self) end
 end
 
@@ -683,10 +774,16 @@ end
 -- Slots
 ---------------------------------------------------------------------------
 
--- Opening or closing a flyout from a slot, in combat too. "left": any
--- click but shift-right; "right": right-click (shift-right-click pins).
+-- Opening or closing a flyout from a slot, in combat too. "right":
+-- right-click (shift-right-click pins); "left": any click but shift-right.
 -- Acts on the release only and swallows the press, so the slot's own action
 -- doesn't run on a click that's meant for the flyout.
+-- Out of combat a flyout closes when you click anywhere else (insecure, see
+-- GLOBAL_MOUSE_DOWN). In combat that isn't allowed, so it closes itself a
+-- moment after the mouse leaves it and its slot instead.
+-- In combat a flyout closes itself this long after the mouse leaves it: the
+-- kit's "flyoutHide" setting, handed to the secure code as the header's
+-- "kchide" attribute when combat starts.
 local TOGGLE_PRE = [[
     local fly = self:GetFrameRef("kcfly")
     if not fly then return end
@@ -695,15 +792,42 @@ local TOGGLE_PRE = [[
         if not down then
             local show = not fly:IsShown()
             for i = 1, NFLY do FLYOUTS[i]:Hide() end
-            if show then fly:Show() end
+            if show then
+                fly:Show()
+                if owner:GetAttribute("kccombat") then
+                    fly:RegisterAutoHide(owner:GetAttribute("kchide") or 0.5)
+                    fly:AddToAutoHide(self)
+                end
+            end
         end
         return false
     end
 ]]
 
--- After a choice does its thing (on the release), every flyout closes.
+-- A choice clicked (on the release): one that's assigned to its slot copies
+-- its action onto the slot, so a plain click on the slot repeats it. Runs
+-- before the choice's own action (which uses the choice's attributes, so
+-- the order doesn't matter). The game only runs an after-click snippet when
+-- the before-click one returns a message, so closing (for choices that ask
+-- for it) goes through that message.
+-- The flyout stays open otherwise.
+local ASSIGN_KEYS = { "type", "spell", "item", "macrotext", "shift-type1", "shift-macrotext1" }
+local CHOICE_PRE = [[
+    if down then return end
+    if self:GetAttribute("kcassign") then
+        local slot = self:GetFrameRef("kcslot")
+        slot:SetAttribute("type", self:GetAttribute("type"))
+        slot:SetAttribute("spell", self:GetAttribute("spell"))
+        slot:SetAttribute("item", self:GetAttribute("item"))
+        slot:SetAttribute("macrotext", self:GetAttribute("macrotext"))
+        slot:SetAttribute("shift-type1", self:GetAttribute("shift-type1"))
+        slot:SetAttribute("shift-macrotext1", self:GetAttribute("shift-macrotext1"))
+        slot:SetAttribute("kcvalue", self:GetAttribute("kcvalue"))
+    end
+    if self:GetAttribute("kcclose") then return nil, "close" end
+]]
 local CHOICE_POST = [[
-    if not down then
+    if message == "close" then
         for i = 1, NFLY do FLYOUTS[i]:Hide() end
     end
 ]]
@@ -761,8 +885,20 @@ function Kit:CreateSlot(slot)
     end)
     btn:SetScript("OnLeave", function() self:Hover(false) end)
     btn:HookScript("OnAttributeChanged", function(b, name, value)
+        -- A choice from the flyout became this slot's (maybe in combat).
+        if name == "kcvalue" and slot.assign and not b.updating and value ~= nil then
+            self.cdb.picks[slot.key] = value
+            for _, fb in ipairs(b.fly and b.fly.buttons or {}) do
+                if fb.choice and fb.choice.value == value then b.assigned = fb.choice end
+            end
+            self:PaintSlot(b)
+            if b.fly and b.fly:IsShown() then self:PaintFlyout(b.fly) end
+        end
         if slot.OnAttribute then slot.OnAttribute(self, b, name, value) end
     end)
+    if slot.OnDrop then
+        btn:SetScript("OnReceiveDrag", function(b) slot.OnDrop(self, b) end)
+    end
     if slot.Setup then slot.Setup(self, btn) end
     btn:Hide()
     self.slots[slot.key] = btn
@@ -911,12 +1047,22 @@ function Kit:AddSub(btn, sub)
     _G["BINDING_NAME_CLICK " .. sb:GetName() .. ":LeftButton"] = sub.binding or sub.label
 end
 
+local SUB_BELOW = 3 + 11 -- gap under the slot, plus half the sub
+
 function Kit:PlaceSub(btn)
     local sb = btn.sub
     if not sb then return end
-    local c = (self.edgeSide and SUB_EDGE[self.edgeSide]) or SUB_CORNER
+    local x, y
+    if self.edgeSide then
+        local c = SUB_EDGE[self.edgeSide]
+        x, y = c[1], c[2]
+    elseif sb.def.below then
+        x, y = self:Face(0, -(btn:GetHeight() / 2 + SUB_BELOW))
+    else
+        x, y = SUB_CORNER[1], SUB_CORNER[2]
+    end
     sb:ClearAllPoints()
-    sb:SetPoint("CENTER", btn, "CENTER", c[1], c[2])
+    sb:SetPoint("CENTER", btn, "CENTER", x, y)
 end
 
 ---------------------------------------------------------------------------
@@ -932,8 +1078,15 @@ end
 --   set = value        sets the slot's "kcset" attribute (in combat too);
 --                      the slot's OnAttribute sees it
 --   setAttr = { name, value }   sets any attribute on the slot, in combat too
---   selected, dim, count   (values or functions; repainted any time)
+--   value, assign      (slots with assign = true) with attrs: clicking it does
+--                      its action and makes it the slot's own, so a plain
+--                      click on the slot repeats it; saved in picks[slot]
+--   close              close the flyout after this choice
+--   selected, dim, count   (values or functions; repainted any time).
+--                      An assigned choice shows selected while it's the slot's.
 -- }
+-- A flyout stays open until it's toggled from its slot or you click
+-- elsewhere (in combat: until the mouse has been off it for a moment).
 ---------------------------------------------------------------------------
 
 function Kit:AddFlyout(btn)
@@ -961,10 +1114,18 @@ function Kit:AddFlyout(btn)
         t:SetAllPoints()
         t:SetColorTexture(0.04, 0.03, 0.05, 0.88)
     end
+    -- The flyout frame itself covers its choices (LayoutFlyout sizes it),
+    -- so "the mouse is over it" means over the choices.
+    pnl:SetAllPoints(fly)
     fly.panel = pnl
 
     self.header:SetFrameRef("kcnew", fly)
-    self.header:Execute([[ NFLY = NFLY + 1 FLYOUTS[NFLY] = self:GetFrameRef("kcnew") ]])
+    self.header:SetFrameRef("kcnewslot", btn)
+    self.header:Execute([[
+        NFLY = NFLY + 1
+        FLYOUTS[NFLY] = self:GetFrameRef("kcnew")
+        FLYSLOTS[NFLY] = self:GetFrameRef("kcnewslot")
+    ]])
     SecureHandlerSetFrameRef(btn, "kcfly", fly) -- (a plain secure button has no SetFrameRef of its own)
     btn:SetAttribute("kcflymode", slot.flyout or "right")
     SecureHandlerWrapScript(btn, "OnClick", self.header, TOGGLE_PRE)
@@ -999,7 +1160,8 @@ function Kit:FlyButton(fly, i)
     if b then return b end
     b = self:MakeItemButton(fly:GetName() .. i, fly, true)
     b:SetFrameLevel(fly.panel:GetFrameLevel() + 2)
-    SecureHandlerWrapScript(b, "OnClick", self.header, "", CHOICE_POST)
+    SecureHandlerWrapScript(b, "OnClick", self.header, CHOICE_PRE, CHOICE_POST)
+    SecureHandlerSetFrameRef(b, "kcslot", fly.slotBtn)
     b:SetAttribute("_kcpick", function(btn)
         if self:Debounced() and btn.choice then self:Pick(fly.slotBtn, btn.choice.pick) end
     end)
@@ -1047,13 +1209,135 @@ function Kit:FlyButton(fly, i)
             elseif c.spell then Try(GameTooltip.SetSpellByID, GameTooltip, c.spell)
             else GameTooltip:AddLine(c.label or "") end
             if c.hint then GameTooltip:AddLine(c.hint, 0.3, 1, 0.4, true) end
+            if fly.slotBtn.slot.reorder and c.value ~= nil and not InCombatLockdown() then
+                GameTooltip:AddLine("Drag: move it in this list", 1, 0.82, 0)
+            end
         end
         GameTooltip:Show()
     end)
     b:SetScript("OnLeave", GameTooltip_Hide)
     self:ApplyShape(b, self.db.roundSlots)
+    -- Drag a choice along its flyout to change the order (out of combat).
+    if fly.slotBtn.slot.reorder then
+        b:SetMovable(true)
+        b:RegisterForDrag("LeftButton")
+        b:SetScript("OnDragStart", function(btn)
+            if InCombatLockdown() or not (btn.choice and btn.choice.value ~= nil) then return end
+            GameTooltip:Hide()
+            btn:SetFrameLevel(fly.panel:GetFrameLevel() + 6)
+            btn.dragging = true
+            self:DragBegin(fly, btn)
+            btn:StartMoving()
+            btn:SetScript("OnUpdate", function(f, dt) self:DragTick(fly, f, dt) end)
+        end)
+        b:SetScript("OnDragStop", function(btn)
+            if not btn.dragging then return end
+            btn.dragging = nil
+            btn:SetScript("OnUpdate", nil)
+            btn:StopMovingOrSizing()
+            Try(btn.SetUserPlaced, btn, false) -- (the game mustn't remember where it was dropped)
+            btn:SetFrameLevel(fly.panel:GetFrameLevel() + 2)
+            self:DropChoice(fly, btn)
+        end)
+    end
     fly.buttons[i] = b
     return b
+end
+
+-- Dragging a choice along its flyout: the others slide aside, live, to show
+-- where everything will end up; letting go there saves the new order.
+-- Dropped away from the flyout, nothing changes.
+
+-- Where a frame's centre is, in the choices' units from the kit's centre.
+function Kit:FromKit(f)
+    local x, y = f:GetCenter()
+    local kx, ky = self.kit:GetCenter()
+    if not (x and kx) then return nil end
+    local k = self.kit:GetEffectiveScale() / f:GetEffectiveScale()
+    return x - kx * k, y - ky * k
+end
+
+function Kit:DragBegin(fly, dragged)
+    fly.dragFrom, fly.dragTo = nil, nil
+    for i = 1, fly.count or 0 do
+        local b = fly.buttons[i]
+        if b == dragged then fly.dragFrom = i end
+        local p = fly.pts and fly.pts[i]
+        if p then b.curX, b.curY = p[1], p[2] end
+    end
+    fly.dragTo = fly.dragFrom
+end
+
+-- Which spot the dragged choice is over: the nearest one, if it's close
+-- enough; else its own.
+function Kit:DragTarget(fly, dragged)
+    local x, y = self:FromKit(dragged)
+    if not x or not fly.pts then return fly.dragFrom end
+    local to, best
+    for i = 1, fly.count or 0 do
+        local p = fly.pts[i]
+        local d = (p[1] - x) ^ 2 + (p[2] - y) ^ 2
+        if not best or d < best then best, to = d, i end
+    end
+    local reach = self.BTN * 1.2
+    if best and best <= reach * reach then return to end
+    return fly.dragFrom
+end
+
+function Kit:DragTick(fly, dragged, dt)
+    if InCombatLockdown() or not fly.dragFrom then return end
+    local from, to = fly.dragFrom, self:DragTarget(fly, dragged)
+    fly.dragTo = to
+    local k = math.min(1, (dt or 0) * 14)
+    for i = 1, fly.count or 0 do
+        local b = fly.buttons[i]
+        if b ~= dragged then
+            -- Its place once the dragged one moves from "from" to "to".
+            local j = i
+            if from < to and i > from and i <= to then j = i - 1
+            elseif from > to and i >= to and i < from then j = i + 1 end
+            local p = fly.pts[j]
+            b.curX = (b.curX or p[1]) + (p[1] - (b.curX or p[1])) * k
+            b.curY = (b.curY or p[2]) + (p[2] - (b.curY or p[2])) * k
+            b:ClearAllPoints()
+            b:SetPoint("CENTER", self.kit, "CENTER", b.curX, b.curY)
+        end
+    end
+end
+
+function Kit:DropChoice(fly, dragged)
+    if InCombatLockdown() then return end
+    local slot = fly.slotBtn.slot
+    local from, to = fly.dragFrom, self:DragTarget(fly, dragged)
+    fly.dragFrom, fly.dragTo = nil, nil
+    if from and to and from ~= to then
+        local vals = {}
+        for i = 1, fly.count or 0 do
+            local b = fly.buttons[i]
+            vals[i] = b.choice and b.choice.value
+        end
+        local v = table.remove(vals, from)
+        table.insert(vals, to, v)
+        self.cdb.order[slot.key] = vals
+    end
+    self:LayoutFlyout(fly.slotBtn) -- every choice back in line, in its (new) place
+    if fly:IsShown() then self:PaintFlyout(fly) end
+end
+
+-- A slot's choices in your saved order (any not in it yet keep their place
+-- after the ones that are).
+function Kit:OrderChoices(slot, choices)
+    local saved = slot.reorder and self.cdb.order[slot.key]
+    if not saved then return choices end
+    local rank, at = {}, {}
+    for i, v in ipairs(saved) do rank[v] = i end
+    for i, c in ipairs(choices) do at[c] = i end
+    table.sort(choices, function(a, b)
+        local ra = a.value ~= nil and rank[a.value] or (1000 + at[a])
+        local rb = b.value ~= nil and rank[b.value] or (1000 + at[b])
+        return ra < rb
+    end)
+    return choices
 end
 
 -- Keep a flyout on screen: flip it to the other side of its slot when it
@@ -1117,11 +1401,11 @@ function Kit:LayoutFlyout(btn)
     local fly = btn.fly
     if not fly then return end
     local slot = btn.slot
-    local choices = slot.Choices(self, btn) or {}
+    local choices = self:OrderChoices(slot, slot.Choices(self, btn) or {})
     while #choices > 24 do table.remove(choices) end
     fly.nothing = slot.nothing
     local sx, sy = btn.placedX or slot.pos[1], btn.placedY or slot.pos[2]
-    local grid = slot.grid or FanDir(sx, sy)
+    local grid = slot.grid and self:FaceDir(slot.grid) or FanDir(sx, sy)
     if self.compactAngle then grid = FanDir(sx, sy) end
     if self.edgeSide then grid = TOWARD_MIDDLE[self.edgeSide] end
     local BTN = self.BTN
@@ -1132,14 +1416,18 @@ function Kit:LayoutFlyout(btn)
         local x, y
         local line, at = math.floor((i - 1) / per), (i - 1) % per
         local n = math.min(#choices - line * per, per)
+        -- A sub under the slot (not on an edge, where it's on the corner)
+        -- needs the flyout to clear it when it opens that way.
+        local gap = BTN + 10
+        if slot.flyGap and not self.edgeSide and grid == self:FaceDir("down") then gap = gap + slot.flyGap end
         if grid == "left" or grid == "right" then
             local dir = grid == "left" and -1 or 1
-            x = sx + dir * (BTN + 10 + at * step)
+            x = sx + dir * (gap + at * step)
             y = sy - line * step
         else
             local dir = grid == "down" and -1 or 1
             x = sx + (at - (n - 1) / 2) * step
-            y = sy + dir * (BTN + 10 + line * step)
+            y = sy + dir * (gap + line * step)
         end
         pts[i] = { x, y }
     end
@@ -1162,6 +1450,11 @@ function Kit:LayoutFlyout(btn)
             Set("attribute-name", c.setAttr and c.setAttr[1] or "kcset")
             Set("attribute-value", c.setAttr and c.setAttr[2] or c.set)
         end
+        if c.assign and c.attrs then
+            Set("kcassign", true)
+            Set("kcvalue", c.value)
+        end
+        if c.close then Set("kcclose", true) end
         b.attrKeys = keys
         local x, y = pts[i][1], pts[i][2]
         b:ClearAllPoints()
@@ -1176,6 +1469,7 @@ function Kit:LayoutFlyout(btn)
         fly.buttons[i]:Hide()
     end
     fly.count = #choices
+    fly.pts = pts
     fly:SetScale(self.db.scale)
 
     if #choices > 0 then
@@ -1185,14 +1479,41 @@ function Kit:LayoutFlyout(btn)
             y0, y1 = math.min(y0, p[2]), math.max(y1, p[2])
         end
         local pad = BTN / 2 + 7
-        fly.panel:ClearAllPoints()
-        fly.panel:SetPoint("TOPLEFT", self.kit, "CENTER", x0 - pad, y1 + pad)
-        fly.panel:SetPoint("BOTTOMRIGHT", self.kit, "CENTER", x1 + pad, y0 - pad)
+        fly:ClearAllPoints()
+        fly:SetPoint("TOPLEFT", self.kit, "CENTER", x0 - pad, y1 + pad)
+        fly:SetPoint("BOTTOMRIGHT", self.kit, "CENTER", x1 + pad, y0 - pad)
         fly.panel:Show()
     else
+        fly:ClearAllPoints()
+        fly:SetAllPoints(self.kit)
         fly.panel:Hide()
     end
     if fly:IsShown() then self:PaintFlyout(fly) end
+end
+
+-- Out of combat: a slot whose flyout choices are assigned to it does what
+-- its chosen one does (your pick, else its default, else the first).
+-- Copies the same attributes a choice copies when you click it in combat.
+function Kit:ApplyAssigned(btn)
+    local slot = btn.slot
+    local choices = slot.Choices(self, btn) or {}
+    local want = self.cdb.picks[slot.key]
+    if want == nil then want = Val(slot.default, self, btn) end
+    local found, first
+    for _, c in ipairs(choices) do
+        if c.assign and c.attrs then
+            first = first or c
+            if c.value == want then found = c end
+        end
+    end
+    local c = found or first
+    btn.assigned = c
+    btn.updating = true
+    local a = c and c.attrs or {}
+    for _, k in ipairs(ASSIGN_KEYS) do btn:SetAttribute(k, a[k]) end
+    btn:SetAttribute("kcvalue", c and c.value or nil)
+    btn.updating = nil
+    if not c and not Val(slot.keepEmpty, self, btn) then btn.hidden = true end
 end
 
 function Kit:LayoutFlyouts()
@@ -1205,7 +1526,12 @@ function Kit:PaintFlyout(fly)
         local c = i <= (fly.count or 0) and b.choice
         if c then
             U.SetIcon(b, Val(c.icon) or 134400, Val(c.dim))
-            b.sel:SetShown(Val(c.selected) and true or false)
+            local sel = Val(c.selected)
+            if sel == nil and c.assign then
+                local a = fly.slotBtn.assigned
+                sel = a and a.value == c.value
+            end
+            b.sel:SetShown(sel and true or false)
             local n = Val(c.count)
             b.count:SetText(n and n > 1 and n or "")
             if c.cooldown then U.SetCooldown(b.cooldown, c.cooldown()) else b.cooldown:Clear() end
@@ -1299,7 +1625,26 @@ function Kit:EdgeCols(asOpen, hypothetical)
         end
         cols[#cols + 1] = col
     end
+    if self.cfg.EdgeExtraCol then cols[#cols + 1] = self.cfg.EdgeExtraCol(self, hypothetical, asOpen) or {} end
     return cols
+end
+
+-- The kit's own extra frames (timers and such), if any.
+function Kit:Extras()
+    return self.cfg.extraFrames and self.cfg.extraFrames(self) or {}
+end
+
+-- Small "rim" slots: on the kit's rim, at this angle (degrees).
+function Kit:PlaceRim(angle)
+    local r = self:KitHalfUnits() - 3
+    local placed = false
+    for _, btn in pairs(self.slots) do
+        if btn.slot.rim then
+            self:PlaceAt(btn, r * math.cos(math.rad(angle)), r * math.sin(math.rad(angle)))
+            if btn:IsShown() and not btn.closing then placed = true end
+        end
+    end
+    return placed
 end
 
 function Kit:PlaceAt(f, x, y)
@@ -1310,17 +1655,79 @@ function Kit:PlaceAt(f, x, y)
     end
 end
 
+-- The divider goes between two edge columns while the kit is open.
+function Kit:EdgeDivAfter(asOpen)
+    local d = self.cfg.divider
+    return asOpen and d and d.edgeAfter or nil
+end
+
+-- The edgeBeside slots: either side of the kit button, along the edge.
+-- The i-th one showing: odd before the button, even after, outward in pairs.
+local BESIDE_GAP, BESIDE_STEP = 6, 26
+function Kit:BesideSpot(side, i)
+    local d = self:KitHalfUnits() + BESIDE_GAP + 11 + math.floor((i - 1) / 2) * BESIDE_STEP
+    local sign = (i % 2 == 1) and -1 or 1
+    if side == "left" or side == "right" then return 0, -sign * d end
+    return sign * d, 0
+end
+
 function Kit:PlaceEdge()
     local cols = self:EdgeCols(self.open, false)
-    local pos = self.Dock.EdgeArrange(self.edgeSide, self:KitHalfUnits(), cols, nil)
+    local pos, div = self.Dock.EdgeArrange(self.edgeSide, self:KitHalfUnits(), cols, self:EdgeDivAfter(self.open))
     for f, p in pairs(pos) do self:PlaceAt(f, p[1], p[2]) end
+    local beside = self.cfg.edgeBeside
+    if beside then
+        local i = 0
+        for _, key in ipairs(beside) do
+            local btn = self.slots[key]
+            if btn and not btn.hidden then
+                i = i + 1
+                self:PlaceAt(btn, self:BesideSpot(self.edgeSide, i))
+            end
+        end
+    end
+    local RIM = { left = 0, right = 180, top = 270, bottom = 90 } -- toward the middle of the screen
+    self:PlaceRim(RIM[self.edgeSide] or 0)
     for _, btn in pairs(self.slots) do self:PlaceSub(btn) end
+    local dv = self.divider
+    if dv then
+        dv:ClearAllPoints()
+        if div then
+            dv:SetPoint("CENTER", self.kit, "CENTER", div[1], div[2])
+            dv:SetSize(div[4] and 16 or div[3], div[4] and div[3] or 16)
+            dv.tex:SetSize(div[3], 16)
+            dv.tex:SetRotation(div[4] and math.pi / 2 or 0)
+        else
+            dv:SetPoint("CENTER", self.kit, "CENTER", 0, self.cfg.divider.y)
+        end
+        dv.edged = true
+    end
+end
+
+-- Back from an edge: the divider in its usual spot across the kit.
+function Kit:UnEdgeDivider()
+    local dv = self.divider
+    if not dv or not dv.edged then return end
+    dv.edged = nil
+    self:FaceDivider()
 end
 
 -- How much room along the edge the kit takes (UI units).
 function Kit:EdgeExtent(side, asOpen)
     local cols = self:EdgeCols(asOpen, true)
-    local _, _, ext = self.Dock.EdgeArrange(side, self:KitHalfUnits(), cols, nil)
+    local _, _, ext = self.Dock.EdgeArrange(side, self:KitHalfUnits(), cols, self:EdgeDivAfter(asOpen))
+    if self.cfg.edgeBeside then
+        -- Room for the slots beside the button that would show.
+        local n = 0
+        for _, key in ipairs(self.cfg.edgeBeside) do
+            local btn = self.slots[key]
+            if btn and ((asOpen and not btn.hidden) or btn.wouldShow) then n = n + 1 end
+        end
+        if n > 0 then
+            local pairsOut = math.ceil(n / 2)
+            ext = math.max(ext, 2 * (self:KitHalfUnits() + BESIDE_GAP + 22 + (pairsOut - 1) * BESIDE_STEP))
+        end
+    end
     local any = next(self.slots) and select(2, next(self.slots))
     local k = any and (any:GetEffectiveScale() / UIParent:GetEffectiveScale()) or self.db.scale
     return ext * k
@@ -1329,27 +1736,158 @@ end
 -- Where shown slots sit: their home spot round the kit; on a screen edge,
 -- in columns toward the middle of the screen; shrunk on the dock, fanned
 -- round the outside of the button in its own slice. Out of combat only.
+-- Facing (the "Layout direction" setting): the whole layout turns so its
+-- top points up, down, left or right. Down is the layout mirrored top to
+-- bottom; left and right turn it on its side, with slots that read left to
+-- right reading top to bottom.
+local FACE = {
+    up = function(x, y) return x, y end,
+    down = function(x, y) return x, -y end,
+    left = function(x, y) return -y, -x end,
+    right = function(x, y) return y, -x end,
+}
+C.FACINGS = { "up", "down", "left", "right" }
+
+-- The layout direction in use: the setting while floating; docked on the
+-- pin with other kits, always up, so the merged layout stays as it was.
+function Kit:Facing()
+    local D = self.Dock
+    if D and D.IsDocked and D.IsDocked(self.key) then return "up" end
+    return FACE[self.db and self.db.facing] and self.db.facing or "up"
+end
+
+function Kit:Face(x, y)
+    return FACE[self:Facing()](x, y)
+end
+
+function Kit:SetFacing(f)
+    if not FACE[f] then return end
+    if InCombatLockdown() then self:Print("That can only change out of combat.") return end
+    self.db.facing = f
+    self:Refresh(false)
+    self:KeepOnScreen()
+    if self.cfg.OnFacing then self.cfg.OnFacing(self) end
+    self:SettingsChanged()
+end
+
+function Kit:Sideways()
+    local f = self:Facing()
+    return f == "left" or f == "right"
+end
+
+-- A direction ("up", "left", ...) in the layout, turned the way it faces.
+local DIR_VEC = { up = { 0, 1 }, down = { 0, -1 }, left = { -1, 0 }, right = { 1, 0 } }
+function Kit:FaceDir(dir)
+    local v = DIR_VEC[dir]
+    if not v then return dir end
+    local x, y = self:Face(v[1], v[2])
+    if x > 0.5 then return "right" elseif x < -0.5 then return "left" elseif y > 0.5 then return "up" end
+    return "down"
+end
+
+-- cfg.ring: the slots that are there (not hidden) share the arc evenly.
+-- Fills base[btn] = { x, y } (before facing).
+function Kit:LayoutOneRing(ring, base)
+    local avail = {}
+    for _, key in ipairs(ring.keys) do
+        local btn = self.slots[key]
+        if btn and not btn.hidden then avail[#avail + 1] = btn end
+    end
+    -- The full ring's spacing, centred on the arc's middle: with fewer slots
+    -- the whole set (ends included) gathers round the top.
+    local n = #avail
+    local full = #ring.keys
+    local step = full > 1 and (ring.to - ring.from) / (full - 1) or 0
+    local mid = (ring.from + ring.to) / 2
+    for i, btn in ipairs(avail) do
+        local a = mid + (i - (n + 1) / 2) * step
+        base[btn] = { math.floor(ring.radius * math.cos(math.rad(a)) + 0.5), math.floor(ring.radius * math.sin(math.rad(a)) + 0.5) }
+    end
+end
+
+-- Every slot's home spot: its place in a ring (cfg.ring) or its pos, turned
+-- the way the layout faces. True if any moved.
+function Kit:LayoutHomes()
+    local base = {}
+    local rings = self.cfg.ring
+    if rings then
+        if rings.keys then rings = { rings } end
+        for _, ring in ipairs(rings) do self:LayoutOneRing(ring, base) end
+    end
+    local moved = false
+    for _, btn in pairs(self.slots) do
+        local b = base[btn] or btn.slot.pos
+        local x, y = self:Face(b[1], b[2])
+        if btn.homeX ~= x or btn.homeY ~= y then
+            btn.homeX, btn.homeY = x, y
+            moved = true
+        end
+    end
+    return moved
+end
+
+-- The divider across the kit, turned with the layout.
+function Kit:FaceDivider()
+    local dv, d = self.divider, self.cfg.divider
+    if not dv or dv.edged then return end
+    local x, y = self:Face(0, d.y)
+    local w = d.width or 200
+    local side = self:Sideways()
+    dv:ClearAllPoints()
+    dv:SetPoint("CENTER", self.kit, "CENTER", x, y)
+    dv:SetSize(side and 16 or w, side and w or 16)
+    dv.tex:SetSize(w, 16)
+    dv.tex:SetRotation(side and math.pi / 2 or 0)
+end
+
 function Kit:PlaceSlots()
+    local ringMoved = self:LayoutHomes()
     if self.edgeSide and self.Dock then return self:PlaceEdge() end
+    self:UnEdgeDivider()
+    self:FaceDivider()
     for _, btn in pairs(self.slots) do self:PlaceSub(btn) end
     local angle, span = self.compactAngle, self.compactSpan
     if not angle then
+        -- Slots already out glide to new home spots (the ring closing up
+        -- round a slot that went away, or opening back out).
+        local from
+        if ringMoved and self.Dock and self.Dock.Glide then
+            from = {}
+            for _, btn in pairs(self.slots) do
+                if btn:IsShown() and not btn.closing and not (btn.slideAnim and btn.slideAnim:IsPlaying()) then
+                    local x, y = btn:GetCenter()
+                    if x then from[btn] = { x, y, btn:GetEffectiveScale() } end
+                end
+            end
+        end
         for _, btn in pairs(self.slots) do self:PlaceAt(btn, btn.homeX, btn.homeY) end
+        if self.cfg.PlaceExtras then self.cfg.PlaceExtras(self) end
+        if from then
+            for f, b in pairs(from) do self.Dock.Glide(f, b[1], b[2], b[3]) end
+        end
         return
     end
     -- Shrunk on the dock: whatever's out fans round the button in its slice,
-    -- in rings of 4, pinned slots first, then the rest, each in slot order.
+    -- in rings of 4, by tier (if the kit gives them), then pinned slots
+    -- first, then the rest, each in slot order.
+    -- Small rim slots keep a place on the button's rim, on the side the
+    -- fan opens toward (away from the pin); the fan starts a little further
+    -- out so nothing lands on them.
+    local rimOut = self:PlaceRim(angle)
+    if self.cfg.PlaceExtras then self.cfg.PlaceExtras(self, angle) end
     local shown = {}
     for _, btn in pairs(self.slots) do
-        if btn:IsShown() and not btn.closing then shown[#shown + 1] = btn end
+        if btn:IsShown() and not btn.closing and not btn.slot.rim then shown[#shown + 1] = btn end
     end
     table.sort(shown, function(a, b)
+        local ta, tb = a.slot.tier or 0, b.slot.tier or 0 -- (slot.tier: nearest ring first)
+        if ta ~= tb then return ta < tb end
         local pa, pb = self.cdb.pinned[a.slot.key] and 1 or 0, self.cdb.pinned[b.slot.key] and 1 or 0
         if pa ~= pb then return pa > pb end
         return (a.order or 0) < (b.order or 0)
     end)
     local BTN, PER_RING = self.BTN, 4
-    local half = self:KitHalfUnits()
+    local half = self:KitHalfUnits() + (rimOut and 12 or 0)
     local r1 = math.max(half + (BTN / 2 + 4), (BTN + 4) * (PER_RING - 1) / math.rad(span or 115))
     local i = 0
     for ring = 1, math.ceil(#shown / PER_RING) do
@@ -1373,13 +1911,18 @@ function Kit:Reach()
     local ks = (self.kit:GetWidth() / 2) * s * (self.db.kitSize or 1) + 4
     local l, r, t, b = ks, ks, ks, ks
     for _, slot in ipairs(self.cfg.slots) do
-        local x, y = slot.pos[1], slot.pos[2]
+        local btn = self.slots[slot.key]
+        if not (btn and btn.hidden) then -- (a slot that isn't there doesn't need room)
+        local x, y = self:Face(slot.pos[1], slot.pos[2])
         local h = slot.small and 15 or half
         local extra = slot.sub and 8 or 0
-        l = math.max(l, (h - x) * s)
-        r = math.max(r, (x + h + extra) * s)
-        t = math.max(t, (y + h) * s)
-        b = math.max(b, (h + extra - y) * s)
+        local below = slot.sub and slot.sub.below and 26 or 0
+        local bx, by = self:Face(0, -below)
+        l = math.max(l, (h - math.min(x, x + bx)) * s)
+        r = math.max(r, (math.max(x, x + bx) + h + extra) * s)
+        t = math.max(t, (math.max(y, y + by) + h) * s)
+        b = math.max(b, (h + extra - math.min(y, y + by)) * s)
+        end
     end
     return l, r, t, b
 end
@@ -1404,6 +1947,7 @@ function Kit:Refresh(animate)
         local btn = self.slots[slot.key]
         btn.hidden = nil
         if slot.Update then slot.Update(self, btn) end
+        if slot.assign and not btn.hidden then self:ApplyAssigned(btn) end
         local sb = btn.sub
         if sb then
             sb.hidden = nil
@@ -1417,12 +1961,14 @@ function Kit:Refresh(animate)
     local from
     if self.edgeSide and (animate == "open" or animate == "close") then
         from = {}
-        for _, btn in pairs(self.slots) do
-            if btn:IsShown() and not btn.closing then
-                local x, y = btn:GetCenter()
-                if x then from[btn] = { x, y, btn:GetEffectiveScale() } end
+        local function Note(f)
+            if f:IsShown() and not f.closing then
+                local x, y = f:GetCenter()
+                if x then from[f] = { x, y, f:GetEffectiveScale() } end
             end
         end
+        for _, btn in pairs(self.slots) do Note(btn) end
+        for _, f in ipairs(self:Extras()) do Note(f) end
     end
 
     local slides, total = {}, #cfg.slots
@@ -1446,6 +1992,24 @@ function Kit:Refresh(animate)
             if btn.hidden then btn:Hide() else PlayClose(btn, i, total) end
         end
         btn.wouldShow = available and (cdb.pinned[slot.key] or pop) and true or false
+    end
+
+    -- The divider shows while the kit is open and its row below is out.
+    local dv = self.divider
+    if dv then
+        local rowOut = false
+        if self.open then
+            for _, key in ipairs(cfg.divider.below or {}) do
+                local b = self.slots[key]
+                if b and b:IsShown() and not b.closing then rowOut = true end
+            end
+        end
+        if rowOut and not dv:IsShown() then
+            dv:Show()
+            dv.fadeIn:Play()
+        elseif not rowOut then
+            dv:Hide()
+        end
     end
 
     self:PlaceSlots()
@@ -1509,12 +2073,14 @@ function Kit:BeginMove()
     self.moveDepth = (self.moveDepth or 0) + 1
     if self.moveDepth > 1 then return end
     self.slotSnap = {}
-    for _, btn in pairs(self.slots) do
-        if btn:IsShown() then
-            local x, y = btn:GetCenter()
-            if x then self.slotSnap[btn] = { x, y, btn:GetEffectiveScale() } end
+    local function Note(f)
+        if f:IsShown() then
+            local x, y = f:GetCenter()
+            if x then self.slotSnap[f] = { x, y, f:GetEffectiveScale() } end
         end
     end
+    for _, btn in pairs(self.slots) do Note(btn) end
+    for _, f in ipairs(self:Extras()) do Note(f) end
 end
 
 function Kit:EndMove()
@@ -1608,6 +2174,8 @@ function Kit:ApplyPosition()
     end
     for _, btn in pairs(self.slots) do btn:SetScale(db.scale) end
     for _, fly in pairs(self.flyouts) do fly:SetScale(db.scale) end
+    if self.divider then self.divider:SetScale(db.scale) end
+    for _, f in ipairs(self:Extras()) do f:SetScale(db.scale) end
     self:SetKitArt()
     self:ApplyShapes()
 end
@@ -1686,16 +2254,22 @@ function Kit:SetupMinimap()
     b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     b:RegisterForDrag("LeftButton")
     local icon = b:CreateTexture(nil, "ARTWORK")
-    icon:SetPoint("TOPLEFT", 6, -6)
-    icon:SetPoint("BOTTOMRIGHT", -6, 6)
-    icon:SetTexture(Val(self.cfg.minimapIcon, self) or 134400)
-    local mask = b:CreateMaskTexture()
-    mask:SetTexture(self.media .. "circle_mask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-    mask:SetAllPoints(icon)
-    icon:AddMaskTexture(mask)
-    local ring = b:CreateTexture(nil, "OVERLAY")
-    ring:SetAllPoints()
-    ring:SetTexture(self.media .. "ring_prof_64", nil, nil, "LINEAR")
+    if self.cfg.minimapArt then
+        -- The kit's own art, which has its own rim.
+        icon:SetAllPoints()
+        icon:SetTexture(Val(self.cfg.minimapArt, self), nil, nil, "LINEAR")
+    else
+        icon:SetPoint("TOPLEFT", 6, -6)
+        icon:SetPoint("BOTTOMRIGHT", -6, 6)
+        icon:SetTexture(Val(self.cfg.minimapIcon, self) or 134400)
+        local mask = b:CreateMaskTexture()
+        mask:SetTexture(self.media .. "circle_mask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+        mask:SetAllPoints(icon)
+        icon:AddMaskTexture(mask)
+        local ring = b:CreateTexture(nil, "OVERLAY")
+        ring:SetAllPoints()
+        ring:SetTexture(self.media .. "ring_prof_64", nil, nil, "LINEAR")
+    end
     local hl = b:CreateTexture(nil, "HIGHLIGHT")
     hl:SetTexture(self.media .. "glow_ring")
     hl:SetBlendMode("ADD")
@@ -1782,6 +2356,21 @@ function Kit:BuildSettings()
         registered[#registered + 1] = { setting = s, tbl = tbl, key = key }
         return s
     end
+    -- list: { { value, label }, ... } (string values)
+    function S.Dropdown(tbl, key, name, tooltip, default, list, fn)
+        if not (Settings.CreateDropdown and Settings.CreateControlTextContainer) then return end
+        local VAR_STR = (Settings.VarType and Settings.VarType.String) or "string"
+        local s = Settings.RegisterAddOnSetting(category, P .. "_" .. key, key, tbl, VAR_STR, name, default)
+        local function Options()
+            local c = Settings.CreateControlTextContainer()
+            for _, o in ipairs(list) do c:Add(o[1], o[2]) end
+            return c:GetData()
+        end
+        Settings.CreateDropdown(category, s, Options, tooltip)
+        OnChange(s, fn)
+        registered[#registered + 1] = { setting = s, tbl = tbl, key = key }
+        return s
+    end
     function S.Button(name, text, tooltip, fn)
         if CreateSettingsButtonInitializer then
             layout:AddInitializer(CreateSettingsButtonInitializer(name, text, fn, tooltip, true))
@@ -1803,27 +2392,45 @@ function Kit:BuildSettings()
         "Left-click for these settings, right-click to open the kit, drag to move it.", true,
         function() self:ApplyMinimap() end)
     S.Checkbox(db, "tooltipDefault", "Default tooltip position",
-        "Show slot tooltips where the game normally shows tooltips, instead of beside the slot.", false)
+        "Show tooltips where the game normally shows them (usually the bottom right of the screen) instead of at your mouse.", false)
     S.Checkbox(db, "roundSlots", "Round slots",
         "Round icons with a gold ring instead of square bag slots.", true, function() self:ApplyShapes() end)
     S.Checkbox(db, "fadeIdle", "Fade when idle",
         "The kit and pinned slots fade until you mouse over them.", false, refresh)
     S.Checkbox(db, "hideInCombat", "Hide in combat", "Hide the kit while you're in combat.", false,
         function() self:ApplyCombatHide() end)
+    S.Dropdown(db, "facing", "Layout direction",
+        "Which way the slots lay out round the kit while it's floating (on a screen edge they always face the middle of the screen).",
+        "up", {
+            { "up", "Up (as made)" },
+            { "down", "Down (upside down)" },
+            { "left", "Left (on its side)" },
+            { "right", "Right (on its side)" },
+        }, function() self:SetFacing(db.facing) end)
+    S.Slider(db, "flyoutHide", "Drawer close delay in combat",
+        "In combat a drawer can't close when you click elsewhere, so it closes by itself this long after the mouse leaves it and its slot.",
+        0.5, 0.2, 2, 0.1, function(v) return ("%.1fs"):format(v) end)
 
     if cfg.Settings then cfg.Settings(self, S) end
 
     S.Header("Slots (this character)")
-    for _, slot in ipairs(cfg.slots) do
+    local listed = cfg.slots
+    if cfg.menuOrder then
+        listed = {}
+        for _, key in ipairs(cfg.menuOrder) do listed[#listed + 1] = self.slotByKey[key] end
+    end
+    for _, slot in ipairs(listed) do
         if not slot.noPin then
             S.Checkbox(cdb.pinned, slot.key, "Always show: " .. slot.label,
                 "Keep this slot out when the kit is closed. You can also shift-right-click the slot.",
                 false, refresh, "pin_" .. slot.key)
         end
     end
-    S.Button("Slot choices", "Reset", "Put every slot back to its starting choice.", function()
+    if cfg.PinSettings then cfg.PinSettings(self, S) end
+    S.Button("Slot choices", "Reset", "Put every slot back to its starting choice, and every list back in its starting order.", function()
         if InCombatLockdown() then self:Print("That can only change out of combat.") return end
         wipe(cdb.picks)
+        wipe(cdb.order)
         self:Refresh(false)
         self:Print("Slot choices reset.")
     end)
@@ -1872,6 +2479,7 @@ function Kit:Slash(msg)
     elseif cmd == "help" then
         self:Print(slash .. " - settings   " .. slash .. " lock | unlock | show | hide | reset")
         self:Print(slash .. " minimap - show or hide the minimap button")
+        self:Print(slash .. " face up | down | left | right - which way the layout points")
         if self.Dock and not cfg.edgesOnly then self:Print(slash .. " dock - dock every kit on the pin   " .. slash .. " flip") end
         for _, line in ipairs(cfg.helpLines or {}) do self:Print(line) end
     elseif InCombatLockdown() then
@@ -1888,6 +2496,13 @@ function Kit:Slash(msg)
             self:Print("Kits docked together on the pin.")
         else
             self:Print("Docking needs another kit installed.")
+        end
+    elseif cmd == "face" then
+        local f = (rest or ""):lower():match("^(%a+)")
+        if f and FACE[f] then
+            self:SetFacing(f)
+        else
+            self:Print(slash .. " face up | down | left | right   (now " .. (self.db.facing or "up") .. ")")
         end
     elseif cmd == "flip" and self.Dock and not cfg.edgesOnly then
         self.Dock.Flip()
@@ -1974,7 +2589,27 @@ function Kit:OnEvent(event, ...)
     elseif event == "PLAYER_REGEN_DISABLED" then
         GameTooltip:Hide()
         if self.db.hideInCombat and not InCombatLockdown() then self.holder:Hide() end
+        -- Combat is about to start (still allowed now): flyouts opened from
+        -- here on, and any open already, close themselves once the mouse
+        -- leaves them, since a click elsewhere can't close them in combat.
+        if not InCombatLockdown() then
+            local delay = tonumber(self.db.flyoutHide) or 0.5
+            delay = math.min(2, math.max(0.2, delay))
+            self.header:SetAttribute("kchide", delay)
+            self.header:SetAttribute("kccombat", true)
+            pcall(self.header.Execute, self.header, ([[
+                for i = 1, NFLY do
+                    local f = FLYOUTS[i]
+                    if f:IsShown() then
+                        f:RegisterAutoHide(%s)
+                        f:AddToAutoHide(FLYSLOTS[i])
+                    end
+                end
+            ]]):format(delay))
+        end
     elseif event == "PLAYER_REGEN_ENABLED" then
+        self.header:SetAttribute("kccombat", false)
+        pcall(self.header.Execute, self.header, [[ for i = 1, NFLY do FLYOUTS[i]:UnregisterAutoHide() end ]])
         if self.db.hideInCombat then self.holder:Show() end
         if self.pending then
             self:ApplyPosition()
@@ -1994,6 +2629,7 @@ function Kit:Build()
     self:RegisterDock()
     self:ApplyCombatHide()
     self.kit:SetShown(self.db.shown ~= false)
+    if cfg.AfterBuild then cfg.AfterBuild(self) end
     self:SetupSettings()
     self:SetupMinimap()
 

@@ -5,7 +5,7 @@ rem Run it once from the KitCore folder that sits next to the kit folders.
 setlocal
 set "CORE=%~dp0"
 set "CORE=%CORE:~0,-1%"
-for %%K in (WarlockKit) do (
+for %%K in (FirstAidKit CampingKit FishingKit WarlockKit) do (
   if exist "%CORE%\..\%%K\" (
     if not exist "%CORE%\..\%%K\Libs\" mkdir "%CORE%\..\%%K\Libs"
     if exist "%CORE%\..\%%K\Libs\KitCore\" (
