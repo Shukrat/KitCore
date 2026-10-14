@@ -2255,25 +2255,29 @@ function Kit:SetupMinimap()
     b:RegisterForDrag("LeftButton")
     local icon = b:CreateTexture(nil, "ARTWORK")
     if self.cfg.minimapArt then
-        -- The kit's own art, which has its own rim.
-        icon:SetAllPoints()
+        -- The kit's own art, which has its own rim: 27 across inside the 31
+        -- button, the same size as other addons' minimap buttons.
+        icon:SetPoint("TOPLEFT", 2, -2)
+        icon:SetPoint("BOTTOMRIGHT", -2, 2)
         icon:SetTexture(Val(self.cfg.minimapArt, self), nil, nil, "LINEAR")
     else
-        icon:SetPoint("TOPLEFT", 6, -6)
-        icon:SetPoint("BOTTOMRIGHT", -6, 6)
+        icon:SetPoint("TOPLEFT", 7, -7)
+        icon:SetPoint("BOTTOMRIGHT", -7, 7)
         icon:SetTexture(Val(self.cfg.minimapIcon, self) or 134400)
         local mask = b:CreateMaskTexture()
         mask:SetTexture(self.media .. "circle_mask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
         mask:SetAllPoints(icon)
         icon:AddMaskTexture(mask)
         local ring = b:CreateTexture(nil, "OVERLAY")
-        ring:SetAllPoints()
+        ring:SetPoint("TOPLEFT", 2, -2)
+        ring:SetPoint("BOTTOMRIGHT", -2, 2)
         ring:SetTexture(self.media .. "ring_prof_64", nil, nil, "LINEAR")
     end
     local hl = b:CreateTexture(nil, "HIGHLIGHT")
     hl:SetTexture(self.media .. "glow_ring")
     hl:SetBlendMode("ADD")
-    hl:SetAllPoints()
+    hl:SetPoint("TOPLEFT", 2, -2)
+    hl:SetPoint("BOTTOMRIGHT", -2, 2)
     hl:SetAlpha(0.5)
     b:SetScript("OnClick", function(_, mouse)
         if mouse == "RightButton" then self:Toggle() else self:OpenSettings() end
