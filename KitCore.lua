@@ -210,6 +210,7 @@ C.BASE_DEFAULTS = {
     tooltipDefault = false, -- slot tooltips in the game's usual spot instead of beside the slot
     roundSlots = true,
     hideInCombat = false,
+    chatNotices = true,    -- false: the kit's own notices stay out of chat (slash commands still answer)
     minimapButton = true,
     minimapAngle = 200,
     facing = "up",         -- which way the layout points while the kit floats: up, down, left, right
@@ -360,7 +361,10 @@ function C.NewKit(cfg)
     return self
 end
 
-function Kit:Print(msg)
+-- Chat messages. With "Chat messages" off in settings, only replies to a
+-- slash command (and force, for something that's gone wrong) get through.
+function Kit:Print(msg, force)
+    if not force and not self.inSlash and self.db and self.db.chatNotices == false then return end
     DEFAULT_CHAT_FRAME:AddMessage("|cff" .. (self.cfg.color or "ffd100") .. "[" .. self.name .. "]|r " .. msg)
 end
 
@@ -2358,7 +2362,7 @@ function Kit:OpenSettings()
     if self.openSettings then
         self.openSettings()
     else
-        self:Print("The settings panel isn't available on this build. " .. (self.cfg.slash and self.cfg.slash[1] or "") .. " help lists the slash commands.")
+        self:Print("The settings panel isn't available on this build. " .. (self.cfg.slash and self.cfg.slash[1] or "") .. " help lists the slash commands.", true)
     end
 end
 
@@ -2438,6 +2442,8 @@ function Kit:BuildSettings()
     S.Checkbox(db, "minimapButton", "Show minimap button",
         "Left-click for these settings, right-click to open the kit, drag to move it.", true,
         function() self:ApplyMinimap() end)
+    S.Checkbox(db, "chatNotices", "Chat messages",
+        "Notices in chat when something changes (pinned in place, always shown, snoozed and the like). Slash commands still answer in chat.", true)
     S.Checkbox(db, "tooltipDefault", "Default tooltip position",
         "Show slot tooltips where the game normally shows tooltips, instead of beside the slot.", false)
     S.Checkbox(db, "roundSlots", "Round slots",
@@ -2507,7 +2513,7 @@ function Kit:SetupSettings()
     local ok, err = pcall(self.BuildSettings, self)
     if not ok then
         self.openSettings = nil
-        self:Print("Settings panel failed to load (" .. tostring(err) .. "). " .. (self.cfg.slash and self.cfg.slash[1] or "") .. " help lists the slash commands.")
+        self:Print("Settings panel failed to load (" .. tostring(err) .. "). " .. (self.cfg.slash and self.cfg.slash[1] or "") .. " help lists the slash commands.", true)
     end
 end
 
@@ -2515,7 +2521,16 @@ end
 -- Slash commands
 ---------------------------------------------------------------------------
 
+-- Anything printed while a slash command runs is its answer, so it shows
+-- even with "Chat messages" off.
 function Kit:Slash(msg)
+    self.inSlash = true
+    local ok, err = pcall(self.RunSlash, self, msg)
+    self.inSlash = nil
+    if not ok then error(err, 0) end
+end
+
+function Kit:RunSlash(msg)
     local cfg = self.cfg
     local slash = cfg.slash and cfg.slash[1] or ""
     local cmd, rest = (msg or ""):match("^%s*(%S*)%s*(.-)%s*$")
