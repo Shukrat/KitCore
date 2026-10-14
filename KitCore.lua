@@ -168,7 +168,7 @@ local function ArtSize(px, sizes)
     return sizes[#sizes]
 end
 local function ScreenPx(frame, units)
-    local _, h = GetPhysicalScreenSize and GetPhysicalScreenSize()
+    local h = GetPhysicalScreenSize and select(2, GetPhysicalScreenSize()) -- (an "and" would keep only the width)
     if h and h > 0 then return units * frame:GetEffectiveScale() * h / 768 end
     return units
 end
