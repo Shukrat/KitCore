@@ -16,7 +16,7 @@ Each kit's `.pkgmeta` pulls this repository into `Libs/KitCore` when a release i
 externals:
   Libs/KitCore:
     url: https://github.com/Shukrat/KitCore
-    tag: v2
+    tag: v3
 ```
 
 The kit's `.toc` loads `Libs\KitDock\KitDock.lua` (if it uses the dock), then `Libs\KitCore\KitCore.lua`, then its own file, which calls `KitCore.NewKit({ ... })` when it loads. The comment block above `C.NewKit` in `KitCore.lua` lists everything a kit can describe.
@@ -26,7 +26,7 @@ The kit ships the art Kit Core uses in its own `media` folder: `circle_mask`, `g
 ## Releasing a new version
 
 1. Raise `VERSION` in `KitCore.lua`.
-2. Tag the commit `v<VERSION>` (e.g. `v2`) and push the tag.
+2. Tag the commit `v<VERSION>` (e.g. `v3`) and push the tag.
 3. In each kit, bump the `tag:` in `.pkgmeta` once you've tested it.
 
 ## Local development (Windows)
