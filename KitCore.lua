@@ -23,7 +23,7 @@ local addonName, ns = ...
 -- is worked out out of combat, whenever the kit refreshes.
 ---------------------------------------------------------------------------
 
-local VERSION = 2
+local VERSION = 3
 local C = _G.KitCore
 if C and (C.version or 0) >= VERSION then
     ns.Core = C
@@ -168,7 +168,7 @@ local function ArtSize(px, sizes)
     return sizes[#sizes]
 end
 local function ScreenPx(frame, units)
-    local _, h = GetPhysicalScreenSize and GetPhysicalScreenSize()
+    local h = GetPhysicalScreenSize and select(2, GetPhysicalScreenSize()) -- (an "and" would keep only the width)
     if h and h > 0 then return units * frame:GetEffectiveScale() * h / 768 end
     return units
 end
@@ -207,7 +207,7 @@ C.BASE_DEFAULTS = {
     shown = true,          -- false: the whole kit is hidden (settings or the shared minimap menu)
     locked = false,
     fadeIdle = false,
-    tooltipDefault = false, -- tooltips in the game's usual spot instead of at the mouse
+    tooltipDefault = false, -- slot tooltips in the game's usual spot instead of beside the slot
     roundSlots = true,
     hideInCombat = false,
     minimapButton = true,
@@ -381,10 +381,11 @@ local function DefaultAnchor(owner)
     end
 end
 
--- Tooltips (the kit button's and every slot's) follow the mouse, or sit
--- where the game puts its own ("Default tooltip position").
+-- Slot, sub and flyout tooltips sit beside what you're hovering, or where the
+-- game puts its own ("Default tooltip position"). The kit button's always
+-- goes in the game's spot.
 function Kit:TipOwner(owner)
-    if self.db.tooltipDefault then DefaultAnchor(owner) else GameTooltip:SetOwner(owner, "ANCHOR_CURSOR") end
+    if self.db.tooltipDefault then DefaultAnchor(owner) else GameTooltip:SetOwner(owner, "ANCHOR_RIGHT") end
 end
 
 function Kit:Hover(on)
@@ -704,7 +705,7 @@ function Kit:BuildKit()
     kit:SetScript("OnDragStart", function(b)
         if self.db.locked or InCombatLockdown() then return end
         self:CloseFlyouts()
-        GameTooltip:Hide() -- it would follow the mouse along
+        GameTooltip:Hide()
         if self.Dock then self.Dock.DragStart(self.key) else
             b.moving = true
             b:StartMoving()
@@ -739,7 +740,7 @@ function Kit:BuildKit()
     end)
     kit:SetScript("OnEnter", function(b)
         self:Hover(true)
-        self:TipOwner(b)
+        DefaultAnchor(b)
         GameTooltip:AddLine(self.name)
         if cfg.KitTooltip then cfg.KitTooltip(self) end
         GameTooltip:AddLine("Left-click: open / close", 1, 1, 1)
@@ -2255,25 +2256,29 @@ function Kit:SetupMinimap()
     b:RegisterForDrag("LeftButton")
     local icon = b:CreateTexture(nil, "ARTWORK")
     if self.cfg.minimapArt then
-        -- The kit's own art, which has its own rim.
-        icon:SetAllPoints()
+        -- The kit's own art, which has its own rim: 27 across inside the 31
+        -- button, the same size as other addons' minimap buttons.
+        icon:SetPoint("TOPLEFT", 2, -2)
+        icon:SetPoint("BOTTOMRIGHT", -2, 2)
         icon:SetTexture(Val(self.cfg.minimapArt, self), nil, nil, "LINEAR")
     else
-        icon:SetPoint("TOPLEFT", 6, -6)
-        icon:SetPoint("BOTTOMRIGHT", -6, 6)
+        icon:SetPoint("TOPLEFT", 7, -7)
+        icon:SetPoint("BOTTOMRIGHT", -7, 7)
         icon:SetTexture(Val(self.cfg.minimapIcon, self) or 134400)
         local mask = b:CreateMaskTexture()
         mask:SetTexture(self.media .. "circle_mask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
         mask:SetAllPoints(icon)
         icon:AddMaskTexture(mask)
         local ring = b:CreateTexture(nil, "OVERLAY")
-        ring:SetAllPoints()
+        ring:SetPoint("TOPLEFT", 2, -2)
+        ring:SetPoint("BOTTOMRIGHT", -2, 2)
         ring:SetTexture(self.media .. "ring_prof_64", nil, nil, "LINEAR")
     end
     local hl = b:CreateTexture(nil, "HIGHLIGHT")
     hl:SetTexture(self.media .. "glow_ring")
     hl:SetBlendMode("ADD")
-    hl:SetAllPoints()
+    hl:SetPoint("TOPLEFT", 2, -2)
+    hl:SetPoint("BOTTOMRIGHT", -2, 2)
     hl:SetAlpha(0.5)
     b:SetScript("OnClick", function(_, mouse)
         if mouse == "RightButton" then self:Toggle() else self:OpenSettings() end
@@ -2392,7 +2397,7 @@ function Kit:BuildSettings()
         "Left-click for these settings, right-click to open the kit, drag to move it.", true,
         function() self:ApplyMinimap() end)
     S.Checkbox(db, "tooltipDefault", "Default tooltip position",
-        "Show tooltips where the game normally shows them (usually the bottom right of the screen) instead of at your mouse.", false)
+        "Show slot tooltips where the game normally shows tooltips, instead of beside the slot.", false)
     S.Checkbox(db, "roundSlots", "Round slots",
         "Round icons with a gold ring instead of square bag slots.", true, function() self:ApplyShapes() end)
     S.Checkbox(db, "fadeIdle", "Fade when idle",
