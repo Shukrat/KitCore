@@ -201,7 +201,7 @@ end)
 ---------------------------------------------------------------------------
 
 C.BASE_DEFAULTS = {
-    point = { "CENTER", "CENTER", 0, -160 },
+    point = { "CENTER", "CENTER", 0, -160, "ui" },
     scale = 1,
     kitSize = 1,
     shown = true,          -- false: the whole kit is hidden (settings or the shared minimap menu)
@@ -2107,9 +2107,26 @@ end
 -- Position, moving, tucking, showing
 ---------------------------------------------------------------------------
 
+-- The kit's spot is saved as its centre, measured from the nearest part of
+-- the screen (a corner, an edge's middle, or the middle) in UIParent units,
+-- marked "ui". Anchor offsets are in a frame's own scale, so a spot saved in
+-- the kit's own units moved whenever its size changed: the kit slid toward
+-- or away from its anchor instead of growing and shrinking where it stands.
+-- Spots saved before (no "ui" mark) are in the kit's own units; PlaceFree
+-- puts those back as they were and saves them again the new way.
 function Kit:SavePosition()
-    local point, _, relPoint, x, y = self.kit:GetPoint(1)
-    self.db.point = { point, relPoint, x, y }
+    local kit = self.kit
+    local x, y = kit:GetCenter()
+    if not x then return end
+    local k = kit:GetEffectiveScale() / UIParent:GetEffectiveScale()
+    x, y = x * k, y * k
+    local W, H = UIParent:GetWidth(), UIParent:GetHeight()
+    local h = x < W / 3 and "LEFT" or x > W * 2 / 3 and "RIGHT" or ""
+    local v = y < H / 3 and "BOTTOM" or y > H * 2 / 3 and "TOP" or ""
+    local rel = (v .. h ~= "") and (v .. h) or "CENTER"
+    local ax = h == "LEFT" and 0 or h == "RIGHT" and W or W / 2
+    local ay = v == "BOTTOM" and 0 or v == "TOP" and H or H / 2
+    self.db.point = { "CENTER", rel, x - ax, y - ay, "ui" }
 end
 
 -- Pinned slots stay out while the kit is closed, anchored to its button, so
@@ -2170,8 +2187,15 @@ end
 -- This kit's own saved spot (when the dock isn't placing it).
 function Kit:PlaceFree()
     local p = self.db.point
-    self.kit:ClearAllPoints()
-    self.kit:SetPoint(p[1], UIParent, p[2], p[3], p[4])
+    local kit = self.kit
+    kit:ClearAllPoints()
+    if p[5] == "ui" then
+        local k = kit:GetEffectiveScale() / UIParent:GetEffectiveScale()
+        kit:SetPoint(p[1], UIParent, p[2], p[3] / k, p[4] / k)
+    else
+        kit:SetPoint(p[1], UIParent, p[2], p[3], p[4])
+        self:SavePosition()
+    end
     self:KeepOnScreen()
 end
 
@@ -2210,21 +2234,32 @@ function Kit:SetShownKit(show)
     self:SettingsChanged()
 end
 
+-- A docked kit (on the pin or a screen edge) is anchored by offsets in its
+-- own scale, so resizing it before the dock places it would fling it away,
+-- and the dock would then glide it back from there. The dock resizes it
+-- itself (BaseScale) as it lays it out, from where it really stood. Slots
+-- are resized inside one BeginMove / EndMove, so they glide to their new
+-- spots with the button instead of snapping.
 function Kit:ApplyPosition()
     if InCombatLockdown() then self.pending = true return end
     local db = self.db
-    self.kit:SetScale(db.scale * (db.kitSize or 1))
-    if self.Dock and self.Dock.IsDocked(self.key) then
-        self.Dock.Layout()
-    else
-        self:PlaceFree()
-    end
+    local scale = db.scale * (db.kitSize or 1)
+    self:BeginMove()
     for _, btn in pairs(self.slots) do btn:SetScale(db.scale) end
     for _, fly in pairs(self.flyouts) do fly:SetScale(db.scale) end
     if self.divider then self.divider:SetScale(db.scale) end
     for _, f in ipairs(self:Extras()) do f:SetScale(db.scale) end
+    if self.Dock and self.Dock.IsDocked(self.key) then
+        -- (the dock glides the kit from its old size, so its scale is short
+        -- of the new one until the glide ends: never set it here)
+        self.Dock.Layout()
+    else
+        self.kit:SetScale(scale)
+        self:PlaceFree()
+    end
     self:SetKitArt()
     self:ApplyShapes()
+    self:EndMove()
 end
 
 function Kit:SettingsChanged()
@@ -2569,7 +2604,8 @@ function Kit:RunSlash(msg)
     elseif cmd == "flip" and self.Dock and not cfg.edgesOnly then
         self.Dock.Flip()
     elseif cmd == "reset" then
-        self.db.point = { unpack(cfg.defaults and cfg.defaults.point or C.BASE_DEFAULTS.point) }
+        local d = cfg.defaults and cfg.defaults.point or C.BASE_DEFAULTS.point
+        self.db.point = { d[1], d[2], d[3], d[4], "ui" } -- (starting spots are in screen units)
         if self.Dock and self.Dock.Undock then self.Dock.Undock(self.key) end
         self:ApplyPosition()
         self:Print("Kit moved back to its starting spot.")
