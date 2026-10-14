@@ -23,7 +23,7 @@ local addonName, ns = ...
 -- is worked out out of combat, whenever the kit refreshes.
 ---------------------------------------------------------------------------
 
-local VERSION = 3
+local VERSION = 4
 local C = _G.KitCore
 if C and (C.version or 0) >= VERSION then
     ns.Core = C
@@ -210,6 +210,7 @@ C.BASE_DEFAULTS = {
     tooltipDefault = false, -- slot tooltips in the game's usual spot instead of beside the slot
     roundSlots = true,
     hideInCombat = false,
+    chatNotices = true,    -- false: the kit's own notices stay out of chat (slash commands still answer)
     minimapButton = true,
     minimapAngle = 200,
     facing = "up",         -- which way the layout points while the kit floats: up, down, left, right
@@ -276,6 +277,10 @@ C.BASE_CHAR = {
 --   events        { EVENT = function(kit, ...) end }
 --   unitEvents    { EVENT = { units = { "player" }, fn = function(kit, ...) end } }
 --   Settings(kit, S)    the kit's own section of the settings panel
+--   Menu(kit, root)     the kit's own lines in its right-click menu, between
+--                 "Pin in place" and "Settings" (root is the game's menu
+--                 description: root:CreateCheckbox, root:CreateButton, ...;
+--                 kit:MenuToggle(root, label, dbKey, after) adds an on/off line)
 --   Slash(kit, cmd, rest) true if it handled cmd;  helpLines { "..." }
 --   minimapIcon   texture for the minimap button
 --
@@ -356,7 +361,10 @@ function C.NewKit(cfg)
     return self
 end
 
-function Kit:Print(msg)
+-- Chat messages. With "Chat messages" off in settings, only replies to a
+-- slash command (and force, for something that's gone wrong) get through.
+function Kit:Print(msg, force)
+    if not force and not self.inSlash and self.db and self.db.chatNotices == false then return end
     DEFAULT_CHAT_FRAME:AddMessage("|cff" .. (self.cfg.color or "ffd100") .. "[" .. self.name .. "]|r " .. msg)
 end
 
@@ -730,10 +738,7 @@ function Kit:BuildKit()
             return
         end
         if button == "RightButton" then
-            if InCombatLockdown() then return end
-            self.db.locked = not self.db.locked
-            self:Print(self.db.locked and "Locked." or "Unlocked. Drag to move.")
-            self:SettingsChanged()
+            self:OpenMenu()
             return
         end
         self:SetOpen(not self.open)
@@ -744,11 +749,52 @@ function Kit:BuildKit()
         GameTooltip:AddLine(self.name)
         if cfg.KitTooltip then cfg.KitTooltip(self) end
         GameTooltip:AddLine("Left-click: open / close", 1, 1, 1)
-        GameTooltip:AddLine(self.db.locked and "Right-click: unlock" or "Drag: move   Right-click: lock", 1, 1, 1)
-        GameTooltip:AddLine("Shift-right-click: settings", 1, 1, 1)
+        if not self.db.locked then GameTooltip:AddLine("Drag: move", 1, 1, 1) end
+        GameTooltip:AddLine("Right-click: menu   Shift-right-click: settings", 1, 1, 1)
         GameTooltip:Show()
     end)
     kit:SetScript("OnLeave", function() self:Hover(false) end)
+end
+
+---------------------------------------------------------------------------
+-- The kit button's right-click menu, at the cursor: Pin in place, the
+-- kit's own lines (cfg.Menu), Settings. Uses the game's menu system; on a
+-- client without it, right-click locks and unlocks as it used to.
+---------------------------------------------------------------------------
+
+function Kit:SetLocked(on)
+    if InCombatLockdown() then self:Print("That can only change out of combat.") return end
+    self.db.locked = on and true or false
+    self:Print(self.db.locked and "Pinned in place." or "Unpinned. Drag the kit to move it.")
+    self:SettingsChanged()
+end
+
+-- An on/off line for a saved setting. after(kit) runs once it's changed.
+function Kit:MenuToggle(root, label, key, after)
+    root:CreateCheckbox(label,
+        function() return self.db[key] and true or false end,
+        function()
+            self.db[key] = not self.db[key]
+            if after then after(self) end
+            self:SettingsChanged()
+        end)
+end
+
+function Kit:OpenMenu()
+    GameTooltip:Hide()
+    if not (MenuUtil and MenuUtil.CreateContextMenu) then
+        self:SetLocked(not self.db.locked)
+        return
+    end
+    MenuUtil.CreateContextMenu(self.kit, function(_, root)
+        root:CreateTitle(self.name)
+        root:CreateCheckbox("Pin in place",
+            function() return self.db.locked and true or false end,
+            function() self:SetLocked(not self.db.locked) end)
+        if self.cfg.Menu then self.cfg.Menu(self, root) end
+        root:CreateDivider()
+        root:CreateButton("Settings", function() self:OpenSettings() end)
+    end)
 end
 
 function Kit:SetKitArt()
@@ -2316,7 +2362,7 @@ function Kit:OpenSettings()
     if self.openSettings then
         self.openSettings()
     else
-        self:Print("The settings panel isn't available on this build. " .. (self.cfg.slash and self.cfg.slash[1] or "") .. " help lists the slash commands.")
+        self:Print("The settings panel isn't available on this build. " .. (self.cfg.slash and self.cfg.slash[1] or "") .. " help lists the slash commands.", true)
     end
 end
 
@@ -2388,7 +2434,7 @@ function Kit:BuildSettings()
     S.Checkbox(db, "shown", "Show " .. self.name,
         "Turn off to hide the whole kit (its button and every slot) without uninstalling it.",
         true, function() self:SetShownKit(db.shown) end)
-    S.Checkbox(db, "locked", "Lock position", "Stop the kit from being dragged. You can also right-click it.", false)
+    S.Checkbox(db, "locked", "Pin in place", "Stop the kit from being dragged. Also in the kit's right-click menu.", false)
     S.Slider(db, "scale", "Size", "Scales the kit and its slots together.", 1, 0.6, 1.6, 0.05, pct,
         function() self:ApplyPosition() end)
     S.Slider(db, "kitSize", "Kit button size", "Makes the button in the middle smaller without changing the slots around it.",
@@ -2396,6 +2442,8 @@ function Kit:BuildSettings()
     S.Checkbox(db, "minimapButton", "Show minimap button",
         "Left-click for these settings, right-click to open the kit, drag to move it.", true,
         function() self:ApplyMinimap() end)
+    S.Checkbox(db, "chatNotices", "Chat messages",
+        "Notices in chat when something changes (pinned in place, always shown, snoozed and the like). Slash commands still answer in chat.", true)
     S.Checkbox(db, "tooltipDefault", "Default tooltip position",
         "Show slot tooltips where the game normally shows tooltips, instead of beside the slot.", false)
     S.Checkbox(db, "roundSlots", "Round slots",
@@ -2465,7 +2513,7 @@ function Kit:SetupSettings()
     local ok, err = pcall(self.BuildSettings, self)
     if not ok then
         self.openSettings = nil
-        self:Print("Settings panel failed to load (" .. tostring(err) .. "). " .. (self.cfg.slash and self.cfg.slash[1] or "") .. " help lists the slash commands.")
+        self:Print("Settings panel failed to load (" .. tostring(err) .. "). " .. (self.cfg.slash and self.cfg.slash[1] or "") .. " help lists the slash commands.", true)
     end
 end
 
@@ -2473,7 +2521,16 @@ end
 -- Slash commands
 ---------------------------------------------------------------------------
 
+-- Anything printed while a slash command runs is its answer, so it shows
+-- even with "Chat messages" off.
 function Kit:Slash(msg)
+    self.inSlash = true
+    local ok, err = pcall(self.RunSlash, self, msg)
+    self.inSlash = nil
+    if not ok then error(err, 0) end
+end
+
+function Kit:RunSlash(msg)
     local cfg = self.cfg
     local slash = cfg.slash and cfg.slash[1] or ""
     local cmd, rest = (msg or ""):match("^%s*(%S*)%s*(.-)%s*$")
