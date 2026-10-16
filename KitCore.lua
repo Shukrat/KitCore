@@ -29,12 +29,11 @@ local addonName, ns = ...
 -- runs a secure snippet that switches the slots between the two. Kits on the
 -- pin with other kits still open and close out of combat only.
 --
--- From v6 the kit can be moved in combat too (same kits). Dragging it picks
--- it up: a faint copy of the button (not secure) follows the mouse, and the
--- next click puts the real button there (right-click: leave it where it was).
--- It can't drop where you let go: the game has no secure way to see a
--- release after a drag. When combat ends the drop is finished like any other
--- drag: saved, and snapped to an edge or another kit if it's near one.
+-- From v6 the kit can be dragged in combat too (same kits): a faint copy of
+-- the button (not secure) follows the mouse, and where you let go, a secure
+-- snippet puts the real button (see GRIP_CLICK). When combat ends the drop
+-- is finished like any other drag: saved, and snapped to an edge or another
+-- kit if it's near one.
 ---------------------------------------------------------------------------
 
 local VERSION = 6
@@ -661,77 +660,94 @@ end
 -- it's combat comes from a state driver on the button itself ("kcincombat",
 -- registered in BuildKit), which the game keeps right however early or late
 -- combat's events arrive.
-local KIT_PRE = [[
-    if button ~= "LeftButton" or down then return end
-    if self:GetAttribute("state-kcincombat") ~= "yes" then return end
-    if self:GetAttribute("kcready") ~= 1 then return end
+-- Switch the slots to the other layout. "kit" is the kit button's handle.
+local TOGGLE_BODY = [[
     local want = "o"
-    if self:GetAttribute("kcisopen") == 1 then want = "c" end
-    if want == "o" then self:SetAttribute("kcisopen", 1) else self:SetAttribute("kcisopen", 0) end
+    if kit:GetAttribute("kcisopen") == 1 then want = "c" end
+    if want == "o" then kit:SetAttribute("kcisopen", 1) else kit:SetAttribute("kcisopen", 0) end
     for i = 1, NFLY do FLYOUTS[i]:Hide() end
     for i = 1, NSLOT do
         local b = SLOTS[i]
         if b:GetAttribute("kc" .. want .. "show") == 1 then
             b:ClearAllPoints()
-            b:SetPoint("CENTER", self, "CENTER", b:GetAttribute("kc" .. want .. "x") or 0, b:GetAttribute("kc" .. want .. "y") or 0)
+            b:SetPoint("CENTER", kit, "CENTER", b:GetAttribute("kc" .. want .. "x") or 0, b:GetAttribute("kc" .. want .. "y") or 0)
             b:Show()
         else
             b:Hide()
         end
     end
 ]]
+local KIT_PRE = [[
+    if button ~= "LeftButton" or down then return end
+    if self:GetAttribute("state-kcincombat") ~= "yes" then return end
+    if self:GetAttribute("kcready") ~= 1 then return end
+    local kit = self
+]] .. TOGGLE_BODY
 
--- Moving the kit button in combat. Snippets can only run from a few scripts
--- (OnClick and OnDragStart among them, not OnMouseDown or OnMouseUp), and
--- nothing they can run from sees the release after a drag. So:
---   KIT_GRAB  (the kit button's OnDragStart) picks it up: notes where the
---             mouse is, as a fraction across the holder (which covers the
---             screen), and shows the drop catcher.
---   KIT_DROP  (the catcher's OnClick: a secure button over the whole screen,
---             taking the next press) moves the button by as much as the
---             mouse has moved since, kept on screen, and hides the catcher.
---             A right-click just hides it.
--- The slots are anchored to the button, so they come too. "kcmovable" is 1
--- for a kit that can do this (pushed out of combat, see PushMoveInfo);
--- "kcks" is the button's scale against the holder's. Each step is noted in
--- "kcmovestep", so when a move doesn't happen the kit can say which part
--- the game didn't allow.
-local KIT_GRAB = [[
-    GRABX, GRABY = nil, nil
-    if self:GetAttribute("state-kcincombat") ~= "yes" or self:GetAttribute("kcmovable") ~= 1 then return end
-    self:SetAttribute("kcmovestep", "grab")
-    local h = owner:GetFrameRef("kcholder")
-    local mx, my = h:GetMousePosition()
-    if not (mx and my) then return end
-    GRABX, GRABY = mx, my
-    self:SetAttribute("kcmovestep", "grab-ok")
-    self:GetFrameRef("kcdrop"):Show()
-]]
-local KIT_DROP = [[
+-- Moving the kit button in combat. Snippets only run from a few scripts
+-- (OnClick among them, not OnMouseDown or OnMouseUp), and a click only
+-- counts if you let go over the button you pressed. So in combat an unseen
+-- secure "grip" button lies over the kit button (shown as combat starts,
+-- see OnEvent), taking its left clicks on the press and on the release:
+--   press    note where the mouse is (as a fraction across the holder, which
+--            covers the screen) and, if the kit can move, stretch the grip
+--            over the whole screen, so wherever you let go is still over it.
+--   release  shrink the grip back onto the kit button. If the mouse moved
+--            far enough, move the button by as much, kept on screen (its
+--            slots are anchored to it, so they come too). If it hardly
+--            moved, it was a click: open or close the kit (TOGGLE_BODY).
+-- "kcmovable" is 1 for a kit that can move (pushed out of combat, see
+-- PushMoveInfo); "kcks" is the button's scale against the holder's. Each step
+-- is noted in "kcmovestep", so when a move doesn't happen the kit can say
+-- which part the game didn't allow.
+local GRIP_CLICK = [[
+    if button ~= "LeftButton" then return end
     local kit = self:GetFrameRef("kckit")
+    local h = owner:GetFrameRef("kcholder")
+    if down then
+        GRABX, GRABY = nil, nil
+        kit:SetAttribute("kcmovestep", "down")
+        local mx, my = h:GetMousePosition()
+        if mx and my then
+            GRABX, GRABY = mx, my
+            kit:SetAttribute("kcmovestep", "down-ok")
+        end
+        if kit:GetAttribute("kcmovable") == 1 then
+            self:ClearAllPoints()
+            self:SetAllPoints(h)
+        end
+        return
+    end
     local x0, y0 = GRABX, GRABY
     GRABX, GRABY = nil, nil
-    if button == "LeftButton" and x0 then
-        kit:SetAttribute("kcmovestep", "drop")
-        local h = owner:GetFrameRef("kcholder")
+    self:ClearAllPoints()
+    self:SetAllPoints(kit)
+    local drag = false
+    if x0 then
         local mx, my = h:GetMousePosition()
+        local W, H = h:GetWidth(), h:GetHeight()
+        local dx, dy = 0, 0
+        if mx and my then dx, dy = (mx - x0) * W, (my - y0) * H end
+        drag = dx * dx + dy * dy >= 64 -- (moved 8 or more: a drag, not a click)
         local l, b, w, t = kit:GetRect()
-        if mx and my then kit:SetAttribute("kcmovestep", "drop-pos") end
-        if mx and my and l then
-            kit:SetAttribute("kcmovestep", "drop-rect")
-            local W, H = h:GetWidth(), h:GetHeight()
-            local dx, dy = (mx - x0) * W, (my - y0) * H
-            local ks = kit:GetAttribute("kcks") or 1
-            local half = w * ks / 2
-            local cx, cy = (l + w / 2) * ks + dx, (b + t / 2) * ks + dy
-            if cx < half then cx = half elseif cx > W - half then cx = W - half end
-            if cy < half then cy = half elseif cy > H - half then cy = H - half end
-            kit:ClearAllPoints()
-            kit:SetPoint("CENTER", h, "BOTTOMLEFT", cx / ks, cy / ks)
-            kit:SetAttribute("kcmovestep", "moved")
+        if drag and kit:GetAttribute("kcmovable") == 1 then
+            kit:SetAttribute("kcmovestep", "up-pos")
+            if l then
+                kit:SetAttribute("kcmovestep", "up-rect")
+                local ks = kit:GetAttribute("kcks") or 1
+                local half = w * ks / 2
+                local cx, cy = (l + w / 2) * ks + dx, (b + t / 2) * ks + dy
+                if cx < half then cx = half elseif cx > W - half then cx = W - half end
+                if cy < half then cy = half elseif cy > H - half then cy = H - half end
+                kit:ClearAllPoints()
+                kit:SetPoint("CENTER", h, "BOTTOMLEFT", cx / ks, cy / ks)
+                kit:SetAttribute("kcmovestep", "moved")
+            end
         end
     end
-    self:Hide() -- (last: nothing after it, whatever hiding sets off)
+    if not drag and kit:GetAttribute("kcready") == 1 then
+]] .. TOGGLE_BODY .. [[
+    end
 ]]
 
 function Kit:BuildKit()
@@ -824,14 +840,6 @@ function Kit:BuildKit()
     kit:SetScript("OnDragStart", function(b)
         if self.db.locked then return end
         if InCombatLockdown() then
-            if self.drop and self.drop:IsShown() then
-                self:StartGhost() -- (picked up: see KIT_GRAB)
-            elseif self:CanSecureMove() and not self.moveFailSaid then
-                self.moveFailSaid = true
-                local step = b:GetAttribute("kcmovestep") or ""
-                self:Print("Couldn't pick the kit up in combat: " .. (step == "grab" and "the game didn't give the kit the mouse position"
-                    or "the drag didn't reach the kit's secure code") .. ".", true)
-            end
             return
         end
         self:CloseFlyouts()
@@ -842,7 +850,7 @@ function Kit:BuildKit()
         end
     end)
     kit:SetScript("OnDragStop", function(b)
-        if InCombatLockdown() then return end -- (carried until the next click, see KIT_DROP)
+        if InCombatLockdown() then return end
         if self.Dock and self.Dock.dragging then
             self.Dock.DragStop(self.key)
             return
@@ -890,22 +898,27 @@ function Kit:BuildKit()
         else
             Try(RegisterStateDriver, kit, "kcincombat", "[combat] yes; no")
             header:SetFrameRef("kcholder", holder)
-            -- The drop catcher: a secure button over the whole screen, shown
-            -- by KIT_GRAB, that takes the next press and drops the kit there.
-            local okd, drop = pcall(CreateFrame, "Button", P .. "Drop", holder, "SecureActionButtonTemplate")
-            if okd and drop then
-                drop:SetAllPoints(holder)
-                drop:SetFrameStrata("FULLSCREEN_DIALOG")
-                drop:RegisterForClicks("LeftButtonDown", "RightButtonDown")
-                drop:Hide()
-                SecureHandlerSetFrameRef(drop, "kckit", kit)
-                SecureHandlerSetFrameRef(kit, "kcdrop", drop)
-                drop:SetScript("OnClick", function(_, mouse) self:NoteCombatDrop(mouse) end)
-                self.drop = drop
+            -- The grip (see GRIP_CLICK): over the kit button in combat, below
+            -- the buttons a kit puts on it (those sit 6 or more levels up).
+            local okg, grip = pcall(CreateFrame, "Button", P .. "Grip", kit, "SecureActionButtonTemplate")
+            if okg and grip then
+                grip:SetAllPoints(kit)
+                grip:SetFrameLevel(kit:GetFrameLevel() + 1)
+                grip:RegisterForClicks("LeftButtonDown", "LeftButtonUp", "RightButtonUp")
+                grip:Hide()
+                SecureHandlerSetFrameRef(grip, "kckit", kit)
+                -- (these run after the snippet, and only follow along)
+                grip:SetScript("OnMouseDown", function(_, mouse)
+                    if mouse == "LeftButton" then self:NoteCombatPress() end
+                end)
+                grip:SetScript("OnMouseUp", function() self:StopGhost() end)
+                grip:SetScript("OnClick", function(_, mouse, down) self:GripClicked(mouse, down) end)
+                grip:SetScript("OnEnter", function() local f = kit:GetScript("OnEnter") if f then f(kit) end end)
+                grip:SetScript("OnLeave", function() local f = kit:GetScript("OnLeave") if f then f(kit) end end)
+                self.grip = grip
             end
-            if not (okd and drop)
-                or not pcall(SecureHandlerWrapScript, kit, "OnDragStart", header, KIT_GRAB)
-                or not pcall(SecureHandlerWrapScript, drop, "OnClick", header, KIT_DROP) then
+            if not (okg and grip) or not pcall(SecureHandlerWrapScript, grip, "OnClick", header, GRIP_CLICK) then
+                self.grip = nil
                 self.noSecureMove = true
             end
         end
@@ -2245,9 +2258,17 @@ function Kit:StartGhost()
         g.ring:SetBlendMode("ADD")
         g:Hide()
         g:SetScript("OnUpdate", function(f)
+            -- (let go somewhere the release didn't reach: stop following)
+            if IsMouseButtonDown and not IsMouseButtonDown("LeftButton") then f:Hide() return end
             local cx, cy = GetCursorPosition()
             local s = UIParent:GetEffectiveScale()
             local dx, dy = cx / s - f.downX, cy / s - f.downY
+            if not f.active then
+                if dx * dx + dy * dy < 64 then return end -- (a click so far)
+                f.active = true
+                f:SetAlpha(0.55)
+                GameTooltip:Hide()
+            end
             f:ClearAllPoints()
             f:SetPoint("CENTER", UIParent, "BOTTOMLEFT", f.fromX + dx, f.fromY + dy)
         end)
@@ -2259,49 +2280,57 @@ function Kit:StartGhost()
     local s = UIParent:GetEffectiveScale()
     local cx, cy = GetCursorPosition()
     g.fromX, g.fromY = x, y
-    g.downX, g.downY = cx / s, cy / s -- (where KIT_GRAB noted the mouse)
+    g.downX, g.downY = cx / s, cy / s
     local size = kit:GetWidth() * kit:GetEffectiveScale() / s
     g:SetSize(size, size)
     g.icon:SetTexture(kit.icon:GetTexture())
     g.icon:SetTexCoord(kit.icon:GetTexCoord())
-    g:SetAlpha(0.55)
+    g.active = false
+    g:SetAlpha(0) -- (shows once the mouse has moved: until then it's a click)
     g:ClearAllPoints()
     g:SetPoint("CENTER", UIParent, "BOTTOMLEFT", x, y)
     g:Show()
-    GameTooltip:Hide()
-    self.carryFrom = { x, y }
-    if not self.carryHintSaid then
-        self.carryHintSaid = true
-        self:Print("Click where you want the kit (right-click to leave it).")
-    end
 end
 
 function Kit:StopGhost()
     if self.ghost then self.ghost:Hide() end
 end
 
--- In combat, the click that ends a carry (after KIT_DROP): did the button
--- move? If not on a left-click, say once which step the game didn't allow.
+-- In combat, the grip's press and click (after GRIP_CLICK): follow along.
+function Kit:NoteCombatPress()
+    self.combatPress = { UICenter(self.kit) }
+    if self:CanSecureMove() then self:StartGhost() end
+end
+
 local MOVE_FAIL = {
-    [""] = "the drag didn't reach the kit's secure code",
-    grab = "the game didn't give the kit the mouse position",
-    drop = "the game didn't give the kit the mouse position on the drop",
-    ["drop-pos"] = "the game didn't give the kit the button's position",
-    ["drop-rect"] = "the game didn't let the kit move the button",
+    [""] = "the press didn't reach the kit's secure code",
+    down = "the game didn't give the kit the mouse position",
+    ["down-ok"] = "the game didn't give the kit the mouse position on release",
+    ["up-pos"] = "the game didn't give the kit the button's position",
+    ["up-rect"] = "the game didn't let the kit move the button",
 }
 
-function Kit:NoteCombatDrop(mouse)
+function Kit:GripClicked(mouse, down)
+    if mouse == "RightButton" then
+        if IsShiftKeyDown() then self:OpenSettings() else self:OpenMenu() end
+        return
+    end
+    if mouse ~= "LeftButton" or down then return end
+    local dragged = self.ghost and self.ghost:IsShown() and self.ghost.active
     self:StopGhost()
-    local from = self.carryFrom
-    self.carryFrom = nil
-    if mouse ~= "LeftButton" or not from then return end
+    local press = self.combatPress
+    self.combatPress = nil
     local x, y = UICenter(self.kit)
-    if x and (math.abs(x - from[1]) > 1 or math.abs(y - from[2]) > 1) then
-        self.combatDrop = { x, y }
-    elseif not self.moveFailSaid then
+    local moved = press and press[1] and x and (math.abs(x - press[1]) > 1 or math.abs(y - press[2]) > 1)
+    local toggled = (self.kit:GetAttribute("kcisopen") == 1) ~= self.open
+    if moved then self.combatDrop = { x, y } end
+    if toggled then self:CombatToggled() end -- (a click: GRIP_CLICK opened or closed it)
+    if dragged and not moved and self:CanSecureMove() and not self.moveFailSaid then
         self.moveFailSaid = true
         local step = self.kit:GetAttribute("kcmovestep") or ""
         self:Print("Couldn't move the kit in combat: " .. (MOVE_FAIL[step] or ("stopped at " .. step)) .. ".", true)
+    elseif not (dragged or moved or toggled) then
+        self:CombatToggled() -- (a click that didn't open it: says why)
     end
 end
 
@@ -3155,6 +3184,7 @@ function Kit:OnEvent(event, ...)
         -- leaves them, since a click elsewhere can't close them in combat.
         if not InCombatLockdown() then
             self:PushMoveInfo() -- (the button's scale, as it is now)
+            if self.grip then self.grip:SetShown(self:CanSecureToggle()) end -- (see GRIP_CLICK)
             local delay = tonumber(self.db.flyoutHide) or 0.5
             delay = math.min(2, math.max(0.2, delay))
             self.header:SetAttribute("kchide", delay)
@@ -3177,9 +3207,13 @@ function Kit:OnEvent(event, ...)
             self:ApplyPosition()
             self:ApplyCombatHide()
         end
-        if self.drop and self.drop:IsShown() then self.drop:Hide() end -- (still carrying: out of combat a drag does it)
+        if self.grip then
+            self.grip:Hide()
+            self.grip:ClearAllPoints()
+            self.grip:SetAllPoints(self.kit)
+        end
         self:StopGhost()
-        self.carryFrom = nil
+        self.combatPress = nil
         self:FinishCombatMove()
         self:Refresh(false)
         if self.combatToggled then
