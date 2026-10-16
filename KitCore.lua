@@ -697,7 +697,9 @@ local KIT_PRE = [[
 --            slots are anchored to it, so they come too). If it hardly
 --            moved, it was a click: open or close the kit (TOGGLE_BODY).
 -- "kcmovable" is 1 for a kit that can move (pushed out of combat, see
--- PushMoveInfo); "kcks" is the button's scale against the holder's. Each step
+-- PushMoveInfo); "kcks" is the button's scale against the holder's. Where it
+-- put the button is left in "kcdropx"/"kcdropy" (holder units): asked
+-- straight after, the game still gives the button's old spot. Each step
 -- is noted in "kcmovestep", so when a move doesn't happen the kit can say
 -- which part the game didn't allow.
 local GRIP_CLICK = [[
@@ -741,6 +743,8 @@ local GRIP_CLICK = [[
                 if cy < half then cy = half elseif cy > H - half then cy = H - half end
                 kit:ClearAllPoints()
                 kit:SetPoint("CENTER", h, "BOTTOMLEFT", cx / ks, cy / ks)
+                kit:SetAttribute("kcdropx", cx)
+                kit:SetAttribute("kcdropy", cy)
                 kit:SetAttribute("kcmovestep", "moved")
             end
         end
@@ -2320,10 +2324,18 @@ function Kit:GripClicked(mouse, down)
     self:StopGhost()
     local press = self.combatPress
     self.combatPress = nil
-    local x, y = UICenter(self.kit)
-    local moved = press and press[1] and x and (math.abs(x - press[1]) > 1 or math.abs(y - press[2]) > 1)
-    local toggled = (self.kit:GetAttribute("kcisopen") == 1) ~= self.open
-    if moved then self.combatDrop = { x, y } end
+    -- (where GRIP_CLICK put the button: the game's own answer lags behind)
+    local kit = self.kit
+    local moved = kit:GetAttribute("kcmovestep") == "moved"
+    local toggled = (kit:GetAttribute("kcisopen") == 1) ~= self.open
+    if moved then
+        local hs = self.holder:GetEffectiveScale() / UIParent:GetEffectiveScale()
+        local x, y = (kit:GetAttribute("kcdropx") or 0) * hs, (kit:GetAttribute("kcdropy") or 0) * hs
+        self.combatDrop = { x, y }
+        -- Saved now, so anything that puts the kit at its saved spot as
+        -- combat ends puts it here.
+        self:SavePositionAt(x, y)
+    end
     if toggled then self:CombatToggled() end -- (a click: GRIP_CLICK opened or closed it)
     if dragged and not moved and self:CanSecureMove() and not self.moveFailSaid then
         self.moveFailSaid = true
@@ -2630,7 +2642,11 @@ function Kit:SavePosition()
     local x, y = kit:GetCenter()
     if not x then return end
     local k = kit:GetEffectiveScale() / UIParent:GetEffectiveScale()
-    x, y = x * k, y * k
+    self:SavePositionAt(x * k, y * k)
+end
+
+-- The same, for a centre given in UIParent units.
+function Kit:SavePositionAt(x, y)
     local W, H = UIParent:GetWidth(), UIParent:GetHeight()
     local h = x < W / 3 and "LEFT" or x > W * 2 / 3 and "RIGHT" or ""
     local v = y < H / 3 and "BOTTOM" or y > H * 2 / 3 and "TOP" or ""
