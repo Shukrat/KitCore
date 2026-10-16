@@ -1975,6 +1975,8 @@ function Kit:PlaceAt(f, x, y)
         return
     end
     if f.placedX ~= x or f.placedY ~= y then
+        -- (a dock glide still on its way to the old spot would finish there)
+        if self.Dock and self.Dock.StopTween then self.Dock.StopTween(f) end
         f:ClearAllPoints()
         f:SetPoint("CENTER", self.kit, "CENTER", x, y)
         f.placedX, f.placedY = x, y
