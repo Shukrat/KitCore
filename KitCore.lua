@@ -21,9 +21,16 @@ local addonName, ns = ...
 -- Flyouts are secure: their choices cast spells, use items or change what a
 -- slot holds, and they open and close in combat too. Where the choices sit
 -- is worked out out of combat, whenever the kit refreshes.
+--
+-- So does the kit button (from v5), for a kit that floats or sits on a screen
+-- edge. The game won't let an addon move or show a secure slot in combat, so
+-- every refresh works out both layouts, open and closed, and hands each slot
+-- where it goes and whether it shows in each. A click on the button in combat
+-- runs a secure snippet that switches the slots between the two. Kits on the
+-- pin with other kits still open and close out of combat only.
 ---------------------------------------------------------------------------
 
-local VERSION = 4
+local VERSION = 5
 local C = _G.KitCore
 if C and (C.version or 0) >= VERSION then
     ns.Core = C
@@ -272,6 +279,12 @@ C.BASE_CHAR = {
 --   slash         { "/wk", "/warlockkit" }
 --   bindingHeader "WARLOCKKIT" (as in Bindings.xml)
 --   KitArt(kit), KitTooltip(kit), BeforeRefresh(kit), Tick(kit)
+--                 (a refresh also runs BeforeRefresh and every slot's Update once
+--                 as a trial, with kit.open flipped and kit.trial set, to work out
+--                 the other layout; change frames only when kit.trial is nil)
+--   OnCombatToggle(kit, open)  the kit button opened (true) or closed (false) the
+--                 kit in combat: move or show the kit's own extra frames to match
+--                 (the slots are already done; a refresh follows when combat ends)
 --   OnShapes(kit)     after slot shapes / ring art are (re)applied
 --   Busy(kit)         true while the kit shouldn't fade (fade when idle)
 --   events        { EVENT = function(kit, ...) end }
@@ -333,6 +346,7 @@ function C.NewKit(cfg)
     end
     self.open, self.hovering = false, 0
     self.flyouts = {}
+    self.snap = {} -- [true] = the open layout, [false] = the closed one (see StoreSnap)
 
     local events = CreateFrame("Frame")
     self.events = events
@@ -364,6 +378,7 @@ end
 -- Chat messages. With "Chat messages" off in settings, only replies to a
 -- slash command (and force, for something that's gone wrong) get through.
 function Kit:Print(msg, force)
+    if self.trial then return end -- (a trial layout says nothing)
     if not force and not self.inSlash and self.db and self.db.chatNotices == false then return end
     DEFAULT_CHAT_FRAME:AddMessage("|cff" .. (self.cfg.color or "ffd100") .. "[" .. self.name .. "]|r " .. msg)
 end
@@ -629,6 +644,36 @@ end
 -- The holder, the kit button and the secure header
 ---------------------------------------------------------------------------
 
+-- A left click on the kit button in combat: switch every slot to the other
+-- layout (where it goes and whether it shows, worked out out of combat and
+-- left on each slot as attributes: kco* for the open layout, kcc* for the
+-- closed one; see PushSnapshot), and close the flyouts, which belong to the
+-- layout being left. Out of combat this does nothing: the click opens the
+-- kit the usual way (animated, with the dock told). "kcready" is 0 when
+-- this kit has no layouts to switch to (on the pin with other kits). Whether
+-- it's combat comes from a state driver on the button itself ("kcincombat",
+-- registered in BuildKit), which the game keeps right however early or late
+-- combat's events arrive.
+local KIT_PRE = [[
+    if button ~= "LeftButton" or down then return end
+    if self:GetAttribute("state-kcincombat") ~= "yes" then return end
+    if self:GetAttribute("kcready") ~= 1 then return end
+    local want = "o"
+    if self:GetAttribute("kcisopen") == 1 then want = "c" end
+    if want == "o" then self:SetAttribute("kcisopen", 1) else self:SetAttribute("kcisopen", 0) end
+    for i = 1, NFLY do FLYOUTS[i]:Hide() end
+    for i = 1, NSLOT do
+        local b = SLOTS[i]
+        if b:GetAttribute("kc" .. want .. "show") == 1 then
+            b:ClearAllPoints()
+            b:SetPoint("CENTER", self, "CENTER", b:GetAttribute("kc" .. want .. "x") or 0, b:GetAttribute("kc" .. want .. "y") or 0)
+            b:Show()
+        else
+            b:Hide()
+        end
+    end
+]]
+
 function Kit:BuildKit()
     local cfg, P = self.cfg, self.prefix
     local holder = CreateFrame("Frame", P .. "Holder", UIParent, "SecureHandlerStateTemplate")
@@ -636,12 +681,18 @@ function Kit:BuildKit()
     holder:SetFrameStrata("MEDIUM")
     self.holder = holder
 
-    -- Runs the flyouts' open and close, in combat too.
+    -- Runs the flyouts' open and close, and the kit button's in combat.
     local header = CreateFrame("Frame", P .. "Secure", holder, "SecureHandlerBaseTemplate")
-    header:Execute([[ FLYOUTS = newtable() FLYSLOTS = newtable() NFLY = 0 ]])
+    header:Execute([[ FLYOUTS = newtable() FLYSLOTS = newtable() NFLY = 0 SLOTS = newtable() NSLOT = 0 ]])
     self.header = header
 
-    local kit = CreateFrame("Button", P .. "Button", holder)
+    -- The kit button is a secure button (with no action of its own) so its
+    -- click can run a secure snippet that moves the slots (see KIT_PRE).
+    local okk, kit = pcall(CreateFrame, "Button", P .. "Button", holder, "SecureActionButtonTemplate")
+    if not okk or not kit then
+        self.noSecureToggle = true
+        kit = CreateFrame("Button", P .. "Button", holder)
+    end
     kit:SetSize(self.KIT, self.KIT)
     kit:SetMovable(true)
     kit:SetClampedToScreen(true)
@@ -741,6 +792,12 @@ function Kit:BuildKit()
             self:OpenMenu()
             return
         end
+        -- In combat the secure snippet (KIT_PRE) has already switched the
+        -- slots, if it could; this only catches the kit up.
+        if InCombatLockdown() then
+            self:CombatToggled()
+            return
+        end
         self:SetOpen(not self.open)
     end)
     kit:SetScript("OnEnter", function(b)
@@ -754,6 +811,14 @@ function Kit:BuildKit()
         GameTooltip:Show()
     end)
     kit:SetScript("OnLeave", function() self:Hover(false) end)
+    if not self.noSecureToggle then
+        local okw = pcall(SecureHandlerWrapScript, kit, "OnClick", header, KIT_PRE)
+        if not okw then
+            self.noSecureToggle = true
+        else
+            Try(RegisterStateDriver, kit, "kcincombat", "[combat] yes; no")
+        end
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -948,6 +1013,9 @@ function Kit:CreateSlot(slot)
     end
     if slot.Setup then slot.Setup(self, btn) end
     btn:Hide()
+    -- The kit button's secure snippet moves and shows the slots (KIT_PRE).
+    self.header:SetFrameRef("kcnewbtn", btn)
+    self.header:Execute([[ NSLOT = NSLOT + 1 SLOTS[NSLOT] = self:GetFrameRef("kcnewbtn") ]])
     self.slots[slot.key] = btn
     btn.order = self.order[slot.key]
     return btn
@@ -1347,7 +1415,7 @@ function Kit:DragTick(fly, dragged, dt)
             b.curX = (b.curX or p[1]) + (p[1] - (b.curX or p[1])) * k
             b.curY = (b.curY or p[2]) + (p[2] - (b.curY or p[2])) * k
             b:ClearAllPoints()
-            b:SetPoint("CENTER", self.kit, "CENTER", b.curX, b.curY)
+            b:SetPoint("CENTER", fly.slotBtn, "CENTER", b.curX - (fly.sx or 0), b.curY - (fly.sy or 0))
         end
     end
 end
@@ -1503,10 +1571,12 @@ function Kit:LayoutFlyout(btn)
         end
         if c.close then Set("kcclose", true) end
         b.attrKeys = keys
+        -- Anchored to the slot, not the kit, so the choices stay beside it
+        -- when the kit button switches layouts in combat and the slot moves.
         local x, y = pts[i][1], pts[i][2]
-        b:ClearAllPoints()
-        b:SetPoint("CENTER", self.kit, "CENTER", x, y)
         local dx, dy = x - sx, y - sy
+        b:ClearAllPoints()
+        b:SetPoint("CENTER", btn, "CENTER", dx, dy)
         b.flyBack:SetOffset(-dx, -dy)
         b.flyOut:SetOffset(dx, dy)
         b:Show()
@@ -1517,6 +1587,7 @@ function Kit:LayoutFlyout(btn)
     end
     fly.count = #choices
     fly.pts = pts
+    fly.sx, fly.sy = sx, sy -- (where the slot was when the points were worked out)
     fly:SetScale(self.db.scale)
 
     if #choices > 0 then
@@ -1527,12 +1598,12 @@ function Kit:LayoutFlyout(btn)
         end
         local pad = BTN / 2 + 7
         fly:ClearAllPoints()
-        fly:SetPoint("TOPLEFT", self.kit, "CENTER", x0 - pad, y1 + pad)
-        fly:SetPoint("BOTTOMRIGHT", self.kit, "CENTER", x1 + pad, y0 - pad)
+        fly:SetPoint("TOPLEFT", btn, "CENTER", x0 - pad - sx, y1 + pad - sy)
+        fly:SetPoint("BOTTOMRIGHT", btn, "CENTER", x1 + pad - sx, y0 - pad - sy)
         fly.panel:Show()
     else
         fly:ClearAllPoints()
-        fly:SetAllPoints(self.kit)
+        fly:SetAllPoints(btn)
         fly.panel:Hide()
     end
     if fly:IsShown() then self:PaintFlyout(fly) end
@@ -1661,6 +1732,7 @@ end
 function Kit:EdgeCols(asOpen, hypothetical)
     local function on(btn)
         if hypothetical then return (asOpen and not btn.hidden) or btn.wouldShow end
+        if self.trial then return self.trial.vis[btn] and true or false end -- (what would show in that layout)
         return btn:IsShown() and not btn.closing
     end
     local cols = {}
@@ -1695,6 +1767,10 @@ function Kit:PlaceRim(angle)
 end
 
 function Kit:PlaceAt(f, x, y)
+    if self.trial then -- a trial layout only notes where it would go
+        self.trial.pos[f] = { x, y }
+        return
+    end
     if f.placedX ~= x or f.placedY ~= y then
         f:ClearAllPoints()
         f:SetPoint("CENTER", self.kit, "CENTER", x, y)
@@ -1735,6 +1811,15 @@ function Kit:PlaceEdge()
     end
     local RIM = { left = 0, right = 180, top = 270, bottom = 90 } -- toward the middle of the screen
     self:PlaceRim(RIM[self.edgeSide] or 0)
+    -- Where the divider goes (kept for the combat switch, which has to put it
+    -- there without a refresh); false when it keeps its usual spot.
+    local spec = div and { x = div[1], y = div[2], w = div[4] and 16 or div[3], h = div[4] and div[3] or 16,
+        tw = div[3], rot = div[4] and math.pi / 2 or 0 } or false
+    if self.trial then
+        self.trial.div = spec
+        return
+    end
+    self.liveDiv = spec
     for _, btn in pairs(self.slots) do self:PlaceSub(btn) end
     local dv = self.divider
     if dv then
@@ -1865,7 +1950,9 @@ function Kit:LayoutHomes()
     for _, btn in pairs(self.slots) do
         local b = base[btn] or btn.slot.pos
         local x, y = self:Face(b[1], b[2])
-        if btn.homeX ~= x or btn.homeY ~= y then
+        if self.trial then
+            self.trial.home[btn] = { x, y } -- (the real home spots stay as they are)
+        elseif btn.homeX ~= x or btn.homeY ~= y then
             btn.homeX, btn.homeY = x, y
             moved = true
         end
@@ -1890,6 +1977,11 @@ end
 function Kit:PlaceSlots()
     local ringMoved = self:LayoutHomes()
     if self.edgeSide and self.Dock then return self:PlaceEdge() end
+    if self.trial then
+        for btn, h in pairs(self.trial.home) do self:PlaceAt(btn, h[1], h[2]) end
+        return
+    end
+    self.liveDiv = false
     self:UnEdgeDivider()
     self:FaceDivider()
     for _, btn in pairs(self.slots) do self:PlaceSub(btn) end
@@ -1978,17 +2070,10 @@ end
 -- Refresh: what each slot holds and whether it shows (out of combat)
 ---------------------------------------------------------------------------
 
-function Kit:Refresh(animate)
-    if not self.built then return end
-    if InCombatLockdown() then
-        self.pending = true
-        self:PaintAll()
-        return
-    end
-    self.pending = false
-    if self.opening then animate = "open" end -- a refresh from the dock's layout while this kit is opening
-    local cfg, db, cdb = self.cfg, self.db, self.cdb
-
+-- What each slot is and holds right now: the kit's BeforeRefresh, then every
+-- slot's Update (and its assigned choice, and its corner button's Update).
+function Kit:RunUpdates()
+    local cfg = self.cfg
     if cfg.BeforeRefresh then cfg.BeforeRefresh(self) end
     for _, slot in ipairs(cfg.slots) do
         local btn = self.slots[slot.key]
@@ -2002,6 +2087,115 @@ function Kit:Refresh(animate)
             sb:SetShown(not sb.hidden)
         end
     end
+end
+
+-- Whether a slot shows, with the kit open or closed as self.open says.
+-- Also whether it's there at all, and whether something pops it out.
+function Kit:SlotVisible(slot, btn)
+    local pop = slot.Pop and not btn.hidden and slot.Pop(self, btn) or false
+    local available = self.db.shown ~= false and not btn.hidden
+    local visible = available and (self.open or ((self.cdb.pinned[slot.key] or pop) and not self.tucked)) and true or false
+    return visible, available, pop
+end
+
+-- Can the kit button open and close this kit in combat? Not on the pin with
+-- other kits: there the kit moves (and the others shrink and tuck) as it
+-- opens, and none of that can happen in combat.
+function Kit:CanSecureToggle()
+    if self.noSecureToggle or self.compactAngle then return false end
+    local D = self.Dock
+    if D and D.IsDocked and D.IsDocked(self.key) and not self.edgeSide then return false end
+    return true
+end
+
+-- A layout (open or closed) for the combat switch: for every slot whether it
+-- shows and where it goes, and for the divider whether it shows and where.
+-- t = { vis = { [btn] = bool }, pos = { [btn] = { x, y } }, div = spec | false }
+function Kit:StoreSnap(open, t)
+    local snap = { vis = t.vis, pos = {}, div = t.div or false, rowOut = false }
+    for btn, v in pairs(t.vis) do
+        if v then
+            local p = t.pos[btn]
+            snap.pos[btn] = p and { p[1], p[2] } or { btn.placedX or btn.homeX or 0, btn.placedY or btn.homeY or 0 }
+        end
+    end
+    local d = self.cfg.divider
+    if open and d then
+        for _, key in ipairs(d.below or {}) do
+            local b = self.slots[key]
+            if b and t.vis[b] then snap.rowOut = true end
+        end
+    end
+    self.snap[open and true or false] = snap
+end
+
+-- The layout the kit isn't in right now, worked out without touching a frame:
+-- the kit's own updates run again with kit.open flipped (kit.trial set), and
+-- the placement code notes where each slot would go instead of moving it.
+-- The refresh that follows runs the updates again for the real layout, so
+-- nothing is left in the flipped state.
+function Kit:TrialLayout()
+    local real = self.open
+    local t = { vis = {}, pos = {}, home = {}, div = false }
+    self.trial, self.open = t, not real
+    local ok, err = pcall(function()
+        self:RunUpdates()
+        for _, slot in ipairs(self.cfg.slots) do
+            local btn = self.slots[slot.key]
+            t.vis[btn] = (self:SlotVisible(slot, btn))
+        end
+        self:PlaceSlots()
+    end)
+    self.trial, self.open = nil, real
+    if ok then
+        self:StoreSnap(not real, t)
+    else
+        self.snap[not real] = nil
+        if not self.trialFailed then -- (said once: it would come up on every refresh)
+            self.trialFailed = true
+            local h = geterrorhandler and geterrorhandler()
+            if h then h(err) end
+        end
+    end
+end
+
+-- Hand every slot its two layouts as attributes, for the kit button's secure
+-- snippet to use in combat (KIT_PRE). Out of combat only.
+function Kit:PushSnapshot()
+    local kit = self.kit
+    local ready = self:CanSecureToggle() and self.snap[true] and self.snap[false] and true or false
+    for _, slot in ipairs(self.cfg.slots) do
+        local btn = self.slots[slot.key]
+        for _, which in ipairs({ { true, "o" }, { false, "c" } }) do
+            local s = ready and self.snap[which[1]]
+            local p = s and s.pos[btn]
+            btn:SetAttribute("kc" .. which[2] .. "show", p and 1 or 0)
+            btn:SetAttribute("kc" .. which[2] .. "x", p and p[1] or 0)
+            btn:SetAttribute("kc" .. which[2] .. "y", p and p[2] or 0)
+        end
+    end
+    kit:SetAttribute("kcisopen", self.open and 1 or 0)
+    kit:SetAttribute("kcready", ready and 1 or 0)
+end
+
+function Kit:Refresh(animate)
+    if not self.built or self.trial then return end
+    if InCombatLockdown() then
+        self.pending = true
+        self:PaintAll()
+        return
+    end
+    self.pending = false
+    if self.opening then animate = "open" end -- a refresh from the dock's layout while this kit is opening
+    local cfg, db, cdb = self.cfg, self.db, self.cdb
+
+    local canToggle = self:CanSecureToggle()
+    if canToggle then
+        self:TrialLayout()
+    else
+        self.snap[true], self.snap[false] = nil, nil
+    end
+    self:RunUpdates()
 
     -- On an edge, slots already out (pinned or popped) move between the
     -- closed strip and their open columns: note where they are so they glide.
@@ -2019,11 +2213,11 @@ function Kit:Refresh(animate)
     end
 
     local slides, total = {}, #cfg.slots
+    local vis = {}
     for i, slot in ipairs(cfg.slots) do
         local btn = self.slots[slot.key]
-        local pop = slot.Pop and not btn.hidden and slot.Pop(self, btn) or false
-        local available = db.shown ~= false and not btn.hidden
-        local visible = available and (self.open or ((cdb.pinned[slot.key] or pop) and not self.tucked)) and true or false
+        local visible, available, pop = self:SlotVisible(slot, btn)
+        vis[btn] = visible
         if visible then
             CancelClose(btn)
             if not btn:IsShown() then
@@ -2067,6 +2261,9 @@ function Kit:Refresh(animate)
             if f:IsShown() and not f.closing then self.Dock.Glide(f, b[1], b[2], b[3]) end
         end
     end
+    -- This layout, for the combat switch, beside the other one worked out above.
+    if canToggle then self:StoreSnap(self.open, { vis = vis, pos = {}, div = self.liveDiv }) end
+    self:PushSnapshot()
     self:PaintAll()
 end
 
@@ -2090,7 +2287,52 @@ function Kit:SetOpen(want)
 end
 
 function Kit:Toggle()
+    -- (a key binding or the minimap button: only a click on the kit button
+    -- itself can run the secure snippet that opens it in combat)
+    if InCombatLockdown() then
+        self:Print(self:CanSecureToggle() and "Click the kit button to open or close it in combat."
+            or "That can only change out of combat.")
+        return
+    end
     self:SetOpen(not self.open)
+end
+
+-- The kit button was clicked in combat. Its secure snippet (KIT_PRE) has
+-- already switched the slots, if it could, and said so in "kcisopen". This
+-- catches up what a snippet can't reach: where the kit thinks everything is,
+-- the divider, the fade, the paint, and the kit's own extras. Anything moved
+-- is tidied by the refresh when combat ends.
+function Kit:CombatToggled()
+    local kit = self.kit
+    local now = kit:GetAttribute("kcisopen") == 1
+    local s = self.snap[now]
+    if kit:GetAttribute("kcready") ~= 1 or now == self.open or not s then
+        self:Print("That can only change out of combat.")
+        return
+    end
+    self.open = now
+    self.combatToggled = true
+    for btn, p in pairs(s.pos) do btn.placedX, btn.placedY = p[1], p[2] end
+    local dv = self.divider
+    if dv then
+        dv:SetShown(s.rowOut and true or false)
+        if s.rowOut then
+            local sp = s.div
+            dv:ClearAllPoints()
+            if sp then
+                dv:SetPoint("CENTER", kit, "CENTER", sp.x, sp.y)
+                dv:SetSize(sp.w, sp.h)
+                dv.tex:SetSize(sp.tw, 16)
+                dv.tex:SetRotation(sp.rot)
+                dv.edged = true
+            else
+                dv:SetPoint("CENTER", kit, "CENTER", self:Face(0, self.cfg.divider.y))
+            end
+        end
+    end
+    self:ApplyFade()
+    self:PaintAll()
+    if self.cfg.OnCombatToggle then self.cfg.OnCombatToggle(self, now) end
 end
 
 function Kit:TogglePin(key)
@@ -2714,6 +2956,16 @@ function Kit:OnEvent(event, ...)
             self:ApplyCombatHide()
         end
         self:Refresh(false)
+        if self.combatToggled then
+            -- Opened or closed in combat: let the dock catch up (an edge
+            -- strip makes room) and keep an opened kit on screen.
+            self.combatToggled = nil
+            local D = self.Dock
+            if D and D.Opening and D.Closed then
+                if self.open then D.Opening(self.key) else D.Closed(self.key) end
+            end
+            self:KeepOnScreen()
+        end
     end
 end
 
