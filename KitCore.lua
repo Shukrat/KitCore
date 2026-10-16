@@ -2180,6 +2180,7 @@ end
 
 function Kit:Refresh(animate)
     if not self.built or self.trial then return end
+    self.snap = self.snap or {} -- (a kit made by an older copy's NewKit, before this one loaded)
     if InCombatLockdown() then
         self.pending = true
         self:PaintAll()
@@ -2304,6 +2305,7 @@ end
 -- is tidied by the refresh when combat ends.
 function Kit:CombatToggled()
     local kit = self.kit
+    self.snap = self.snap or {}
     local now = kit:GetAttribute("kcisopen") == 1
     local s = self.snap[now]
     if kit:GetAttribute("kcready") ~= 1 or now == self.open or not s then
