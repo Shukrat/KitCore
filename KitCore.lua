@@ -744,12 +744,34 @@ local GRIP_CLICK = [[
                 if cy < half then cy = half elseif cy > H - half then cy = H - half end
                 local pin = kit:GetAttribute("kconpin") == 1 and self:GetFrameRef("kcpin")
                 if pin then
-                    -- On the pin with other kits: move the pin by as much
-                    -- (this kit kept on screen), and every kit on it comes too.
+                    -- On the pin with other kits: move every kit on it by as
+                    -- much (this one kept on screen), then the pin. The kits
+                    -- go to their own new spots first, read before anything
+                    -- moves, so they get there whether or not they were
+                    -- following the pin; after combat the dock puts them back
+                    -- on it.
+                    local mdx, mdy = cx - ox, cy - oy
+                    local moves = newtable()
+                    for i = 1, self:GetAttribute("kcdockn") or 0 do
+                        local f = self:GetFrameRef("kcdock" .. i)
+                        local fl, fb, fw, ft
+                        if f then fl, fb, fw, ft = f:GetRect() end
+                        if fl then
+                            local fs = f:GetAttribute("kcks") or 1
+                            moves[#moves + 1] = f
+                            moves[#moves + 1] = ((fl + fw / 2) * fs + mdx) / fs
+                            moves[#moves + 1] = ((fb + ft / 2) * fs + mdy) / fs
+                        end
+                    end
+                    for i = 1, #moves, 3 do
+                        local f = moves[i]
+                        f:ClearAllPoints()
+                        f:SetPoint("CENTER", h, "BOTTOMLEFT", moves[i + 1], moves[i + 2])
+                    end
                     local pl, pb, pw, pt = pin:GetRect()
                     if pl then
                         local ps = kit:GetAttribute("kcpinks") or 1
-                        local px, py = (pl + pw / 2) * ps + cx - ox, (pb + pt / 2) * ps + cy - oy
+                        local px, py = (pl + pw / 2) * ps + mdx, (pb + pt / 2) * ps + mdy
                         pin:ClearAllPoints()
                         pin:SetPoint("CENTER", h, "BOTTOMLEFT", px / ps, py / ps)
                         kit:SetAttribute("kcdropx", px)
@@ -2262,9 +2284,25 @@ function Kit:PushMoveInfo()
     local onPin = self.grip and self:OnProtectedPin()
     kit:SetAttribute("kconpin", onPin and 1 or 0)
     if onPin then
-        local pin = self.Dock.pin
+        local D = self.Dock
+        local pin = D.pin
         SecureHandlerSetFrameRef(self.grip, "kcpin", pin)
         kit:SetAttribute("kcpinks", hs > 0 and pin:GetEffectiveScale() / hs or 1)
+        -- Every kit on the pin (their buttons are secure: Kit Core v5 on),
+        -- for the grip to move together (see GRIP_CLICK).
+        local n = 0
+        for key, api in pairs(D.kits or {}) do
+            local b = api.kit
+            if b and b.IsProtected and b:IsProtected() and D.IsDocked(key) and not (D.EdgeSide and D.EdgeSide(key)) then
+                n = n + 1
+                SecureHandlerSetFrameRef(self.grip, "kcdock" .. n, b)
+                if b ~= kit then
+                    local bs = b:GetEffectiveScale()
+                    b:SetAttribute("kcks", hs > 0 and bs / hs or 1) -- (its own kit sets this too)
+                end
+            end
+        end
+        self.grip:SetAttribute("kcdockn", n)
     end
 end
 
