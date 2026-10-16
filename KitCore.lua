@@ -36,7 +36,7 @@ local addonName, ns = ...
 -- kit if it's near one.
 ---------------------------------------------------------------------------
 
-local VERSION = 6
+local VERSION = 7
 local C = _G.KitCore
 if C and (C.version or 0) >= VERSION then
     ns.Core = C
@@ -202,6 +202,9 @@ local function Fighting()
     return UnitAffectingCombat and UnitAffectingCombat("player") and true or false
 end
 U.Fighting = Fighting
+
+-- Slots part-way through sliding out or in: [btn] = its kit (see SlideTo).
+local sliding = {}
 
 ---------------------------------------------------------------------------
 -- Glows: one clock pulses every glow of every kit.
@@ -1141,7 +1144,15 @@ function Kit:CreateSlot(slot)
         self:ApplyShape(btn, self.db.roundSlots)
     end
 
-    self:AddSlideAnims(btn)
+    btn:HookScript("OnHide", function(b)
+        -- (hidden some other way part-way through a slide: done with it)
+        if sliding[b] then
+            sliding[b] = nil
+            b.slideTarget, b.slideWait, b.slideA, b.closing = nil, nil, nil, nil
+            b.slideP = nil
+            if not InCombatLockdown() then b:SetScale(self.db.scale) end
+        end
+    end)
     local dx, dy = slot.pos[1], slot.pos[2]
     btn:ClearAllPoints()
     btn:SetPoint("CENTER", self.kit, "CENTER", dx, dy)
@@ -1196,95 +1207,112 @@ function Kit:SlotTooltip(btn)
     GameTooltip:Show()
 end
 
--- Slots slide out of the kit as it opens and back in as it closes.
-function Kit:AddSlideAnims(btn)
-    local dx, dy = btn.slot.pos[1], btn.slot.pos[2]
-    local ag = btn:CreateAnimationGroup()
-    local toKit = ag:CreateAnimation("Translation")
-    toKit:SetOffset(-dx, -dy)
-    toKit:SetDuration(0.001)
-    toKit:SetOrder(1)
-    local hold = ag:CreateAnimation("Alpha")
-    hold:SetFromAlpha(0)
-    hold:SetToAlpha(0)
-    hold:SetDuration(0.001)
-    hold:SetOrder(1)
-    local out = ag:CreateAnimation("Translation")
-    out:SetOffset(dx, dy)
-    out:SetDuration(0.22)
-    out:SetSmoothing("OUT")
-    out:SetOrder(2)
-    local fade = ag:CreateAnimation("Alpha")
-    fade:SetFromAlpha(0)
-    fade:SetToAlpha(1)
-    fade:SetDuration(0.16)
-    fade:SetOrder(2)
-    local grow = ag:CreateAnimation("Scale")
-    grow:SetScaleFrom(0.3, 0.3)
-    grow:SetScaleTo(1, 1)
-    grow:SetDuration(0.22)
-    grow:SetSmoothing("OUT")
-    grow:SetOrder(2)
-    btn.slideAnim, btn.slideHold = ag, hold
-    btn.slideTo, btn.slideOut = toKit, out
-    ag:SetScript("OnFinished", function() self:ApplyFade() end)
-    ag:SetScript("OnStop", function() self:ApplyFade() end)
+-- Slots slide out of the kit as it opens and back in as it closes (from
+-- v7) by really moving, a little each frame, not with the game's
+-- animations. Those only move the picture: a slot's cooldown numbers didn't
+-- go with it, and stopping one part-way (opening and closing quickly)
+-- snapped the slot to its real spot for a moment before the next began. A
+-- slide that turns round part-way now carries on from where the slot is.
+--   btn.slideP       0 in the kit, 1 at its spot
+--   btn.slideTarget  where it's heading (0 or 1); btn.closing while it's 0
+--   btn.slideWait    seconds left before it starts (the stagger)
+--   btn.slideA       its fade (ApplyFade multiplies it in)
+-- Out of combat only: they're finished as combat starts (see OnEvent).
+local OPEN_TIME, CLOSE_TIME = 0.22, 0.18
+local slider = CreateFrame("Frame")
+slider:Hide()
+C.slider = slider -- (for testing)
 
-    local cg = btn:CreateAnimationGroup()
-    local back = cg:CreateAnimation("Translation")
-    back:SetOffset(-dx, -dy)
-    back:SetDuration(0.18)
-    back:SetSmoothing("IN")
-    local fadeOut = cg:CreateAnimation("Alpha")
-    fadeOut:SetFromAlpha(1)
-    fadeOut:SetToAlpha(0)
-    fadeOut:SetDuration(0.18)
-    local shrink = cg:CreateAnimation("Scale")
-    shrink:SetScaleFrom(1, 1)
-    shrink:SetScaleTo(0.3, 0.3)
-    shrink:SetDuration(0.18)
-    shrink:SetSmoothing("IN")
-    cg:SetScript("OnFinished", function()
-        btn.closing = nil
-        if not InCombatLockdown() then btn:Hide() end
-        self:ApplyFade()
-    end)
-    btn.closeBack, btn.closeAnim, btn.closeParts = back, cg, { back, fadeOut, shrink }
+local function Ease(p) return 1 - (1 - p) * (1 - p) end -- (fast out, slow in)
+
+-- Put a sliding slot where its progress says: part-way between the kit and
+-- its spot, shrunk toward the kit, faded in its first part.
+function Kit:SlideApply(btn)
+    local p = btn.slideP or 1
+    local e = Ease(p)
+    local sc = 0.3 + 0.7 * e
+    local x, y = btn.placedX or btn.homeX or 0, btn.placedY or btn.homeY or 0
+    btn:SetScale(self.db.scale * sc)
+    btn:ClearAllPoints()
+    btn:SetPoint("CENTER", self.kit, "CENTER", x * e / sc, y * e / sc) -- (offsets are in its own, shrunk, units)
+    btn.slideA = math.min(1, p * OPEN_TIME / 0.16)
+    self:FadeSlot(btn)
 end
 
--- Slides go between the kit and wherever the slot actually sits (its home
--- spot, its place on the dock, or its column on a screen edge).
-local function SlideFrom(btn)
-    local dx, dy = btn.placedX or btn.homeX or 0, btn.placedY or btn.homeY or 0
-    btn.slideTo:SetOffset(-dx, -dy)
-    btn.slideOut:SetOffset(dx, dy)
-    btn.closeBack:SetOffset(-dx, -dy)
-end
-
-local function PlayClose(btn, index, total)
+-- The slide is over: the slot at its spot at full size, or hidden in the kit.
+function Kit:FinishSlide(btn)
+    sliding[btn] = nil
+    local target = btn.slideTarget or 1
+    btn.slideP, btn.slideTarget, btn.slideWait, btn.slideA = target, nil, nil, nil
     if InCombatLockdown() then return end
-    SlideFrom(btn)
-    local delay = (total - index) * 0.02
-    for _, a in ipairs(btn.closeParts) do a:SetStartDelay(delay) end
-    btn.slideAnim:Stop()
-    btn.closing = true
-    btn.closeAnim:Play()
+    btn:SetScale(self.db.scale)
+    btn:ClearAllPoints()
+    btn:SetPoint("CENTER", self.kit, "CENTER", btn.placedX or btn.homeX or 0, btn.placedY or btn.homeY or 0)
+    if target == 0 then
+        btn.closing = nil
+        btn:Hide()
+    end
+    self:ApplyFade()
 end
 
-local function CancelClose(btn)
-    if btn.closing then
-        btn.closing = nil
-        btn.closeAnim:Stop()
+-- Finish every slide now (combat is starting).
+function Kit:FinishSlides()
+    for btn, kit in pairs(sliding) do
+        if kit == self then self:FinishSlide(btn) end
     end
 end
 
+function Kit:SlideTo(btn, target, delay)
+    if InCombatLockdown() then return end
+    if self.Dock and self.Dock.StopTween then self.Dock.StopTween(btn) end -- (a dock glide left over)
+    if btn.slideP == nil then btn.slideP = 1 - target end
+    btn.slideTarget = target
+    btn.slideWait = delay or 0
+    btn.closing = target == 0 or nil
+    sliding[btn] = self
+    self:SlideApply(btn)
+    slider:Show()
+end
+
+function Kit:IsSliding(btn) return sliding[btn] ~= nil end
+
+slider:SetScript("OnUpdate", function(f, dt)
+    if InCombatLockdown() then return end -- (finished as combat started; see FinishSlides)
+    for btn, kit in pairs(sliding) do
+        if (btn.slideWait or 0) > 0 then
+            btn.slideWait = btn.slideWait - dt
+        else
+            local up = btn.slideTarget == 1
+            local p = (btn.slideP or 0) + (up and dt / OPEN_TIME or -dt / CLOSE_TIME)
+            if (up and p >= 1) or (not up and p <= 0) then
+                kit:FinishSlide(btn)
+            else
+                btn.slideP = p
+                kit:SlideApply(btn)
+            end
+        end
+    end
+    if not next(sliding) then f:Hide() end
+end)
+
+-- Slides go between the kit and wherever the slot actually sits (its home
+-- spot, its place on the dock, or its column on a screen edge).
+local function PlayClose(kit, btn, index, total)
+    if InCombatLockdown() then return end
+    -- (staggered when the whole kit closes; straight back from part-way)
+    local atRest = not sliding[btn]
+    kit:SlideTo(btn, 0, atRest and (total - index) * 0.02 or 0)
+end
+
+local function CancelClose(kit, btn)
+    if btn.closing then kit:SlideTo(btn, 1, 0) end -- (back out from where it is)
+end
+
+-- A slot just shown as the kit opens: out from the kit.
 function Kit:PlaySlide(btn, index)
     if InCombatLockdown() then return end
-    if btn.dockAG then btn.dockAG:Stop() end -- a glide left over from a close
-    btn.slideHold:SetDuration(0.001 + (self.slideDelay or 0) + index * 0.025)
-    SlideFrom(btn)
-    btn.slideAnim:Stop()
-    btn.slideAnim:Play()
+    btn.slideP = 0
+    self:SlideTo(btn, 1, (self.slideDelay or 0) + index * 0.025)
 end
 
 -- A small round secure button on the slot's corner (away from the kit's
@@ -1474,6 +1502,11 @@ function Kit:FlyButton(fly, i)
     grow:SetSmoothing("OUT")
     grow:SetOrder(2)
     b.flyAnim, b.flyBack, b.flyHold, b.flyOut = ag, back, hold, out
+    -- (a cooldown's numbers don't go along with an animation: hidden for the
+    -- moment the choice flies out)
+    ag:SetScript("OnPlay", function() b.cooldown:SetAlpha(0) end)
+    ag:SetScript("OnFinished", function() b.cooldown:SetAlpha(1) end)
+    ag:SetScript("OnStop", function() b.cooldown:SetAlpha(1) end)
     b:SetScript("OnEnter", function(btn)
         self:TipOwner(btn)
         local c = btn.choice
@@ -1852,18 +1885,25 @@ end
 
 function Kit:ApplyFade()
     if not self.built then return end
-    local idle = self.db.fadeIdle and not self.open and self.hovering == 0
-        and not (self.cfg.Busy and self.cfg.Busy(self))
-    for _, btn in pairs(self.slots) do btn:SetAlpha(idle and 0.4 or 1) end
+    for _, btn in pairs(self.slots) do self:FadeSlot(btn) end
+    local idle = self:FadeIdle()
     self.kit:SetAlpha(idle and 0.7 or 1)
-    -- A flyout is open: dim the rest of the kit so its choices stand out.
     local fly = self.flyOpen
-    if fly and fly:IsShown() then
-        for _, b in pairs(self.slots) do
-            if b ~= fly.slotBtn then b:SetAlpha(0.3) end
-        end
-        self.kit:SetAlpha(0.4)
-    end
+    if fly and fly:IsShown() then self.kit:SetAlpha(0.4) end
+end
+
+function Kit:FadeIdle()
+    return self.db.fadeIdle and not self.open and self.hovering == 0
+        and not (self.cfg.Busy and self.cfg.Busy(self))
+end
+
+-- One slot's alpha: faded when idle, dimmed while another slot's flyout is
+-- open (so its choices stand out), times its slide's fade.
+function Kit:FadeSlot(btn)
+    local a = self:FadeIdle() and 0.4 or 1
+    local fly = self.flyOpen
+    if fly and fly:IsShown() and btn ~= fly.slotBtn then a = 0.3 end
+    btn:SetAlpha(a * (btn.slideA or 1))
 end
 
 function Kit:PaintAll()
@@ -1928,6 +1968,10 @@ end
 function Kit:PlaceAt(f, x, y)
     if self.trial then -- a trial layout only notes where it would go
         self.trial.pos[f] = { x, y }
+        return
+    end
+    if sliding[f] then -- (the slide puts it there; see SlideApply)
+        f.placedX, f.placedY = x, y
         return
     end
     if f.placedX ~= x or f.placedY ~= y then
@@ -2152,7 +2196,7 @@ function Kit:PlaceSlots()
         if ringMoved and self.Dock and self.Dock.Glide then
             from = {}
             for _, btn in pairs(self.slots) do
-                if btn:IsShown() and not btn.closing and not (btn.slideAnim and btn.slideAnim:IsPlaying()) then
+                if btn:IsShown() and not btn.closing and not sliding[btn] then
                     local x, y = btn:GetCenter()
                     if x then from[btn] = { x, y, btn:GetEffectiveScale() } end
                 end
@@ -2594,7 +2638,7 @@ function Kit:Refresh(animate)
         local visible, available, pop = self:SlotVisible(slot, btn)
         vis[btn] = visible
         if visible then
-            CancelClose(btn)
+            CancelClose(self, btn)
             if not btn:IsShown() then
                 btn:Show()
                 if animate == "open" then
@@ -2605,7 +2649,7 @@ function Kit:Refresh(animate)
             end
         elseif btn:IsShown() and not btn.closing then
             if btn.fly and btn.fly:IsShown() then btn.fly:Hide() end
-            if btn.hidden or Fighting() then btn:Hide() else PlayClose(btn, i, total) end -- (see Fighting)
+            if btn.hidden or Fighting() then btn:Hide() else PlayClose(self, btn, i, total) end -- (see Fighting)
         end
         btn.wouldShow = available and (cdb.pinned[slot.key] or pop) and true or false
     end
@@ -2775,7 +2819,7 @@ function Kit:EndMove()
     local snap = self.slotSnap or {}
     if self.Dock and self.Dock.Glide then
         for f, s in pairs(snap) do
-            if f:IsShown() and not (f.slideAnim and f.slideAnim:IsPlaying()) then
+            if f:IsShown() and not sliding[f] then
                 self.Dock.Glide(f, s[1], s[2], s[3])
             end
         end
@@ -3315,13 +3359,7 @@ function Kit:OnEvent(event, ...)
         if not InCombatLockdown() then
             -- Anything part-way through hiding hides now (see Fighting): a
             -- slot closing, or the kit fading out as another kit opens.
-            for _, btn in pairs(self.slots) do
-                if btn.closing then
-                    btn.closeAnim:Stop()
-                    btn.closing = nil
-                    btn:Hide()
-                end
-            end
+            self:FinishSlides()
             if self.tucked and self.kit:IsShown() then
                 if self.kit.fadeAG then self.kit.fadeAG:Stop() end
                 self.kit:Hide()
