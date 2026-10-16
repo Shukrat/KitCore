@@ -738,14 +738,31 @@ local GRIP_CLICK = [[
                 kit:SetAttribute("kcmovestep", "up-rect")
                 local ks = kit:GetAttribute("kcks") or 1
                 local half = w * ks / 2
-                local cx, cy = (l + w / 2) * ks + dx, (b + t / 2) * ks + dy
+                local ox, oy = (l + w / 2) * ks, (b + t / 2) * ks
+                local cx, cy = ox + dx, oy + dy
                 if cx < half then cx = half elseif cx > W - half then cx = W - half end
                 if cy < half then cy = half elseif cy > H - half then cy = H - half end
-                kit:ClearAllPoints()
-                kit:SetPoint("CENTER", h, "BOTTOMLEFT", cx / ks, cy / ks)
-                kit:SetAttribute("kcdropx", cx)
-                kit:SetAttribute("kcdropy", cy)
-                kit:SetAttribute("kcmovestep", "moved")
+                local pin = kit:GetAttribute("kconpin") == 1 and self:GetFrameRef("kcpin")
+                if pin then
+                    -- On the pin with other kits: move the pin by as much
+                    -- (this kit kept on screen), and every kit on it comes too.
+                    local pl, pb, pw, pt = pin:GetRect()
+                    if pl then
+                        local ps = kit:GetAttribute("kcpinks") or 1
+                        local px, py = (pl + pw / 2) * ps + cx - ox, (pb + pt / 2) * ps + cy - oy
+                        pin:ClearAllPoints()
+                        pin:SetPoint("CENTER", h, "BOTTOMLEFT", px / ps, py / ps)
+                        kit:SetAttribute("kcdropx", px)
+                        kit:SetAttribute("kcdropy", py)
+                        kit:SetAttribute("kcmovestep", "moved-pin")
+                    end
+                else
+                    kit:ClearAllPoints()
+                    kit:SetPoint("CENTER", h, "BOTTOMLEFT", cx / ks, cy / ks)
+                    kit:SetAttribute("kcdropx", cx)
+                    kit:SetAttribute("kcdropy", cy)
+                    kit:SetAttribute("kcmovestep", "moved")
+                end
             end
         end
     end
@@ -2220,7 +2237,17 @@ end
 -- Can the kit be dragged in combat? The same kits as open there, while it
 -- isn't pinned in place.
 function Kit:CanSecureMove()
-    return not self.noSecureMove and not self.db.locked and self:CanSecureToggle()
+    return not self.noSecureMove and not self.db.locked and (self:CanSecureToggle() or self:OnProtectedPin()) and true or false
+end
+
+-- On Kit Dock's pin with other kits, and the pin is a protected frame (Kit
+-- Dock v19), so the grip can move the pin, and the whole dock with it.
+function Kit:OnProtectedPin()
+    local D = self.Dock
+    if not (D and D.IsDocked and D.IsDocked(self.key)) then return false end
+    if D.EdgeSide and D.EdgeSide(self.key) then return false end
+    local pin = D.pin
+    return pin and pin.IsProtected and pin:IsProtected() and D.SavePinAt and true or false
 end
 
 -- What the drag snippets need (out of combat): whether this kit may move,
@@ -2232,6 +2259,13 @@ function Kit:PushMoveInfo()
     local hs = self.holder:GetEffectiveScale()
     kit:SetAttribute("kcks", hs > 0 and kit:GetEffectiveScale() / hs or 1)
     kit:SetAttribute("kcmovestep", nil)
+    local onPin = self.grip and self:OnProtectedPin()
+    kit:SetAttribute("kconpin", onPin and 1 or 0)
+    if onPin then
+        local pin = self.Dock.pin
+        SecureHandlerSetFrameRef(self.grip, "kcpin", pin)
+        kit:SetAttribute("kcpinks", hs > 0 and pin:GetEffectiveScale() / hs or 1)
+    end
 end
 
 -- Where a frame's centre is, in UIParent units.
@@ -2326,9 +2360,17 @@ function Kit:GripClicked(mouse, down)
     self.combatPress = nil
     -- (where GRIP_CLICK put the button: the game's own answer lags behind)
     local kit = self.kit
-    local moved = kit:GetAttribute("kcmovestep") == "moved"
+    local step = kit:GetAttribute("kcmovestep")
+    if step == "moved-pin" then
+        -- The whole dock moved: the pin's new spot is saved for the dock, which
+        -- lays everything out there after combat (see FinishCombatMove).
+        local hs = self.holder:GetEffectiveScale() / UIParent:GetEffectiveScale()
+        self.Dock.SavePinAt((kit:GetAttribute("kcdropx") or 0) * hs, (kit:GetAttribute("kcdropy") or 0) * hs)
+        self.pinMoved = true
+    end
+    local moved = step == "moved" or step == "moved-pin"
     local toggled = (kit:GetAttribute("kcisopen") == 1) ~= self.open
-    if moved then
+    if step == "moved" then
         local hs = self.holder:GetEffectiveScale() / UIParent:GetEffectiveScale()
         local x, y = (kit:GetAttribute("kcdropx") or 0) * hs, (kit:GetAttribute("kcdropy") or 0) * hs
         self.combatDrop = { x, y }
@@ -2357,6 +2399,10 @@ end
 -- StopMovingOrSizing stood in for: there's no mouse drag to follow, and
 -- those would re-anchor the button from wherever the game thinks it is.
 function Kit:FinishCombatMove()
+    if self.pinMoved and not InCombatLockdown() then
+        self.pinMoved = nil
+        if self.Dock and self.Dock.Layout then self.Dock.Layout() end -- (the pin to its saved spot, the kits round it)
+    end
     local drop = self.combatDrop
     self.combatDrop = nil
     if not drop or InCombatLockdown() then return end
@@ -3219,7 +3265,7 @@ function Kit:OnEvent(event, ...)
         -- leaves them, since a click elsewhere can't close them in combat.
         if not InCombatLockdown() then
             self:PushMoveInfo() -- (the button's scale, as it is now)
-            if self.grip then self.grip:SetShown(self:CanSecureToggle()) end -- (see GRIP_CLICK)
+            if self.grip then self.grip:SetShown(self:CanSecureToggle() or self:CanSecureMove()) end -- (see GRIP_CLICK)
             local delay = tonumber(self.db.flyoutHide) or 0.5
             delay = math.min(2, math.max(0.2, delay))
             self.header:SetAttribute("kchide", delay)
@@ -3253,7 +3299,7 @@ function Kit:OnEvent(event, ...)
         -- Moved or opened in combat: catch the dock up a frame from now (see
         -- FinishCombatMove), the move first, so the dock lays the kit out
         -- where it was dropped, then where it opened or closed.
-        if self.combatDrop or self.combatToggled then
+        if self.combatDrop or self.combatToggled or self.pinMoved then
             local function After()
                 if InCombatLockdown() then return end -- (in a fight again: next time)
                 self:FinishCombatMove()
