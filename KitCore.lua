@@ -192,6 +192,17 @@ C.ART_SIZES = ART_SIZES
 -- Things that only exist on newer clients: tried, and skipped if missing.
 local function Try(f, ...) if f then return pcall(f, ...) end end
 
+-- In a fight, or about to be: as combat starts (PLAYER_REGEN_DISABLED, when
+-- First Aid Kit opens itself) the player is already in combat but frames
+-- can still change for a moment. Anything that would hide at the end of an
+-- animation must hide at once then: by the time the animation ends, combat
+-- won't let it, and it pops back up instead.
+local function Fighting()
+    if InCombatLockdown() then return true end
+    return UnitAffectingCombat and UnitAffectingCombat("player") and true or false
+end
+U.Fighting = Fighting
+
 ---------------------------------------------------------------------------
 -- Glows: one clock pulses every glow of every kit.
 ---------------------------------------------------------------------------
@@ -2588,13 +2599,13 @@ function Kit:Refresh(animate)
                 btn:Show()
                 if animate == "open" then
                     slides[#slides + 1] = { btn, i } -- once it knows where it's going
-                elseif animate == "untuck" and self.Dock and self.Dock.Fade then
+                elseif animate == "untuck" and self.Dock and self.Dock.Fade and not Fighting() then
                     self.Dock.Fade(btn, false)
                 end
             end
         elseif btn:IsShown() and not btn.closing then
             if btn.fly and btn.fly:IsShown() then btn.fly:Hide() end
-            if btn.hidden then btn:Hide() else PlayClose(btn, i, total) end
+            if btn.hidden or Fighting() then btn:Hide() else PlayClose(btn, i, total) end -- (see Fighting)
         end
         btn.wouldShow = available and (cdb.pinned[slot.key] or pop) and true or false
     end
@@ -2819,7 +2830,7 @@ function Kit:Tuck(on)
     if InCombatLockdown() then return end
     local kit = self.kit
     local want = not on and self.db.shown ~= false
-    if self.Dock and self.Dock.Fade and kit:IsShown() ~= want then
+    if self.Dock and self.Dock.Fade and kit:IsShown() ~= want and not Fighting() then
         if want then
             kit:Show()
             self.Dock.Fade(kit, false)
@@ -3302,6 +3313,19 @@ function Kit:OnEvent(event, ...)
         -- here on, and any open already, close themselves once the mouse
         -- leaves them, since a click elsewhere can't close them in combat.
         if not InCombatLockdown() then
+            -- Anything part-way through hiding hides now (see Fighting): a
+            -- slot closing, or the kit fading out as another kit opens.
+            for _, btn in pairs(self.slots) do
+                if btn.closing then
+                    btn.closeAnim:Stop()
+                    btn.closing = nil
+                    btn:Hide()
+                end
+            end
+            if self.tucked and self.kit:IsShown() then
+                if self.kit.fadeAG then self.kit.fadeAG:Stop() end
+                self.kit:Hide()
+            end
             self:PushMoveInfo() -- (the button's scale, as it is now)
             if self.grip then self.grip:SetShown(self:CanSecureToggle() or self:CanSecureMove()) end -- (see GRIP_CLICK)
             local delay = tonumber(self.db.flyoutHide) or 0.5
