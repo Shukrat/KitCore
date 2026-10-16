@@ -264,6 +264,8 @@ C.BASE_CHAR = {
 --   defaults, charDefaults   on top of the base ones
 --   dock          ns.Dock (Kit Dock), or nil
 --   edgesOnly     never joins the pin, only the screen edges
+--   alwaysHideInCombat  the kit always hides in combat (nothing on it is any use
+--                 in a fight): no "Hide in combat" setting for it
 --   kitSize, slotSize  (60, 37)
 --   roundKit      the kit button is a round icon with a ring
 --   kitRing, kitIconInset  art name for that ring ("kit_ring": kit_ring_32..256,
@@ -3153,8 +3155,10 @@ function Kit:BuildSettings()
         "Round icons with a gold ring instead of square bag slots.", true, function() self:ApplyShapes() end)
     S.Checkbox(db, "fadeIdle", "Fade when idle",
         "The kit and pinned slots fade until you mouse over them.", false, refresh)
-    S.Checkbox(db, "hideInCombat", "Hide in combat", "Hide the kit while you're in combat.", false,
-        function() self:ApplyCombatHide() end)
+    if not self.cfg.alwaysHideInCombat then
+        S.Checkbox(db, "hideInCombat", "Hide in combat", "Hide the kit while you're in combat.", false,
+            function() self:ApplyCombatHide() end)
+    end
     S.Dropdown(db, "facing", "Layout direction",
         "Which way the slots lay out round the kit while it's floating (on a screen edge they always face the middle of the screen).",
         "up", {
@@ -3306,6 +3310,7 @@ function Kit:OnEvent(event, ...)
         _G[cfg.db], _G[cfg.charDb] = db, cdb
         if cfg.defaults then U.ApplyDefaults(db, cfg.defaults) end
         U.ApplyDefaults(db, C.BASE_DEFAULTS)
+        if cfg.alwaysHideInCombat then db.hideInCombat = true end
         if cfg.charDefaults then U.ApplyDefaults(cdb, cfg.charDefaults) end
         U.ApplyDefaults(cdb, C.BASE_CHAR)
         self.db, self.cdb = db, cdb
