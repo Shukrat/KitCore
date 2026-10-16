@@ -28,9 +28,15 @@ local addonName, ns = ...
 -- where it goes and whether it shows in each. A click on the button in combat
 -- runs a secure snippet that switches the slots between the two. Kits on the
 -- pin with other kits still open and close out of combat only.
+--
+-- From v6 the kit can be dragged in combat too (same kits). Dragging can't
+-- follow the mouse in combat, so a faint copy of the button (not secure)
+-- follows it, and on release a secure snippet puts the real button where it
+-- was let go. When combat ends the drop is finished like any other drag:
+-- saved, and snapped to an edge or another kit if it's near one.
 ---------------------------------------------------------------------------
 
-local VERSION = 5
+local VERSION = 6
 local C = _G.KitCore
 if C and (C.version or 0) >= VERSION then
     ns.Core = C
@@ -656,6 +662,7 @@ end
 -- combat's events arrive.
 local KIT_PRE = [[
     if button ~= "LeftButton" or down then return end
+    if MOVED then MOVED = nil return false end -- (the release that ended a drag, not a click)
     if self:GetAttribute("state-kcincombat") ~= "yes" then return end
     if self:GetAttribute("kcready") ~= 1 then return end
     local want = "o"
@@ -672,6 +679,42 @@ local KIT_PRE = [[
             b:Hide()
         end
     end
+]]
+
+-- Dragging the kit button in combat. The press notes where the mouse is (as
+-- a fraction across the holder, which covers the screen); the release, if
+-- the mouse went far enough, moves the button by as much as the mouse did,
+-- kept on screen. Its slots are anchored to it, so they come too. "kcmovable"
+-- is 1 for a kit that can do this (pushed out of combat, see PushSnapshot);
+-- "kcks" is the button's scale against the holder's.
+local KIT_DOWN = [[
+    MOVED, DOWNX, DOWNY = nil, nil, nil
+    if button ~= "LeftButton" then return end
+    if self:GetAttribute("state-kcincombat") ~= "yes" or self:GetAttribute("kcmovable") ~= 1 then return end
+    local h = owner:GetFrameRef("kcholder")
+    local mx, my = h:GetMousePosition()
+    if mx and my then DOWNX, DOWNY = mx, my end
+]]
+local KIT_UP = [[
+    if button ~= "LeftButton" or not DOWNX then return end
+    local x0, y0 = DOWNX, DOWNY
+    DOWNX, DOWNY = nil, nil
+    local h = owner:GetFrameRef("kcholder")
+    local mx, my = h:GetMousePosition()
+    if not (mx and my) then return end
+    local W, H = h:GetWidth(), h:GetHeight()
+    local dx, dy = (mx - x0) * W, (my - y0) * H
+    if dx * dx + dy * dy < 64 then return end -- (moved under 8: a click)
+    local ks = self:GetAttribute("kcks") or 1
+    local l, b, w, t = self:GetRect()
+    if not l then return end
+    local half = w * ks / 2
+    local cx, cy = (l + w / 2) * ks + dx, (b + t / 2) * ks + dy
+    if cx < half then cx = half elseif cx > W - half then cx = W - half end
+    if cy < half then cy = half elseif cy > H - half then cy = H - half end
+    self:ClearAllPoints()
+    self:SetPoint("CENTER", h, "BOTTOMLEFT", cx / ks, cy / ks)
+    MOVED = true
 ]]
 
 function Kit:BuildKit()
@@ -762,7 +805,11 @@ function Kit:BuildKit()
     end
 
     kit:SetScript("OnDragStart", function(b)
-        if self.db.locked or InCombatLockdown() then return end
+        if self.db.locked then return end
+        if InCombatLockdown() then
+            if self:CanSecureMove() then self:StartGhost() end
+            return
+        end
         self:CloseFlyouts()
         GameTooltip:Hide()
         if self.Dock then self.Dock.DragStart(self.key) else
@@ -771,6 +818,7 @@ function Kit:BuildKit()
         end
     end)
     kit:SetScript("OnDragStop", function(b)
+        if self.ghost and self.ghost:IsShown() then self:StopGhost() return end
         if self.Dock and self.Dock.dragging then
             self.Dock.DragStop(self.key)
             return
@@ -817,6 +865,18 @@ function Kit:BuildKit()
             self.noSecureToggle = true
         else
             Try(RegisterStateDriver, kit, "kcincombat", "[combat] yes; no")
+            header:SetFrameRef("kcholder", holder)
+            -- (the snippets run before these scripts, which only watch)
+            kit:SetScript("OnMouseDown", function(b, mouse)
+                if mouse == "LeftButton" and InCombatLockdown() then self:NoteCombatPress() end
+            end)
+            kit:SetScript("OnMouseUp", function(b, mouse)
+                if mouse == "LeftButton" and InCombatLockdown() then self:NoteCombatRelease() end
+            end)
+            if not pcall(SecureHandlerWrapScript, kit, "OnMouseDown", header, KIT_DOWN)
+                or not pcall(SecureHandlerWrapScript, kit, "OnMouseUp", header, KIT_UP) then
+                self.noSecureMove = true
+            end
         end
     end
 end
@@ -830,6 +890,7 @@ end
 function Kit:SetLocked(on)
     if InCombatLockdown() then self:Print("That can only change out of combat.") return end
     self.db.locked = on and true or false
+    self.kit:SetAttribute("kcmovable", self:CanSecureMove() and 1 or 0)
     self:Print(self.db.locked and "Pinned in place." or "Unpinned. Drag the kit to move it.")
     self:SettingsChanged()
 end
@@ -2108,6 +2169,126 @@ function Kit:CanSecureToggle()
     return true
 end
 
+-- Can the kit be dragged in combat? The same kits as open there, while it
+-- isn't pinned in place.
+function Kit:CanSecureMove()
+    return not self.noSecureMove and not self.db.locked and self:CanSecureToggle()
+end
+
+-- What the drag snippets need (out of combat): whether this kit may move,
+-- and the button's scale against the holder's.
+function Kit:PushMoveInfo()
+    if InCombatLockdown() then return end
+    local kit = self.kit
+    kit:SetAttribute("kcmovable", self:CanSecureMove() and 1 or 0)
+    local hs = self.holder:GetEffectiveScale()
+    kit:SetAttribute("kcks", hs > 0 and kit:GetEffectiveScale() / hs or 1)
+end
+
+-- Where a frame's centre is, in UIParent units.
+local function UICenter(f)
+    local x, y = f:GetCenter()
+    if not x then return nil end
+    local k = f:GetEffectiveScale() / UIParent:GetEffectiveScale()
+    return x * k, y * k
+end
+
+-- The faint copy of the kit button that follows the mouse while you drag it
+-- in combat (not secure, so it can move). It starts where the button is,
+-- and moves as the mouse has since you pressed.
+function Kit:StartGhost()
+    local g = self.ghost
+    if not g then
+        g = CreateFrame("Frame", nil, UIParent)
+        g:SetFrameStrata("TOOLTIP")
+        g.icon = g:CreateTexture(nil, "ARTWORK")
+        g.icon:SetAllPoints()
+        local mask = g:CreateMaskTexture()
+        mask:SetTexture(self.media .. "circle_mask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+        mask:SetAllPoints(g.icon)
+        g.icon:AddMaskTexture(mask)
+        g.ring = g:CreateTexture(nil, "OVERLAY")
+        g.ring:SetAllPoints()
+        g.ring:SetTexture(self.media .. "glow_ring")
+        g.ring:SetBlendMode("ADD")
+        g:Hide()
+        g:SetScript("OnUpdate", function(f)
+            local cx, cy = GetCursorPosition()
+            local s = UIParent:GetEffectiveScale()
+            cx, cy = cx / s, cy / s
+            f:ClearAllPoints()
+            f:SetPoint("CENTER", UIParent, "BOTTOMLEFT", f.fromX + cx - f.downX, f.fromY + cy - f.downY)
+        end)
+        self.ghost = g
+    end
+    local kit = self.kit
+    local x, y = UICenter(kit)
+    if not x then return end
+    local press = self.combatPress
+    local s = UIParent:GetEffectiveScale()
+    local cx, cy = GetCursorPosition()
+    g.fromX, g.fromY = x, y
+    g.downX, g.downY = press and press.cx or cx / s, press and press.cy or cy / s
+    local size = kit:GetWidth() * kit:GetEffectiveScale() / s
+    g:SetSize(size, size)
+    g.icon:SetTexture(kit.icon:GetTexture())
+    g.icon:SetTexCoord(kit.icon:GetTexCoord())
+    g:SetAlpha(0.55)
+    g:Show()
+    GameTooltip:Hide()
+end
+
+function Kit:StopGhost()
+    if self.ghost then self.ghost:Hide() end
+end
+
+-- In combat, the press and the release on the kit button (after the secure
+-- snippets): note where the button was, and whether it moved.
+function Kit:NoteCombatPress()
+    local x, y = UICenter(self.kit)
+    local s = UIParent:GetEffectiveScale()
+    local cx, cy = GetCursorPosition()
+    self.combatPress = { x = x, y = y, cx = cx / s, cy = cy / s }
+end
+
+function Kit:NoteCombatRelease()
+    local dragged = self.ghost and self.ghost:IsShown()
+    self:StopGhost()
+    local press = self.combatPress
+    self.combatPress = nil
+    if not (press and press.x) then return end
+    local x, y = UICenter(self.kit)
+    if x and (math.abs(x - press.x) > 1 or math.abs(y - press.y) > 1) then
+        self.combatDrop = { x, y }
+        if self.Dock and self.Dock.EdgeGlow then self.Dock.EdgeGlow(nil) end
+    elseif dragged and not self.moveFailSaid then
+        -- (the drag's secure half didn't happen: said once, so it's known)
+        self.moveFailSaid = true
+        self:Print("The game didn't let the kit move in combat.")
+    end
+end
+
+-- After combat: finish a drop made in combat as an ordinary drag would. The
+-- button goes back to where it was dropped first, in case the dock laid the
+-- kits out again as combat ended.
+function Kit:FinishCombatMove()
+    local drop = self.combatDrop
+    self.combatDrop = nil
+    if not drop or InCombatLockdown() then return end
+    local kit = self.kit
+    local k = kit:GetEffectiveScale() / UIParent:GetEffectiveScale()
+    kit:ClearAllPoints()
+    kit:SetPoint("CENTER", UIParent, "BOTTOMLEFT", drop[1] / k, drop[2] / k)
+    local D = self.Dock
+    if D and D.DragStart and D.DragStop and D.kits and D.kits[self.key] then
+        D.DragStart(self.key)
+        D.DragStop(self.key)
+    else
+        self:SavePosition()
+        self:KeepOnScreen()
+    end
+end
+
 -- A layout (open or closed) for the combat switch: for every slot whether it
 -- shows and where it goes, and for the divider whether it shows and where.
 -- t = { vis = { [btn] = bool }, pos = { [btn] = { x, y } }, div = spec | false }
@@ -2176,6 +2357,7 @@ function Kit:PushSnapshot()
     end
     kit:SetAttribute("kcisopen", self.open and 1 or 0)
     kit:SetAttribute("kcready", ready and 1 or 0)
+    self:PushMoveInfo()
 end
 
 function Kit:Refresh(animate)
@@ -2935,6 +3117,7 @@ function Kit:OnEvent(event, ...)
         -- here on, and any open already, close themselves once the mouse
         -- leaves them, since a click elsewhere can't close them in combat.
         if not InCombatLockdown() then
+            self:PushMoveInfo() -- (the button's scale, as it is now)
             local delay = tonumber(self.db.flyoutHide) or 0.5
             delay = math.min(2, math.max(0.2, delay))
             self.header:SetAttribute("kchide", delay)
@@ -2957,6 +3140,8 @@ function Kit:OnEvent(event, ...)
             self:ApplyPosition()
             self:ApplyCombatHide()
         end
+        self:StopGhost()
+        self:FinishCombatMove()
         self:Refresh(false)
         if self.combatToggled then
             -- Opened or closed in combat: let the dock catch up (an edge
