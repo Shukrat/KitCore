@@ -2334,21 +2334,40 @@ function Kit:GripClicked(mouse, down)
     end
 end
 
--- After combat: finish a drop made in combat as an ordinary drag would. The
--- button goes back to where it was dropped first, in case the dock laid the
--- kits out again as combat ended.
+-- After combat: finish a drop made in combat as an ordinary drag would.
+-- Called a frame after combat ends (see OnEvent), once the game has worked
+-- out where everything is: read straight after a frame's anchor changes,
+-- its position can come back as the screen's corner, and the kit and its
+-- slots would glide in from there. The button is put back where it was
+-- dropped first, in case the dock laid the kits out again as combat ended.
+-- With Kit Dock, its own drag start and stop do the rest (snap to an edge
+-- or another kit, save), with the button's StartMoving and
+-- StopMovingOrSizing stood in for: there's no mouse drag to follow, and
+-- those would re-anchor the button from wherever the game thinks it is.
 function Kit:FinishCombatMove()
     local drop = self.combatDrop
     self.combatDrop = nil
     if not drop or InCombatLockdown() then return end
     local kit = self.kit
     local k = kit:GetEffectiveScale() / UIParent:GetEffectiveScale()
-    kit:ClearAllPoints()
-    kit:SetPoint("CENTER", UIParent, "BOTTOMLEFT", drop[1] / k, drop[2] / k)
+    local x, y = UICenter(kit)
+    if not x or math.abs(x - drop[1]) > 1 or math.abs(y - drop[2]) > 1 then
+        kit:ClearAllPoints()
+        kit:SetPoint("CENTER", UIParent, "BOTTOMLEFT", drop[1] / k, drop[2] / k)
+    end
     local D = self.Dock
     if D and D.DragStart and D.DragStop and D.kits and D.kits[self.key] then
-        D.DragStart(self.key)
-        D.DragStop(self.key)
+        local function Still() end
+        kit.StartMoving, kit.StopMovingOrSizing = Still, Still
+        local ok, err = pcall(function()
+            D.DragStart(self.key)
+            D.DragStop(self.key)
+        end)
+        kit.StartMoving, kit.StopMovingOrSizing = nil, nil -- (the real ones again)
+        if not ok then
+            local h = geterrorhandler and geterrorhandler()
+            if h then h(err) end
+        end
     else
         self:SavePosition()
         self:KeepOnScreen()
@@ -3214,17 +3233,24 @@ function Kit:OnEvent(event, ...)
         end
         self:StopGhost()
         self.combatPress = nil
-        self:FinishCombatMove()
         self:Refresh(false)
-        if self.combatToggled then
-            -- Opened or closed in combat: let the dock catch up (an edge
-            -- strip makes room) and keep an opened kit on screen.
-            self.combatToggled = nil
-            local D = self.Dock
-            if D and D.Opening and D.Closed then
-                if self.open then D.Opening(self.key) else D.Closed(self.key) end
+        -- Moved or opened in combat: catch the dock up a frame from now (see
+        -- FinishCombatMove), the move first, so the dock lays the kit out
+        -- where it was dropped, then where it opened or closed.
+        if self.combatDrop or self.combatToggled then
+            local function After()
+                if InCombatLockdown() then return end -- (in a fight again: next time)
+                self:FinishCombatMove()
+                if self.combatToggled then
+                    self.combatToggled = nil
+                    local D = self.Dock
+                    if D and D.Opening and D.Closed then
+                        if self.open then D.Opening(self.key) else D.Closed(self.key) end
+                    end
+                    self:KeepOnScreen()
+                end
             end
-            self:KeepOnScreen()
+            if C_Timer and C_Timer.After then C_Timer.After(0, After) else After() end
         end
     end
 end
