@@ -36,7 +36,7 @@ local addonName, ns = ...
 -- kit if it's near one.
 ---------------------------------------------------------------------------
 
-local VERSION = 7
+local VERSION = 8
 local C = _G.KitCore
 if C and (C.version or 0) >= VERSION then
     ns.Core = C
@@ -2937,6 +2937,81 @@ function Kit:SettingsChanged()
 end
 
 ---------------------------------------------------------------------------
+-- ForeverImmersion (and any addon reading ForeverUI.elements)
+---------------------------------------------------------------------------
+-- ForeverImmersion fades frames it finds by global name, and shows one again
+-- while the mouse is over its rectangle. The holder covers the whole screen,
+-- so it can't be that frame: the mouse would always be "over" it. Instead
+-- each kit has <prefix>Area, an empty frame that follows the bounds of what
+-- the kit is showing. Alpha set on it is passed on to the holder, so the
+-- whole kit (button, slots, flyouts, the kit's own frames) fades together.
+-- Kit Core never sets the holder's alpha itself, so nothing fights over it.
+
+-- Situations a kit shows in until the player changes it in ForeverImmersion.
+local FUI_VISIBLE = { combat = true, target = true, resting = true, idle = true }
+
+function Kit:UpdateArea()
+    local area, holder = self.area, self.holder
+    if not (area and holder) then return end
+    local hs = holder:GetEffectiveScale()
+    local W, H = holder:GetWidth(), holder:GetHeight()
+    local l, b, r, t
+    for _, f in ipairs({ holder:GetChildren() }) do
+        if f ~= area and f:IsVisible() then
+            local fl, fb, fw, fh = f:GetRect()
+            if fl and fw and fw > 0 and fh > 0 then
+                local sc = f:GetEffectiveScale() / hs
+                fl, fb, fw, fh = fl * sc, fb * sc, fw * sc, fh * sc
+                -- skip anything screen-sized (it would swallow the hover test)
+                if fw < W * 0.6 and fh < H * 0.6 then
+                    l = l and math.min(l, fl) or fl
+                    b = b and math.min(b, fb) or fb
+                    r = r and math.max(r, fl + fw) or fl + fw
+                    t = t and math.max(t, fb + fh) or fb + fh
+                end
+            end
+        end
+    end
+    if not l then area:Hide() return end
+    area:ClearAllPoints()
+    area:SetPoint("BOTTOMLEFT", holder, "BOTTOMLEFT", l, b)
+    area:SetSize(r - l, t - b)
+    area:Show()
+end
+
+function Kit:BuildArea()
+    local holder = self.holder
+    local area = CreateFrame("Frame", self.prefix .. "Area", holder)
+    area:EnableMouse(false)
+    area:SetSize(1, 1)
+    self.area = area
+    hooksecurefunc(area, "SetAlpha", function(_, a) holder:SetAlpha(a) end)
+    local ticker = CreateFrame("Frame", nil, holder)
+    ticker:SetScript("OnUpdate", function(f, elapsed)
+        f.acc = (f.acc or 0) + elapsed
+        if f.acc < 0.25 then return end
+        f.acc = 0
+        self:UpdateArea()
+    end)
+    self:UpdateArea()
+end
+
+function Kit:RegisterForeverUI()
+    local UI = _G.ForeverUI
+    if UI == nil then UI = {} _G.ForeverUI = UI end
+    if type(UI) ~= "table" then return end
+    if type(UI.elements) ~= "table" then UI.elements = {} end
+    local key = "kit:" .. self.key
+    for _, e in ipairs(UI.elements) do
+        if type(e) == "table" and e.key == key then return end
+    end
+    UI.elements[#UI.elements + 1] = {
+        key = key, label = self.name, frames = { self.prefix .. "Area" }, visible = FUI_VISIBLE,
+    }
+    UI.revision = (tonumber(UI.revision) or 0) + 1
+end
+
+---------------------------------------------------------------------------
 -- Kit Dock
 ---------------------------------------------------------------------------
 
@@ -3432,6 +3507,8 @@ function Kit:Build()
     self:UpdateHotkeys()
     self:ApplyPosition()
     self:RegisterDock()
+    self:BuildArea()
+    self:RegisterForeverUI()
     self:ApplyCombatHide()
     self.kit:SetShown(self.db.shown ~= false)
     if cfg.AfterBuild then cfg.AfterBuild(self) end
