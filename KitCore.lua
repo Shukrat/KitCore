@@ -36,7 +36,7 @@ local addonName, ns = ...
 -- kit if it's near one.
 ---------------------------------------------------------------------------
 
-local VERSION = 7
+local VERSION = 8
 local C = _G.KitCore
 if C and (C.version or 0) >= VERSION then
     ns.Core = C
@@ -1009,6 +1009,29 @@ function Kit:MenuToggle(root, label, key, after)
         end)
 end
 
+-- Where the kit lives: on the pin with the other kits, parked in the top
+-- dock, or free where it stands. Only with Kit Dock v19 or newer, and not
+-- for edges-only kits.
+function Kit:PlacementMenu(root)
+    local D = self.Dock
+    if not (D and D.Pin and D.Park and D.Undock) or self.cfg.edgesOnly then return end
+    local function where()
+        if D.IsParked and D.IsParked(self.key) then return "top" end
+        if D.IsDocked(self.key) then return "pin" end
+        return "free"
+    end
+    local function Go(to)
+        if InCombatLockdown() then self:Print("That can only change out of combat.") return end
+        if to == "top" then D.Park(self.key)
+        elseif to == "pin" then D.Pin(self.key)
+        else D.Undock(self.key) end
+    end
+    local sub = root:CreateButton("Place")
+    sub:CreateRadio("On the pin", function() return where() == "pin" end, function() Go("pin") end)
+    sub:CreateRadio("Top dock", function() return where() == "top" end, function() Go("top") end)
+    sub:CreateRadio("Free", function() return where() == "free" end, function() Go("free") end)
+end
+
 function Kit:OpenMenu()
     GameTooltip:Hide()
     if not (MenuUtil and MenuUtil.CreateContextMenu) then
@@ -1017,6 +1040,7 @@ function Kit:OpenMenu()
     end
     MenuUtil.CreateContextMenu(self.kit, function(_, root)
         root:CreateTitle(self.name)
+        self:PlacementMenu(root)
         root:CreateCheckbox("Pin in place",
             function() return self.db.locked and true or false end,
             function() self:SetLocked(not self.db.locked) end)
@@ -2301,7 +2325,7 @@ end
 function Kit:SlotVisible(slot, btn)
     local pop = slot.Pop and not btn.hidden and slot.Pop(self, btn) or false
     local available = self.db.shown ~= false and not btn.hidden
-    local visible = available and (self.open or ((self.cdb.pinned[slot.key] or pop) and not self.tucked)) and true or false
+    local visible = available and (self.open or ((self.cdb.pinned[slot.key] or pop) and not self.tucked and not self.parked)) and true or false
     return visible, available, pop
 end
 
@@ -2893,6 +2917,16 @@ function Kit:Tuck(on)
     self:Refresh(not on and "untuck" or false)
 end
 
+-- Parked in the top dock (a small button in a row): its pinned and popped
+-- slots stay put away until the kit is opened. Out of combat (the dock makes
+-- sure).
+function Kit:Park(on)
+    on = on and true or false
+    if self.parked == on then return end
+    self.parked = on
+    self:Refresh(false)
+end
+
 -- Show or hide the whole kit (settings, the shared minimap menu, slash).
 function Kit:SetShownKit(show)
     if InCombatLockdown() then self:Print("That can only change out of combat.") return end
@@ -2963,6 +2997,7 @@ function Kit:RegisterDock()
         SettingsChanged = function() self:SettingsChanged() end,
         HidesInCombat = function() return self.db.hideInCombat and true or false end,
         UiScale = function() return self.db.scale end,
+        Park = function(on) self:Park(on) end,
         Compact = function(on, angle, span)
             self.compactAngle, self.compactSpan = on and angle or nil, span
             self:Refresh(false)
