@@ -206,6 +206,14 @@ U.Fighting = Fighting
 -- Slots part-way through sliding out or in: [btn] = its kit (see SlideTo).
 local sliding = {}
 
+-- Any of this kit's slots sliding right now.
+function Kit:Sliding()
+    for _, k in pairs(sliding) do
+        if k == self then return true end
+    end
+    return false
+end
+
 ---------------------------------------------------------------------------
 -- Glows: one clock pulses every glow of every kit.
 ---------------------------------------------------------------------------
@@ -433,10 +441,40 @@ function Kit:TipOwner(owner)
     if self.db.tooltipDefault then DefaultAnchor(owner) else GameTooltip:SetOwner(owner, "ANCHOR_RIGHT") end
 end
 
+-- Hovering the kit button, a slot or a sub. Leaving hides the tooltip,
+-- unless the kit's slots are sliding: then the tooltip stays as it is until
+-- they've settled (SettleTip), so it doesn't flicker as slots pass under a
+-- still pointer.
 function Kit:Hover(on)
     self.hovering = math.max(0, self.hovering + (on and 1 or -1))
     self:ApplyFade()
-    if not on then GameTooltip:Hide() end
+    if not on and not self:Sliding() then GameTooltip:Hide() end
+end
+
+-- Show a frame's tooltip when it's hovered, but not while the kit's slots are
+-- sliding (they'd pass under the pointer one after another). frame.kcTip is
+-- kept for SettleTip.
+function Kit:HoverTip(frame, show)
+    frame.kcKit, frame.kcTip = self, show
+    frame:SetScript("OnEnter", function(b)
+        self:Hover(true)
+        if not self:Sliding() then show(b) end
+    end)
+    frame:SetScript("OnLeave", function() self:Hover(false) end)
+end
+
+-- The slides are over: the tooltip for whatever of this kit is under the
+-- pointer now, or none if that's nothing of the kit's.
+function Kit:SettleTip()
+    if self:Sliding() then return end
+    local foci = GetMouseFoci and GetMouseFoci()
+    local focus = foci and foci[1] or (GetMouseFocus and GetMouseFocus()) or nil
+    if focus and focus.kcKit == self and focus.kcTip and focus:IsVisible() then
+        focus.kcTip(focus)
+        return
+    end
+    local owner = GameTooltip:IsShown() and GameTooltip:GetOwner()
+    if owner and owner.kcKit == self then GameTooltip:Hide() end
 end
 
 ---------------------------------------------------------------------------
@@ -939,8 +977,7 @@ function Kit:BuildKit()
         end
         self:SetOpen(not self.open)
     end)
-    kit:SetScript("OnEnter", function(b)
-        self:Hover(true)
+    self:HoverTip(kit, function(b)
         DefaultAnchor(b)
         GameTooltip:AddLine(self.name)
         if cfg.KitTooltip then cfg.KitTooltip(self) end
@@ -949,7 +986,6 @@ function Kit:BuildKit()
         GameTooltip:AddLine("Right-click: menu   Shift-right-click: settings", 1, 1, 1)
         GameTooltip:Show()
     end)
-    kit:SetScript("OnLeave", function() self:Hover(false) end)
     if not self.noSecureToggle then
         local okw = pcall(SecureHandlerWrapScript, kit, "OnClick", header, KIT_PRE)
         if not okw then
@@ -974,6 +1010,7 @@ function Kit:BuildKit()
                 grip:SetScript("OnClick", function(_, mouse, down) self:GripClicked(mouse, down) end)
                 grip:SetScript("OnEnter", function() local f = kit:GetScript("OnEnter") if f then f(kit) end end)
                 grip:SetScript("OnLeave", function() local f = kit:GetScript("OnLeave") if f then f(kit) end end)
+                grip.kcKit, grip.kcTip = self, function() kit.kcTip(kit) end
                 self.grip = grip
             end
             if not (okg and grip) or not pcall(SecureHandlerWrapScript, grip, "OnClick", header, GRIP_CLICK) then
@@ -1153,6 +1190,9 @@ function Kit:CreateSlot(slot)
             b.slideTarget, b.slideWait, b.slideA, b.closing = nil, nil, nil, nil
             b.slideP = nil
             if not InCombatLockdown() then b:SetScale(self.db.scale) end
+            if not self:Sliding() and C_Timer and C_Timer.After then
+                C_Timer.After(0, function() self:SettleTip() end)
+            end
         end
     end)
     local dx, dy = slot.pos[1], slot.pos[2]
@@ -1163,11 +1203,7 @@ function Kit:CreateSlot(slot)
     if slot.sub then self:AddSub(btn, slot.sub) end
     if slot.Choices then self:AddFlyout(btn) end
 
-    btn:SetScript("OnEnter", function(b)
-        self:Hover(true)
-        self:SlotTooltip(b)
-    end)
-    btn:SetScript("OnLeave", function() self:Hover(false) end)
+    self:HoverTip(btn, function(b) self:SlotTooltip(b) end)
     btn:HookScript("OnAttributeChanged", function(b, name, value)
         -- A choice from the flyout became this slot's (maybe in combat).
         if name == "kcvalue" and slot.assign and not b.updating and value ~= nil then
@@ -1244,6 +1280,10 @@ end
 -- The slide is over: the slot at its spot at full size, or hidden in the kit.
 function Kit:FinishSlide(btn)
     sliding[btn] = nil
+    if not self:Sliding() then
+        -- (next frame, once the pointer has caught up with where things are)
+        if C_Timer and C_Timer.After then C_Timer.After(0, function() self:SettleTip() end) else self:SettleTip() end
+    end
     local target = btn.slideTarget or 1
     btn.slideP, btn.slideTarget, btn.slideWait, btn.slideA = target, nil, nil, nil
     if InCombatLockdown() then return end
@@ -1339,13 +1379,11 @@ function Kit:AddSub(btn, sub)
     sb:SetPoint("CENTER", btn, "CENTER", SUB_CORNER[1], SUB_CORNER[2])
     self:AddGlow(sb, "glow_ring", 1.7)
     sb.def, sb.parentBtn = sub, btn
-    sb:SetScript("OnEnter", function(b)
-        self:Hover(true)
+    self:HoverTip(sb, function(b)
         self:TipOwner(b)
         if sub.Tooltip then sub.Tooltip(self, b) else GameTooltip:AddLine(sub.label) end
         GameTooltip:Show()
     end)
-    sb:SetScript("OnLeave", function() self:Hover(false) end)
     sb:Hide()
     btn.sub = sb
     _G["BINDING_NAME_CLICK " .. sb:GetName() .. ":LeftButton"] = sub.binding or sub.label
