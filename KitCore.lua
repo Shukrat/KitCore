@@ -36,7 +36,7 @@ local addonName, ns = ...
 -- kit if it's near one.
 ---------------------------------------------------------------------------
 
-local VERSION = 8
+local VERSION = 9
 local C = _G.KitCore
 if C and (C.version or 0) >= VERSION then
     ns.Core = C
@@ -1067,7 +1067,7 @@ function Kit:PlacementMenu(root)
     end
     local sub = root:CreateButton("Place")
     sub:CreateRadio("On the pin", function() return where() == "pin" end, function() Go("pin") end)
-    sub:CreateRadio("Top dock", function() return where() == "top" end, function() Go("top") end)
+    sub:CreateRadio("Tuck box", function() return where() == "top" end, function() Go("top") end)
     sub:CreateRadio("Free", function() return where() == "free" end, function() Go("free") end)
 end
 
@@ -2065,9 +2065,15 @@ function Kit:BesideSpot(side, i)
     return sign * d, 0
 end
 
+-- In a Kit Dock box the button is small and the box sits around it, so
+-- what shows (reminders, pinned slots) starts just past the box's inner edge.
+local PARKED_INSET = 8
+
 function Kit:PlaceEdge()
     local cols = self:EdgeCols(self.open, false)
-    local pos, div = self.Dock.EdgeArrange(self.edgeSide, self:KitHalfUnits(), cols, self:EdgeDivAfter(self.open))
+    local half = self:KitHalfUnits()
+    if self.parked then half = half + PARKED_INSET / self.db.scale end
+    local pos, div = self.Dock.EdgeArrange(self.edgeSide, half, cols, self:EdgeDivAfter(self.open))
     for f, p in pairs(pos) do self:PlaceAt(f, p[1], p[2]) end
     local beside = self.cfg.edgeBeside
     if beside then
@@ -2377,7 +2383,7 @@ end
 function Kit:SlotVisible(slot, btn)
     local pop = slot.Pop and not btn.hidden and slot.Pop(self, btn) or false
     local available = self.db.shown ~= false and not btn.hidden
-    local visible = available and (self.open or ((self.cdb.pinned[slot.key] or pop) and not self.tucked and not self.parked)) and true or false
+    local visible = available and (self.open or ((self.cdb.pinned[slot.key] or pop) and not self.tucked)) and true or false
     return visible, available, pop
 end
 
@@ -2975,9 +2981,9 @@ function Kit:Tuck(on)
     self:Refresh(not on and "untuck" or false)
 end
 
--- Parked in the top dock (a small button in a row): its pinned and popped
--- slots stay put away until the kit is opened. Out of combat (the dock makes
--- sure).
+-- Parked in a Kit Dock box (a small button in a row): its pinned and popped
+-- slots show just inside the box, laid out as on that edge. Out of combat
+-- (the dock makes sure).
 function Kit:Park(on)
     on = on and true or false
     if self.parked == on then return end
