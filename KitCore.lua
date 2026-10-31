@@ -672,7 +672,9 @@ end
 -- closed one; see PushSnapshot), and close the flyouts, which belong to the
 -- layout being left. Out of combat this does nothing: the click opens the
 -- kit the usual way (animated, with the dock told). "kcready" is 0 when
--- this kit has no layouts to switch to (on the pin with other kits). Whether
+-- this kit has no layouts to switch to (the kit open on the pin, or parked
+-- in Kit Dock's box). A kit shrunk on the pin opens in its own slice there,
+-- its slots fanned out in rings of 4 (from v8). Whether
 -- it's combat comes from a state driver on the button itself ("kcincombat",
 -- registered in BuildKit), which the game keeps right however early or late
 -- combat's events arrive.
@@ -1985,7 +1987,7 @@ function Kit:PlaceRim(angle)
     for _, btn in pairs(self.slots) do
         if btn.slot.rim then
             self:PlaceAt(btn, r * math.cos(math.rad(angle)), r * math.sin(math.rad(angle)))
-            if btn:IsShown() and not btn.closing then placed = true end
+            if self:WouldShow(btn) then placed = true end
         end
     end
     return placed
@@ -2205,17 +2207,26 @@ function Kit:FaceDivider()
     dv.tex:SetRotation(side and math.pi / 2 or 0)
 end
 
+-- Whether a slot is out in the layout being placed: the trial one (see
+-- TrialLayout), or as it is on screen.
+function Kit:WouldShow(btn)
+    if self.trial then return self.trial.vis[btn] and true or false end
+    return btn:IsShown() and not btn.closing and true or false
+end
+
 function Kit:PlaceSlots()
     local ringMoved = self:LayoutHomes()
     if self.edgeSide and self.Dock then return self:PlaceEdge() end
-    if self.trial then
+    if self.trial and not self.compactAngle then
         for btn, h in pairs(self.trial.home) do self:PlaceAt(btn, h[1], h[2]) end
         return
     end
-    self.liveDiv = false
-    self:UnEdgeDivider()
-    self:FaceDivider()
-    for _, btn in pairs(self.slots) do self:PlaceSub(btn) end
+    if not self.trial then
+        self.liveDiv = false
+        self:UnEdgeDivider()
+        self:FaceDivider()
+        for _, btn in pairs(self.slots) do self:PlaceSub(btn) end
+    end
     local angle, span = self.compactAngle, self.compactSpan
     if not angle then
         -- Slots already out glide to new home spots (the ring closing up
@@ -2239,15 +2250,18 @@ function Kit:PlaceSlots()
     end
     -- Shrunk on the dock: whatever's out fans round the button in its slice,
     -- in rings of 4, by tier (if the kit gives them), then pinned slots
-    -- first, then the rest, each in slot order.
+    -- first, then the rest, each in slot order. Opened there in combat, that's
+    -- every slot (the trial layout works it out ahead of time).
     -- Small rim slots keep a place on the button's rim, on the side the
     -- fan opens toward (away from the pin); the fan starts a little further
     -- out so nothing lands on them.
     local rimOut = self:PlaceRim(angle)
-    if self.cfg.PlaceExtras then self.cfg.PlaceExtras(self, angle) end
+    -- (a kit's extras don't change between open and closed in the fan, so a
+    -- trial leaves them alone)
+    if self.cfg.PlaceExtras and not self.trial then self.cfg.PlaceExtras(self, angle) end
     local shown = {}
     for _, btn in pairs(self.slots) do
-        if btn:IsShown() and not btn.closing and not btn.slot.rim then shown[#shown + 1] = btn end
+        if self:WouldShow(btn) and not btn.slot.rim then shown[#shown + 1] = btn end
     end
     table.sort(shown, function(a, b)
         local ta, tb = a.slot.tier or 0, b.slot.tier or 0 -- (slot.tier: nearest ring first)
@@ -2329,12 +2343,18 @@ function Kit:SlotVisible(slot, btn)
     return visible, available, pop
 end
 
--- Can the kit button open and close this kit in combat? Not on the pin with
--- other kits: there the kit moves (and the others shrink and tuck) as it
--- opens, and none of that can happen in combat.
+-- Can the kit button open and close this kit in combat? Shrunk on the pin
+-- with other kits: yes, in place, every slot fanned out in its slice away
+-- from the pin (nothing else moves; out of combat it takes the pin as
+-- usual once combat ends). Parked in Kit Dock's box: no, its fan points off
+-- the screen. Open on the pin (taking it, the others tucked): no, closing
+-- would leave the others tucked.
 function Kit:CanSecureToggle()
-    if self.noSecureToggle or self.compactAngle then return false end
+    if self.noSecureToggle then return false end
     local D = self.Dock
+    if self.compactAngle then
+        return not (D and D.IsParked and D.IsParked(self.key)) and true or false
+    end
     if D and D.IsDocked and D.IsDocked(self.key) and not self.edgeSide then return false end
     return true
 end
@@ -2565,7 +2585,7 @@ function Kit:StoreSnap(open, t)
         end
     end
     local d = self.cfg.divider
-    if open and d then
+    if open and d and not self.compactAngle then -- (no divider in a fan on the pin)
         for _, key in ipairs(d.below or {}) do
             local b = self.slots[key]
             if b and t.vis[b] then snap.rowOut = true end
@@ -2686,7 +2706,7 @@ function Kit:Refresh(animate)
     local dv = self.divider
     if dv then
         local rowOut = false
-        if self.open then
+        if self.open and not self.compactAngle then
             for _, key in ipairs(cfg.divider.below or {}) do
                 local b = self.slots[key]
                 if b and b:IsShown() and not b.closing then rowOut = true end
