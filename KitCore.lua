@@ -2415,6 +2415,9 @@ end
 function Kit:CanSecureToggle()
     if self.noSecureToggle then return false end
     local D = self.Dock
+    -- In a Kit Dock box: no (it stays closed in combat, and it only steps out
+    -- of the box out of combat).
+    if self.parked or (D and D.IsParked and D.IsParked(self.key)) then return false end
     if self.compactAngle then
         return not (D and D.IsParked and D.IsParked(self.key)) and true or false
     end
