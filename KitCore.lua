@@ -2036,6 +2036,10 @@ function Kit:PlaceAt(f, x, y)
         self.trial.pos[f] = { x, y }
         return
     end
+    if self.collect then -- in a Kit Dock box: noted, for the box's row (see PlaceSlots)
+        if f:IsShown() and not f.closing then self.collect[#self.collect + 1] = f end
+        return
+    end
     if sliding[f] then -- (the slide puts it there; see SlideApply)
         f.placedX, f.placedY = x, y
         return
@@ -2260,6 +2264,21 @@ end
 
 function Kit:PlaceSlots()
     local ringMoved = self:LayoutHomes()
+    -- In a Kit Dock box and closed: what shows (reminders, pinned slots)
+    -- goes in one row along the box with the other boxed kits' (Kit Dock
+    -- places them), in the order the edge layout would put them.
+    if self.parked and not self.open and self.edgeSide and self.Dock and self.Dock.BoxNotices and not self.trial then
+        self.collect = {}
+        local ok, err = pcall(self.PlaceEdge, self)
+        local list = self.collect
+        self.collect = nil
+        if not ok then
+            local h = geterrorhandler and geterrorhandler()
+            if h then h(err) end
+        end
+        self.Dock.BoxNotices(self.key, list)
+        return
+    end
     if self.edgeSide and self.Dock then return self:PlaceEdge() end
     if self.trial and not self.compactAngle then
         for btn, h in pairs(self.trial.home) do self:PlaceAt(btn, h[1], h[2]) end
@@ -3062,6 +3081,7 @@ function Kit:RegisterDock()
         HidesInCombat = function() return self.db.hideInCombat and true or false end,
         UiScale = function() return self.db.scale end,
         Park = function(on) self:Park(on) end,
+        Refresh = function() if not InCombatLockdown() then self:Refresh(false) end end,
         Compact = function(on, angle, span)
             self.compactAngle, self.compactSpan = on and angle or nil, span
             self:Refresh(false)
