@@ -1989,7 +1989,11 @@ end
 ---------------------------------------------------------------------------
 
 function Kit:KitHalfUnits()
-    return self.kit:GetWidth() * self.kit:GetScale() / 2 / self.db.scale
+    -- (the size it's growing or shrinking to, if Kit Dock is gliding it: a
+    -- kit stepping out of a box opens while it grows)
+    local D = self.Dock
+    local sc = D and D.ScaleOf and D.ScaleOf(self.kit) or self.kit:GetScale()
+    return self.kit:GetWidth() * sc / 2 / self.db.scale
 end
 
 -- Which slots go in each column on a screen edge, from the edge in.
