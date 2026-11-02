@@ -36,7 +36,7 @@ local addonName, ns = ...
 -- kit if it's near one.
 ---------------------------------------------------------------------------
 
-local VERSION = 9
+local VERSION = 10
 local C = _G.KitCore
 if C and (C.version or 0) >= VERSION then
     ns.Core = C
@@ -2016,6 +2016,16 @@ function Kit:EdgeCols(asOpen, hypothetical)
         end
         cols[#cols + 1] = col
     end
+    -- In a Kit Dock box the slots that sit beside the button on an edge
+    -- (along it) would land on the box: a column of their own instead.
+    if self.parked and self.cfg.edgeBeside then
+        local col = {}
+        for _, key in ipairs(self.cfg.edgeBeside) do
+            local btn = self.slots[key]
+            if btn and on(btn) then col[#col + 1] = { frame = btn, size = btn.isSmall and 22 or self.BTN } end
+        end
+        cols[#cols + 1] = col
+    end
     if self.cfg.EdgeExtraCol then cols[#cols + 1] = self.cfg.EdgeExtraCol(self, hypothetical, asOpen) or {} end
     return cols
 end
@@ -2089,7 +2099,7 @@ function Kit:PlaceEdge()
     if self.parked then half = half + PARKED_INSET / self.db.scale end
     local pos, div = self.Dock.EdgeArrange(self.edgeSide, half, cols, self:EdgeDivAfter(self.open))
     for f, p in pairs(pos) do self:PlaceAt(f, p[1], p[2]) end
-    local beside = self.cfg.edgeBeside
+    local beside = not self.parked and self.cfg.edgeBeside -- (in a box: a column, see EdgeCols)
     if beside then
         local i = 0
         for _, key in ipairs(beside) do
