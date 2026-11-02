@@ -2025,6 +2025,9 @@ end
 -- Small "rim" slots: on the kit's rim, at this angle (degrees).
 function Kit:PlaceRim(angle)
     local r = self:KitHalfUnits() - 3
+    -- In a Kit Dock box the button is small: the rim slot sits just outside it
+    -- instead of on it.
+    if self.parked then r = self:KitHalfUnits() + 7 end
     local placed = false
     for _, btn in pairs(self.slots) do
         if btn.slot.rim then
