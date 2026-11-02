@@ -36,7 +36,7 @@ local addonName, ns = ...
 -- kit if it's near one.
 ---------------------------------------------------------------------------
 
-local VERSION = 7
+local VERSION = 9
 local C = _G.KitCore
 if C and (C.version or 0) >= VERSION then
     ns.Core = C
@@ -206,6 +206,14 @@ U.Fighting = Fighting
 -- Slots part-way through sliding out or in: [btn] = its kit (see SlideTo).
 local sliding = {}
 
+-- Any of this kit's slots sliding right now.
+function Kit:Sliding()
+    for _, k in pairs(sliding) do
+        if k == self then return true end
+    end
+    return false
+end
+
 ---------------------------------------------------------------------------
 -- Glows: one clock pulses every glow of every kit.
 ---------------------------------------------------------------------------
@@ -285,6 +293,9 @@ C.BASE_CHAR = {
 --                 frames, like timers): { { frame = f, size = n }, ... }
 --   extraFrames(kit)  those frames (any that can show), so they're scaled
 --                 and glide along when the kit moves
+--   boxFrames(kit)  (optional) other frames the kit places itself that show
+--                 while closed (a pinned extra button): in a Kit Dock box
+--                 they go in the box's row with its pinned slots
 --   PlaceExtras(kit, angle)  place those frames off an edge: angle is nil
 --                 normally, or the fan's direction while shrunk on the dock
 --   PinSettings(kit, S)  more "Always show" boxes in the Slots section
@@ -433,10 +444,40 @@ function Kit:TipOwner(owner)
     if self.db.tooltipDefault then DefaultAnchor(owner) else GameTooltip:SetOwner(owner, "ANCHOR_RIGHT") end
 end
 
+-- Hovering the kit button, a slot or a sub. Leaving hides the tooltip,
+-- unless the kit's slots are sliding: then the tooltip stays as it is until
+-- they've settled (SettleTip), so it doesn't flicker as slots pass under a
+-- still pointer.
 function Kit:Hover(on)
     self.hovering = math.max(0, self.hovering + (on and 1 or -1))
     self:ApplyFade()
-    if not on then GameTooltip:Hide() end
+    if not on and not self:Sliding() then GameTooltip:Hide() end
+end
+
+-- Show a frame's tooltip when it's hovered, but not while the kit's slots are
+-- sliding (they'd pass under the pointer one after another). frame.kcTip is
+-- kept for SettleTip.
+function Kit:HoverTip(frame, show)
+    frame.kcKit, frame.kcTip = self, show
+    frame:SetScript("OnEnter", function(b)
+        self:Hover(true)
+        if not self:Sliding() then show(b) end
+    end)
+    frame:SetScript("OnLeave", function() self:Hover(false) end)
+end
+
+-- The slides are over: the tooltip for whatever of this kit is under the
+-- pointer now, or none if that's nothing of the kit's.
+function Kit:SettleTip()
+    if self:Sliding() then return end
+    local foci = GetMouseFoci and GetMouseFoci()
+    local focus = foci and foci[1] or (GetMouseFocus and GetMouseFocus()) or nil
+    if focus and focus.kcKit == self and focus.kcTip and focus:IsVisible() then
+        focus.kcTip(focus)
+        return
+    end
+    local owner = GameTooltip:IsShown() and GameTooltip:GetOwner()
+    if owner and owner.kcKit == self then GameTooltip:Hide() end
 end
 
 ---------------------------------------------------------------------------
@@ -672,7 +713,9 @@ end
 -- closed one; see PushSnapshot), and close the flyouts, which belong to the
 -- layout being left. Out of combat this does nothing: the click opens the
 -- kit the usual way (animated, with the dock told). "kcready" is 0 when
--- this kit has no layouts to switch to (on the pin with other kits). Whether
+-- this kit has no layouts to switch to (the kit open on the pin, or parked
+-- in Kit Dock's box). A kit shrunk on the pin opens in its own slice there,
+-- its slots fanned out in rings of 4 (from v8). Whether
 -- it's combat comes from a state driver on the button itself ("kcincombat",
 -- registered in BuildKit), which the game keeps right however early or late
 -- combat's events arrive.
@@ -939,8 +982,7 @@ function Kit:BuildKit()
         end
         self:SetOpen(not self.open)
     end)
-    kit:SetScript("OnEnter", function(b)
-        self:Hover(true)
+    self:HoverTip(kit, function(b)
         DefaultAnchor(b)
         GameTooltip:AddLine(self.name)
         if cfg.KitTooltip then cfg.KitTooltip(self) end
@@ -949,7 +991,6 @@ function Kit:BuildKit()
         GameTooltip:AddLine("Right-click: menu   Shift-right-click: settings", 1, 1, 1)
         GameTooltip:Show()
     end)
-    kit:SetScript("OnLeave", function() self:Hover(false) end)
     if not self.noSecureToggle then
         local okw = pcall(SecureHandlerWrapScript, kit, "OnClick", header, KIT_PRE)
         if not okw then
@@ -974,6 +1015,7 @@ function Kit:BuildKit()
                 grip:SetScript("OnClick", function(_, mouse, down) self:GripClicked(mouse, down) end)
                 grip:SetScript("OnEnter", function() local f = kit:GetScript("OnEnter") if f then f(kit) end end)
                 grip:SetScript("OnLeave", function() local f = kit:GetScript("OnLeave") if f then f(kit) end end)
+                grip.kcKit, grip.kcTip = self, function() kit.kcTip(kit) end
                 self.grip = grip
             end
             if not (okg and grip) or not pcall(SecureHandlerWrapScript, grip, "OnClick", header, GRIP_CLICK) then
@@ -1009,6 +1051,29 @@ function Kit:MenuToggle(root, label, key, after)
         end)
 end
 
+-- Where the kit lives: on the pin with the other kits, parked in the top
+-- dock, or free where it stands. Only with Kit Dock v19 or newer, and not
+-- for edges-only kits.
+function Kit:PlacementMenu(root)
+    local D = self.Dock
+    if not (D and D.Pin and D.Park and D.Undock) or self.cfg.edgesOnly then return end
+    local function where()
+        if D.IsParked and D.IsParked(self.key) then return "top" end
+        if D.IsDocked(self.key) then return "pin" end
+        return "free"
+    end
+    local function Go(to)
+        if InCombatLockdown() then self:Print("That can only change out of combat.") return end
+        if to == "top" then D.Park(self.key)
+        elseif to == "pin" then D.Pin(self.key)
+        else D.Undock(self.key) end
+    end
+    local sub = root:CreateButton("Place")
+    sub:CreateRadio("On the pin", function() return where() == "pin" end, function() Go("pin") end)
+    sub:CreateRadio("Tuck box", function() return where() == "top" end, function() Go("top") end)
+    sub:CreateRadio("Free", function() return where() == "free" end, function() Go("free") end)
+end
+
 function Kit:OpenMenu()
     GameTooltip:Hide()
     if not (MenuUtil and MenuUtil.CreateContextMenu) then
@@ -1017,6 +1082,7 @@ function Kit:OpenMenu()
     end
     MenuUtil.CreateContextMenu(self.kit, function(_, root)
         root:CreateTitle(self.name)
+        self:PlacementMenu(root)
         root:CreateCheckbox("Pin in place",
             function() return self.db.locked and true or false end,
             function() self:SetLocked(not self.db.locked) end)
@@ -1153,6 +1219,9 @@ function Kit:CreateSlot(slot)
             b.slideTarget, b.slideWait, b.slideA, b.closing = nil, nil, nil, nil
             b.slideP = nil
             if not InCombatLockdown() then b:SetScale(self.db.scale) end
+            if not self:Sliding() and C_Timer and C_Timer.After then
+                C_Timer.After(0, function() self:SettleTip() end)
+            end
         end
     end)
     local dx, dy = slot.pos[1], slot.pos[2]
@@ -1163,11 +1232,7 @@ function Kit:CreateSlot(slot)
     if slot.sub then self:AddSub(btn, slot.sub) end
     if slot.Choices then self:AddFlyout(btn) end
 
-    btn:SetScript("OnEnter", function(b)
-        self:Hover(true)
-        self:SlotTooltip(b)
-    end)
-    btn:SetScript("OnLeave", function() self:Hover(false) end)
+    self:HoverTip(btn, function(b) self:SlotTooltip(b) end)
     btn:HookScript("OnAttributeChanged", function(b, name, value)
         -- A choice from the flyout became this slot's (maybe in combat).
         if name == "kcvalue" and slot.assign and not b.updating and value ~= nil then
@@ -1244,6 +1309,10 @@ end
 -- The slide is over: the slot at its spot at full size, or hidden in the kit.
 function Kit:FinishSlide(btn)
     sliding[btn] = nil
+    if not self:Sliding() then
+        -- (next frame, once the pointer has caught up with where things are)
+        if C_Timer and C_Timer.After then C_Timer.After(0, function() self:SettleTip() end) else self:SettleTip() end
+    end
     local target = btn.slideTarget or 1
     btn.slideP, btn.slideTarget, btn.slideWait, btn.slideA = target, nil, nil, nil
     if InCombatLockdown() then return end
@@ -1339,13 +1408,11 @@ function Kit:AddSub(btn, sub)
     sb:SetPoint("CENTER", btn, "CENTER", SUB_CORNER[1], SUB_CORNER[2])
     self:AddGlow(sb, "glow_ring", 1.7)
     sb.def, sb.parentBtn = sub, btn
-    sb:SetScript("OnEnter", function(b)
-        self:Hover(true)
+    self:HoverTip(sb, function(b)
         self:TipOwner(b)
         if sub.Tooltip then sub.Tooltip(self, b) else GameTooltip:AddLine(sub.label) end
         GameTooltip:Show()
     end)
-    sb:SetScript("OnLeave", function() self:Hover(false) end)
     sb:Hide()
     btn.sub = sb
     _G["BINDING_NAME_CLICK " .. sb:GetName() .. ":LeftButton"] = sub.binding or sub.label
@@ -1925,7 +1992,11 @@ end
 ---------------------------------------------------------------------------
 
 function Kit:KitHalfUnits()
-    return self.kit:GetWidth() * self.kit:GetScale() / 2 / self.db.scale
+    -- (the size it's growing or shrinking to, if Kit Dock is gliding it: a
+    -- kit stepping out of a box opens while it grows)
+    local D = self.Dock
+    local sc = D and D.ScaleOf and D.ScaleOf(self.kit) or self.kit:GetScale()
+    return self.kit:GetWidth() * sc / 2 / self.db.scale
 end
 
 -- Which slots go in each column on a screen edge, from the edge in.
@@ -1957,11 +2028,14 @@ end
 -- Small "rim" slots: on the kit's rim, at this angle (degrees).
 function Kit:PlaceRim(angle)
     local r = self:KitHalfUnits() - 3
+    -- In a Kit Dock box the button is small: the rim slot sits just outside it
+    -- instead of on it.
+    if self.parked then r = self:KitHalfUnits() + 7 end
     local placed = false
     for _, btn in pairs(self.slots) do
         if btn.slot.rim then
             self:PlaceAt(btn, r * math.cos(math.rad(angle)), r * math.sin(math.rad(angle)))
-            if btn:IsShown() and not btn.closing then placed = true end
+            if self:WouldShow(btn) then placed = true end
         end
     end
     return placed
@@ -1970,6 +2044,10 @@ end
 function Kit:PlaceAt(f, x, y)
     if self.trial then -- a trial layout only notes where it would go
         self.trial.pos[f] = { x, y }
+        return
+    end
+    if self.collect then -- in a Kit Dock box: noted, for the box's row (see PlaceSlots)
+        if f:IsShown() and not f.closing then self.collect[#self.collect + 1] = f end
         return
     end
     if sliding[f] then -- (the slide puts it there; see SlideApply)
@@ -2001,9 +2079,15 @@ function Kit:BesideSpot(side, i)
     return sign * d, 0
 end
 
+-- In a Kit Dock box the button is small and the box sits around it, so
+-- what shows (reminders, pinned slots) starts just past the box's inner edge.
+local PARKED_INSET = 8
+
 function Kit:PlaceEdge()
     local cols = self:EdgeCols(self.open, false)
-    local pos, div = self.Dock.EdgeArrange(self.edgeSide, self:KitHalfUnits(), cols, self:EdgeDivAfter(self.open))
+    local half = self:KitHalfUnits()
+    if self.parked then half = half + PARKED_INSET / self.db.scale end
+    local pos, div = self.Dock.EdgeArrange(self.edgeSide, half, cols, self:EdgeDivAfter(self.open))
     for f, p in pairs(pos) do self:PlaceAt(f, p[1], p[2]) end
     local beside = self.cfg.edgeBeside
     if beside then
@@ -2181,17 +2265,53 @@ function Kit:FaceDivider()
     dv.tex:SetRotation(side and math.pi / 2 or 0)
 end
 
+-- Whether a slot is out in the layout being placed: the trial one (see
+-- TrialLayout), or as it is on screen.
+function Kit:WouldShow(btn)
+    if self.trial then return self.trial.vis[btn] and true or false end
+    return btn:IsShown() and not btn.closing and true or false
+end
+
 function Kit:PlaceSlots()
     local ringMoved = self:LayoutHomes()
+    -- In a Kit Dock box and closed: what shows (reminders, pinned slots)
+    -- goes in one row along the box with the other boxed kits' (Kit Dock
+    -- places them), in the order the edge layout would put them.
+    if self.parked and not self.open and self.edgeSide and self.Dock and self.Dock.BoxNotices and not self.trial then
+        self.collect = {}
+        local ok, err = pcall(self.PlaceEdge, self)
+        local list = self.collect
+        self.collect = nil
+        -- The kit's own extras it places itself (timers and such), and any
+        -- frame it names for the box (cfg.boxFrames), showing: in the row too.
+        local more = {}
+        for _, f in ipairs(self:Extras()) do more[#more + 1] = f end
+        if self.cfg.boxFrames then
+            for _, f in ipairs(self.cfg.boxFrames(self) or {}) do more[#more + 1] = f end
+        end
+        for _, f in ipairs(more) do
+            local seen = false
+            for _, g in ipairs(list) do if g == f then seen = true break end end
+            if not seen and f:IsShown() then list[#list + 1] = f end
+        end
+        if not ok then
+            local h = geterrorhandler and geterrorhandler()
+            if h then h(err) end
+        end
+        self.Dock.BoxNotices(self.key, list)
+        return
+    end
     if self.edgeSide and self.Dock then return self:PlaceEdge() end
-    if self.trial then
+    if self.trial and not self.compactAngle then
         for btn, h in pairs(self.trial.home) do self:PlaceAt(btn, h[1], h[2]) end
         return
     end
-    self.liveDiv = false
-    self:UnEdgeDivider()
-    self:FaceDivider()
-    for _, btn in pairs(self.slots) do self:PlaceSub(btn) end
+    if not self.trial then
+        self.liveDiv = false
+        self:UnEdgeDivider()
+        self:FaceDivider()
+        for _, btn in pairs(self.slots) do self:PlaceSub(btn) end
+    end
     local angle, span = self.compactAngle, self.compactSpan
     if not angle then
         -- Slots already out glide to new home spots (the ring closing up
@@ -2215,15 +2335,18 @@ function Kit:PlaceSlots()
     end
     -- Shrunk on the dock: whatever's out fans round the button in its slice,
     -- in rings of 4, by tier (if the kit gives them), then pinned slots
-    -- first, then the rest, each in slot order.
+    -- first, then the rest, each in slot order. Opened there in combat, that's
+    -- every slot (the trial layout works it out ahead of time).
     -- Small rim slots keep a place on the button's rim, on the side the
     -- fan opens toward (away from the pin); the fan starts a little further
     -- out so nothing lands on them.
     local rimOut = self:PlaceRim(angle)
-    if self.cfg.PlaceExtras then self.cfg.PlaceExtras(self, angle) end
+    -- (a kit's extras don't change between open and closed in the fan, so a
+    -- trial leaves them alone)
+    if self.cfg.PlaceExtras and not self.trial then self.cfg.PlaceExtras(self, angle) end
     local shown = {}
     for _, btn in pairs(self.slots) do
-        if btn:IsShown() and not btn.closing and not btn.slot.rim then shown[#shown + 1] = btn end
+        if self:WouldShow(btn) and not btn.slot.rim then shown[#shown + 1] = btn end
     end
     table.sort(shown, function(a, b)
         local ta, tb = a.slot.tier or 0, b.slot.tier or 0 -- (slot.tier: nearest ring first)
@@ -2301,16 +2424,25 @@ end
 function Kit:SlotVisible(slot, btn)
     local pop = slot.Pop and not btn.hidden and slot.Pop(self, btn) or false
     local available = self.db.shown ~= false and not btn.hidden
-    local visible = available and (self.open or ((self.cdb.pinned[slot.key] or pop) and not self.tucked)) and true or false
+    local visible = available and (self.open or ((self.cdb.pinned[slot.key] or pop) and not self.tucked and not self.quiet)) and true or false
     return visible, available, pop
 end
 
--- Can the kit button open and close this kit in combat? Not on the pin with
--- other kits: there the kit moves (and the others shrink and tuck) as it
--- opens, and none of that can happen in combat.
+-- Can the kit button open and close this kit in combat? Shrunk on the pin
+-- with other kits: yes, in place, every slot fanned out in its slice away
+-- from the pin (nothing else moves; out of combat it takes the pin as
+-- usual once combat ends). Parked in Kit Dock's box: no, its fan points off
+-- the screen. Open on the pin (taking it, the others tucked): no, closing
+-- would leave the others tucked.
 function Kit:CanSecureToggle()
-    if self.noSecureToggle or self.compactAngle then return false end
+    if self.noSecureToggle then return false end
     local D = self.Dock
+    -- In a Kit Dock box: no (it stays closed in combat, and it only steps out
+    -- of the box out of combat).
+    if self.parked or (D and D.IsParked and D.IsParked(self.key)) then return false end
+    if self.compactAngle then
+        return not (D and D.IsParked and D.IsParked(self.key)) and true or false
+    end
     if D and D.IsDocked and D.IsDocked(self.key) and not self.edgeSide then return false end
     return true
 end
@@ -2541,7 +2673,7 @@ function Kit:StoreSnap(open, t)
         end
     end
     local d = self.cfg.divider
-    if open and d then
+    if open and d and not self.compactAngle then -- (no divider in a fan on the pin)
         for _, key in ipairs(d.below or {}) do
             local b = self.slots[key]
             if b and t.vis[b] then snap.rowOut = true end
@@ -2662,7 +2794,7 @@ function Kit:Refresh(animate)
     local dv = self.divider
     if dv then
         local rowOut = false
-        if self.open then
+        if self.open and not self.compactAngle then
             for _, key in ipairs(cfg.divider.below or {}) do
                 local b = self.slots[key]
                 if b and b:IsShown() and not b.closing then rowOut = true end
@@ -2893,6 +3025,16 @@ function Kit:Tuck(on)
     self:Refresh(not on and "untuck" or false)
 end
 
+-- Parked in a Kit Dock box (a small button in a row): its pinned and popped
+-- slots show just inside the box, laid out as on that edge. Out of combat
+-- (the dock makes sure).
+function Kit:Park(on)
+    on = on and true or false
+    if self.parked == on then return end
+    self.parked = on
+    self:Refresh(false)
+end
+
 -- Show or hide the whole kit (settings, the shared minimap menu, slash).
 function Kit:SetShownKit(show)
     if InCombatLockdown() then self:Print("That can only change out of combat.") return end
@@ -2963,6 +3105,15 @@ function Kit:RegisterDock()
         SettingsChanged = function() self:SettingsChanged() end,
         HidesInCombat = function() return self.db.hideInCombat and true or false end,
         UiScale = function() return self.db.scale end,
+        Park = function(on) self:Park(on) end,
+        Refresh = function() if not InCombatLockdown() then self:Refresh(false) end end,
+        -- In a Kit Dock box while another kit from it is open: pinned slots
+        -- (and the kit's reminders, which the kit's own code hides on
+        -- kit.quiet) slide away, and come back after.
+        Quiet = function(on)
+            self.quiet = on and true or nil
+            if not InCombatLockdown() then self:Refresh(not on and "untuck" or false) end
+        end,
         Compact = function(on, angle, span)
             self.compactAngle, self.compactSpan = on and angle or nil, span
             self:Refresh(false)
