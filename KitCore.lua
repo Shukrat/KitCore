@@ -2406,7 +2406,7 @@ end
 function Kit:SlotVisible(slot, btn)
     local pop = slot.Pop and not btn.hidden and slot.Pop(self, btn) or false
     local available = self.db.shown ~= false and not btn.hidden
-    local visible = available and (self.open or ((self.cdb.pinned[slot.key] or pop) and not self.tucked)) and true or false
+    local visible = available and (self.open or ((self.cdb.pinned[slot.key] or pop) and not self.tucked and not self.quiet)) and true or false
     return visible, available, pop
 end
 
@@ -3089,6 +3089,13 @@ function Kit:RegisterDock()
         UiScale = function() return self.db.scale end,
         Park = function(on) self:Park(on) end,
         Refresh = function() if not InCombatLockdown() then self:Refresh(false) end end,
+        -- In a Kit Dock box while another kit from it is open: pinned slots
+        -- (and the kit's reminders, which the kit's own code hides on
+        -- kit.quiet) slide away, and come back after.
+        Quiet = function(on)
+            self.quiet = on and true or nil
+            if not InCombatLockdown() then self:Refresh(not on and "untuck" or false) end
+        end,
         Compact = function(on, angle, span)
             self.compactAngle, self.compactSpan = on and angle or nil, span
             self:Refresh(false)
