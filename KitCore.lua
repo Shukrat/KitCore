@@ -293,6 +293,9 @@ C.BASE_CHAR = {
 --                 frames, like timers): { { frame = f, size = n }, ... }
 --   extraFrames(kit)  those frames (any that can show), so they're scaled
 --                 and glide along when the kit moves
+--   boxFrames(kit)  (optional) other frames the kit places itself that show
+--                 while closed (a pinned extra button): in a Kit Dock box
+--                 they go in the box's row with its pinned slots
 --   PlaceExtras(kit, angle)  place those frames off an edge: angle is nil
 --                 normally, or the fan's direction while shrunk on the dock
 --   PinSettings(kit, S)  more "Always show" boxes in the Slots section
@@ -2279,6 +2282,18 @@ function Kit:PlaceSlots()
         local ok, err = pcall(self.PlaceEdge, self)
         local list = self.collect
         self.collect = nil
+        -- The kit's own extras it places itself (timers and such), and any
+        -- frame it names for the box (cfg.boxFrames), showing: in the row too.
+        local more = {}
+        for _, f in ipairs(self:Extras()) do more[#more + 1] = f end
+        if self.cfg.boxFrames then
+            for _, f in ipairs(self.cfg.boxFrames(self) or {}) do more[#more + 1] = f end
+        end
+        for _, f in ipairs(more) do
+            local seen = false
+            for _, g in ipairs(list) do if g == f then seen = true break end end
+            if not seen and f:IsShown() then list[#list + 1] = f end
+        end
         if not ok then
             local h = geterrorhandler and geterrorhandler()
             if h then h(err) end
