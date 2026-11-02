@@ -23,6 +23,10 @@ The kit's `.toc` loads `Libs\KitDock\KitDock.lua` (if it uses the dock), then `L
 
 The kit ships the art Kit Core uses in its own `media` folder: `circle_mask`, `glow_ring`, `glow_square`, `pin_dot`, `slot_border`, `ring_slot_*` and `ring_prof_*`.
 
+## ForeverImmersion
+
+Each kit adds itself to the shared `ForeverUI.elements` list, so ForeverImmersion (and anything else that reads it) lists it as its own element, named after the kit. The frame it's given is `<prefix>Area` (e.g. `CampingKitArea`): an empty frame that follows the bounds of what the kit shows, for the mouseover reveal and the editor's box. Alpha set on it goes to the kit's holder, so the whole kit fades together. Kits show in every situation but Mount until the player changes it there.
+
 ## Releasing a new version
 
 1. Raise `VERSION` in `KitCore.lua`.
