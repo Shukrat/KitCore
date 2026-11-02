@@ -296,8 +296,6 @@ C.BASE_CHAR = {
 --   boxFrames(kit)  (optional) other frames the kit places itself that show
 --                 while closed (a pinned extra button): in a Kit Dock box
 --                 they go in the box's row with its pinned slots
---   OnBoxSlide(kit, t)  (optional) in a Kit Dock box, as it slides: t is 0
---                 all the way out, 1 tucked half off the screen
 --   PlaceExtras(kit, angle)  place those frames off an edge: angle is nil
 --                 normally, or the fan's direction while shrunk on the dock
 --   PinSettings(kit, S)  more "Always show" boxes in the Slots section
@@ -3122,11 +3120,6 @@ function Kit:RegisterDock()
         -- In a Kit Dock box while another kit from it is open: pinned slots
         -- (and the kit's reminders, which the kit's own code hides on
         -- kit.quiet) slide away, and come back after.
-        -- How far its Kit Dock box is tucked away: 0 all the way out, 1 tucked.
-        BoxSlide = function(t)
-            self.boxSlide = t
-            if self.cfg.OnBoxSlide then self.cfg.OnBoxSlide(self, t) end
-        end,
         Quiet = function(on)
             self.quiet = on and true or nil
             if not InCombatLockdown() then self:Refresh(not on and "untuck" or false) end
