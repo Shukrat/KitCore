@@ -36,7 +36,7 @@ local addonName, ns = ...
 -- kit if it's near one.
 ---------------------------------------------------------------------------
 
-local VERSION = 11
+local VERSION = 12
 local C = _G.KitCore
 if C and (C.version or 0) >= VERSION then
     ns.Core = C
@@ -1102,9 +1102,16 @@ function Kit:SetKitArt()
     if self.cfg.KitArt then self.cfg.KitArt(self) end
 end
 
+-- Whether the kit hides in combat: its setting, unless it's in a Kit Dock box
+-- and asks to stay there (cfg.staysInBox).
+function Kit:HidesInCombat()
+    if self.parked and self.cfg.staysInBox then return false end
+    return self.db.hideInCombat and true or false
+end
+
 function Kit:ApplyCombatHide()
     if InCombatLockdown() then self.pending = true return end
-    if self.db.hideInCombat then
+    if self:HidesInCombat() then
         Try(RegisterStateDriver, self.holder, "visibility", "[combat] hide; show")
     else
         Try(UnregisterStateDriver, self.holder, "visibility")
@@ -3042,6 +3049,7 @@ function Kit:Park(on)
     on = on and true or false
     if self.parked == on then return end
     self.parked = on
+    self:ApplyCombatHide()
     self:Refresh(false)
 end
 
@@ -3188,7 +3196,7 @@ function Kit:RegisterDock()
         BeginMove = function() self:BeginMove() end,
         EndMove = function() self:EndMove() end,
         SettingsChanged = function() self:SettingsChanged() end,
-        HidesInCombat = function() return self.db.hideInCombat and true or false end,
+        HidesInCombat = function() return self:HidesInCombat() end,
         UiScale = function() return self.db.scale end,
         Park = function(on) self:Park(on) end,
         Refresh = function() if not InCombatLockdown() then self:Refresh(false) end end,
@@ -3595,7 +3603,7 @@ function Kit:OnEvent(event, ...)
         end
     elseif event == "PLAYER_REGEN_DISABLED" then
         GameTooltip:Hide()
-        if self.db.hideInCombat and not InCombatLockdown() then self.holder:Hide() end
+        if self:HidesInCombat() and not InCombatLockdown() then self.holder:Hide() end
         -- Combat is about to start (still allowed now): flyouts opened from
         -- here on, and any open already, close themselves once the mouse
         -- leaves them, since a click elsewhere can't close them in combat.
