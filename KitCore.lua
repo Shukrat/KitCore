@@ -36,7 +36,7 @@ local addonName, ns = ...
 -- kit if it's near one.
 ---------------------------------------------------------------------------
 
-local VERSION = 12
+local VERSION = 13
 local C = _G.KitCore
 if C and (C.version or 0) >= VERSION then
     ns.Core = C
@@ -242,6 +242,8 @@ C.BASE_DEFAULTS = {
     shown = true,          -- false: the whole kit is hidden (settings or the shared minimap menu)
     locked = false,
     fadeIdle = false,
+    fadeOpen = false,      -- the open kit fades too, once the mouse has been off it a while
+    fadeOpenAfter = 5,     -- how long, in seconds
     tooltipDefault = false, -- slot tooltips in the game's usual spot instead of beside the slot
     roundSlots = true,
     hideInCombat = false,
@@ -319,7 +321,11 @@ C.BASE_CHAR = {
 --                 kit in combat: move or show the kit's own extra frames to match
 --                 (the slots are already done; a refresh follows when combat ends)
 --   OnShapes(kit)     after slot shapes / ring art are (re)applied
---   Busy(kit)         true while the kit shouldn't fade (fade when idle)
+--   Busy(kit)         true while the kit shouldn't fade (fade when idle; not
+--                 fade when left open, which you've left open on purpose)
+--   OnFade(kit, faded)  on each fade update: faded is true while the open kit
+--                 has faded from being left alone, so the kit's own extra
+--                 frames can fade with its slots
 --   events        { EVENT = function(kit, ...) end }
 --   unitEvents    { EVENT = { units = { "player" }, fn = function(kit, ...) end } }
 --   Settings(kit, S)    the kit's own section of the settings panel
@@ -450,6 +456,7 @@ end
 -- still pointer.
 function Kit:Hover(on)
     self.hovering = math.max(0, self.hovering + (on and 1 or -1))
+    self:ArmOpenFade()
     self:ApplyFade()
     if not on and not self:Sliding() then GameTooltip:Hide() end
 end
@@ -1511,6 +1518,7 @@ function Kit:AddFlyout(btn)
     fly:SetScript("OnShow", function(f)
         self.flyOpen = f
         self:PaintFlyout(f)
+        self:ArmOpenFade()
         self:ApplyFade()
         if not InCombatLockdown() then
             if f.count == 0 then
@@ -1529,6 +1537,7 @@ function Kit:AddFlyout(btn)
     end)
     fly:SetScript("OnHide", function(f)
         if self.flyOpen == f then self.flyOpen = nil end
+        self:ArmOpenFade()
         self:ApplyFade()
     end)
 end
@@ -1966,11 +1975,29 @@ function Kit:ApplyFade()
     self.kit:SetAlpha(idle and 0.7 or 1)
     local fly = self.flyOpen
     if fly and fly:IsShown() then self.kit:SetAlpha(0.4) end
+    if self.cfg.OnFade then self.cfg.OnFade(self, self.openFaded and true or false) end
 end
 
 function Kit:FadeIdle()
+    if self.openFaded then return true end
     return self.db.fadeIdle and not self.open and self.hovering == 0
         and not (self.cfg.Busy and self.cfg.Busy(self))
+end
+
+-- Fade when left open: back to full now, and start counting again if the kit
+-- is open with the mouse off it and no drawer out. Anything that changes one
+-- of those comes through here, so a count that's overtaken just does nothing.
+function Kit:ArmOpenFade()
+    self.openFaded = nil
+    self.openFadeCount = (self.openFadeCount or 0) + 1
+    if not self.db.fadeOpen or not self.open or self.hovering > 0 or self.flyOpen then return end
+    if not (C_Timer and C_Timer.After) then return end
+    local count = self.openFadeCount
+    C_Timer.After(self.db.fadeOpenAfter or 5, function()
+        if count ~= self.openFadeCount then return end
+        self.openFaded = true
+        self:ApplyFade()
+    end)
 end
 
 -- One slot's alpha: faded when idle, dimmed while another slot's flyout is
@@ -2843,6 +2870,7 @@ function Kit:SetOpen(want)
     if InCombatLockdown() then return end
     self.open = want and true or false
     self:CloseFlyouts()
+    self:ArmOpenFade()
     local D = self.Dock
     if D and self.open then
         -- Docked: the kit glides onto the pin first, then its slots fan out.
@@ -2884,6 +2912,7 @@ function Kit:CombatToggled()
         return
     end
     self.open = now
+    self:ArmOpenFade()
     self.combatToggled = true
     for btn, p in pairs(s.pos) do btn.placedX, btn.placedY = p[1], p[2] end
     local dv = self.divider
@@ -3398,7 +3427,14 @@ function Kit:BuildSettings()
     S.Checkbox(db, "roundSlots", "Round slots",
         "Round icons with a gold ring instead of square bag slots.", true, function() self:ApplyShapes() end)
     S.Checkbox(db, "fadeIdle", "Fade when idle",
-        "The kit and pinned slots fade until you mouse over them.", false, refresh)
+        "With the kit closed, it and its pinned slots fade until you mouse over them.", false, refresh)
+    local rearm = function() self:ArmOpenFade() self:ApplyFade() end
+    S.Checkbox(db, "fadeOpen", "Fade when left open",
+        "With the kit open, it and its slots fade once the mouse has been off them for a while. They stay open, and come back when you mouse over them.",
+        false, rearm)
+    S.Slider(db, "fadeOpenAfter", "Fade open kit after",
+        "How long the mouse has to be off the open kit before it fades.",
+        5, 1, 30, 1, function(v) return ("%ds"):format(v) end, rearm)
     if not self.cfg.alwaysHideInCombat then
         S.Checkbox(db, "hideInCombat", "Hide in combat", "Hide the kit while you're in combat.", false,
             function() self:ApplyCombatHide() end)
