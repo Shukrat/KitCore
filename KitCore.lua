@@ -244,6 +244,7 @@ C.BASE_DEFAULTS = {
     fadeIdle = false,
     fadeOpen = false,      -- the open kit fades too, once the mouse has been off it a while
     fadeOpenAfter = 5,     -- how long, in seconds
+    fadeAmount = 0.4,      -- how visible the slots stay when faded (the kit button stays halfway to full)
     tooltipDefault = false, -- slot tooltips in the game's usual spot instead of beside the slot
     roundSlots = true,
     hideInCombat = false,
@@ -323,7 +324,7 @@ C.BASE_CHAR = {
 --   OnShapes(kit)     after slot shapes / ring art are (re)applied
 --   Busy(kit)         true while the kit shouldn't fade (fade when idle; not
 --                 fade when left open, which you've left open on purpose)
---   OnFade(kit, faded)  on each fade update: faded is true while the open kit
+--   OnFade(kit, faded)  on each fade update (kit:FadeAlpha() is how far to fade): faded is true while the open kit
 --                 has faded from being left alone, so the kit's own extra
 --                 frames can fade with its slots
 --   events        { EVENT = function(kit, ...) end }
@@ -1972,10 +1973,16 @@ function Kit:ApplyFade()
     if not self.built then return end
     for _, btn in pairs(self.slots) do self:FadeSlot(btn) end
     local idle = self:FadeIdle()
-    self.kit:SetAlpha(idle and 0.7 or 1)
+    self.kit:SetAlpha(idle and (1 + self:FadeAlpha()) / 2 or 1)
     local fly = self.flyOpen
     if fly and fly:IsShown() then self.kit:SetAlpha(0.4) end
     if self.cfg.OnFade then self.cfg.OnFade(self, self.openFaded and true or false) end
+end
+
+-- How visible faded slots stay (Fade amount); the kit button stays halfway
+-- between that and full, so it can still be found.
+function Kit:FadeAlpha()
+    return self.db.fadeAmount or 0.4
 end
 
 function Kit:FadeIdle()
@@ -2003,7 +2010,7 @@ end
 -- One slot's alpha: faded when idle, dimmed while another slot's flyout is
 -- open (so its choices stand out), times its slide's fade.
 function Kit:FadeSlot(btn)
-    local a = self:FadeIdle() and 0.4 or 1
+    local a = self:FadeIdle() and self:FadeAlpha() or 1
     local fly = self.flyOpen
     if fly and fly:IsShown() and btn ~= fly.slotBtn then a = 0.3 end
     btn:SetAlpha(a * (btn.slideA or 1))
@@ -3435,6 +3442,9 @@ function Kit:BuildSettings()
     S.Slider(db, "fadeOpenAfter", "Fade open kit after",
         "How long the mouse has to be off the open kit before it fades.",
         5, 1, 30, 1, function(v) return ("%ds"):format(v) end, rearm)
+    S.Slider(db, "fadeAmount", "Faded opacity",
+        "How see-through the kit's slots get when it fades (when idle or left open): 0% is gone until you mouse over. The kit button fades half as much, so you can still find it.",
+        0.4, 0, 0.9, 0.05, function(v) return ("%d%%"):format(math.floor(v * 100 + 0.5)) end, function() self:ApplyFade() end)
     if not self.cfg.alwaysHideInCombat then
         S.Checkbox(db, "hideInCombat", "Hide in combat", "Hide the kit while you're in combat.", false,
             function() self:ApplyCombatHide() end)
