@@ -21,7 +21,7 @@ externals:
 
 The kit's `.toc` loads `Libs\KitDock\KitDock.lua` (if it uses the dock), then `Libs\KitCore\KitCore.lua`, then its own file, which calls `KitCore.NewKit({ ... })` when it loads. The comment block above `C.NewKit` in `KitCore.lua` lists everything a kit can describe.
 
-The kit ships the art Kit Core uses in its own `media` folder: `circle_mask`, `glow_ring`, `glow_square`, `pin_dot`, `slot_border`, `ring_slot_*` and `ring_prof_*`.
+The kit ships the art Kit Core uses in its own `media` folder: `circle_mask`, `glow_ring`, `pin_dot`, `slot_border`, `ring_slot_*` and `ring_prof_*`.
 
 ## ForeverImmersion
 
