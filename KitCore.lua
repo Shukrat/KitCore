@@ -324,9 +324,10 @@ C.BASE_CHAR = {
 --   OnShapes(kit)     after slot shapes / ring art are (re)applied
 --   Busy(kit)         true while the kit shouldn't fade (fade when idle; not
 --                 fade when left open, which you've left open on purpose)
---   OnFade(kit, faded)  on each fade update (kit:FadeAlpha() is how far to fade): faded is true while the open kit
---                 has faded from being left alone, so the kit's own extra
---                 frames can fade with its slots
+--   OnFade(kit, faded, alpha)  on each step of a fade (it eases in and out):
+--                 alpha is the slots' alpha right now (1 = not faded), so the
+--                 kit's own extra frames can fade with them; faded is true
+--                 while it's faded or on its way there
 --   events        { EVENT = function(kit, ...) end }
 --   unitEvents    { EVENT = { units = { "player" }, fn = function(kit, ...) end } }
 --   Settings(kit, S)    the kit's own section of the settings panel
@@ -1969,14 +1970,49 @@ function Kit:PaintSlot(btn)
     if sb and sb:IsShown() and sb.def.Paint then sb.def.Paint(self, sb) end
 end
 
+-- Fading eases rather than snapping: self.fadeT runs from 0 (full) to 1
+-- (faded) over FADE_OUT seconds, and back over FADE_IN, a little each frame.
+local FADE_OUT, FADE_IN = 0.5, 0.2
+
 function Kit:ApplyFade()
     if not self.built then return end
+    local target = self:FadeIdle() and 1 or 0
+    if not self.fadeT then self.fadeT = target end
+    if self.fadeT ~= target then
+        local fader = self.fader
+        if not fader then
+            fader = CreateFrame("Frame")
+            fader:Hide()
+            fader:SetScript("OnUpdate", function(f, elapsed)
+                local to = self:FadeIdle() and 1 or 0
+                local t = self.fadeT
+                if to > t then t = math.min(to, t + elapsed / FADE_OUT)
+                else t = math.max(to, t - elapsed / FADE_IN) end
+                self.fadeT = t
+                if t == to then f:Hide() end
+                self:PaintFade()
+            end)
+            self.fader = fader
+        end
+        fader:Show()
+    end
+    self:PaintFade()
+end
+
+-- The slots' alpha from the fade as it stands (1 = not faded).
+function Kit:FadeNow()
+    local t = self.fadeT or 0
+    t = t * t * (3 - 2 * t) -- (eased: starts and ends gently)
+    return 1 - t * (1 - self:FadeAlpha())
+end
+
+function Kit:PaintFade()
     for _, btn in pairs(self.slots) do self:FadeSlot(btn) end
-    local idle = self:FadeIdle()
-    self.kit:SetAlpha(idle and (1 + self:FadeAlpha()) / 2 or 1)
+    local a = self:FadeNow()
+    self.kit:SetAlpha((1 + a) / 2)
     local fly = self.flyOpen
     if fly and fly:IsShown() then self.kit:SetAlpha(0.4) end
-    if self.cfg.OnFade then self.cfg.OnFade(self, self.openFaded and true or false) end
+    if self.cfg.OnFade then self.cfg.OnFade(self, (self.fadeT or 0) > 0, a) end
 end
 
 -- How visible faded slots stay (Fade amount); the kit button stays halfway
@@ -2007,10 +2043,10 @@ function Kit:ArmOpenFade()
     end)
 end
 
--- One slot's alpha: faded when idle, dimmed while another slot's flyout is
+-- One slot's alpha: faded (as far as the fade has got), dimmed while another slot's flyout is
 -- open (so its choices stand out), times its slide's fade.
 function Kit:FadeSlot(btn)
-    local a = self:FadeIdle() and self:FadeAlpha() or 1
+    local a = self:FadeNow()
     local fly = self.flyOpen
     if fly and fly:IsShown() and btn ~= fly.slotBtn then a = 0.3 end
     btn:SetAlpha(a * (btn.slideA or 1))
