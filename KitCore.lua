@@ -3368,13 +3368,18 @@ function Kit:BuildSettings()
         end
     end
 
-    local S = {}
-    function S.Header(text)
-        if CreateSettingsListSectionHeaderInitializer then
-            layout:AddInitializer(CreateSettingsListSectionHeaderInitializer(text))
+    -- A header goes in only once something follows it, and a header straight
+    -- after another replaces it (so a kit's section can open with its own).
+    local S, pending = {}, nil
+    function S.Header(text) pending = text end
+    local function Flush()
+        if pending and CreateSettingsListSectionHeaderInitializer then
+            layout:AddInitializer(CreateSettingsListSectionHeaderInitializer(pending))
         end
+        pending = nil
     end
     function S.Checkbox(tbl, key, name, tooltip, default, fn, id)
+        Flush()
         local s = Settings.RegisterAddOnSetting(category, P .. "_" .. (id or key), key, tbl, VAR_BOOL, name, default)
         Settings.CreateCheckbox(category, s, tooltip)
         OnChange(s, fn)
@@ -3382,6 +3387,7 @@ function Kit:BuildSettings()
         return s
     end
     function S.Slider(tbl, key, name, tooltip, default, min, max, step, fmt, fn)
+        Flush()
         local s = Settings.RegisterAddOnSetting(category, P .. "_" .. key, key, tbl, VAR_NUM, name, default)
         local opts = Settings.CreateSliderOptions(min, max, step)
         if MinimalSliderWithSteppersMixin and fmt then
@@ -3395,6 +3401,7 @@ function Kit:BuildSettings()
     -- list: { { value, label }, ... } (string values)
     function S.Dropdown(tbl, key, name, tooltip, default, list, fn)
         if not (Settings.CreateDropdown and Settings.CreateControlTextContainer) then return end
+        Flush()
         local VAR_STR = (Settings.VarType and Settings.VarType.String) or "string"
         local s = Settings.RegisterAddOnSetting(category, P .. "_" .. key, key, tbl, VAR_STR, name, default)
         local function Options()
@@ -3409,30 +3416,43 @@ function Kit:BuildSettings()
     end
     function S.Button(name, text, tooltip, fn)
         if CreateSettingsButtonInitializer then
+            Flush()
             layout:AddInitializer(CreateSettingsButtonInitializer(name, text, fn, tooltip, true))
         end
     end
     local pct = function(v) return math.floor(v * 100 + 0.5) .. "%" end
     local refresh = function() self:Refresh(false) end
 
-    S.Header("Kit")
+    S.Header("General")
     S.Checkbox(db, "shown", "Show " .. self.name,
         "Turn off to hide the whole kit (its button and every slot) without uninstalling it.",
         true, function() self:SetShownKit(db.shown) end)
     S.Checkbox(db, "locked", "Pin in place", "Stop the kit from being dragged. Also in the kit's right-click menu.", false)
-    S.Slider(db, "scale", "Size", "Scales the kit and its slots together.", 1, 0.6, 1.6, 0.05, pct,
-        function() self:ApplyPosition() end)
-    S.Slider(db, "kitSize", "Kit button size", "Makes the button in the middle smaller without changing the slots around it.",
-        1, 0.5, 1, 0.05, pct, function() self:ApplyPosition() end)
     S.Checkbox(db, "minimapButton", "Show minimap button",
         "Left-click for these settings, right-click to open the kit, drag to move it.", true,
         function() self:ApplyMinimap() end)
     S.Checkbox(db, "chatNotices", "Chat messages",
         "Notices in chat when something changes (pinned in place, always shown, snoozed and the like). Slash commands still answer in chat.", true)
-    S.Checkbox(db, "tooltipDefault", "Default tooltip position",
-        "Show slot tooltips where the game normally shows tooltips, instead of beside the slot.", false)
+
+    S.Header("Look")
+    S.Slider(db, "scale", "Size", "Scales the kit and its slots together.", 1, 0.6, 1.6, 0.05, pct,
+        function() self:ApplyPosition() end)
+    S.Slider(db, "kitSize", "Kit button size", "Makes the button in the middle smaller without changing the slots around it.",
+        1, 0.5, 1, 0.05, pct, function() self:ApplyPosition() end)
+    S.Dropdown(db, "facing", "Layout direction",
+        "Which way the slots lay out round the kit while it's floating (on a screen edge they always face the middle of the screen).",
+        "up", {
+            { "up", "Up (as made)" },
+            { "down", "Down (upside down)" },
+            { "left", "Left (on its side)" },
+            { "right", "Right (on its side)" },
+        }, function() self:SetFacing(db.facing) end)
     S.Checkbox(db, "roundSlots", "Round slots",
         "Round icons with a gold ring instead of square bag slots.", true, function() self:ApplyShapes() end)
+    S.Checkbox(db, "tooltipDefault", "Default tooltip position",
+        "Show slot tooltips where the game normally shows tooltips, instead of beside the slot.", false)
+
+    S.Header("Fading")
     S.Checkbox(db, "fadeIdle", "Fade when idle",
         "With the kit closed, it and its pinned slots fade until you mouse over them.", false, refresh)
     local rearm = function() self:ArmOpenFade() self:ApplyFade() end
@@ -3445,22 +3465,18 @@ function Kit:BuildSettings()
     S.Slider(db, "fadeAmount", "Faded opacity",
         "How see-through the kit's slots get when it fades (when idle or left open): 0% is gone until you mouse over. The kit button fades half as much, so you can still find it.",
         0.4, 0, 0.9, 0.05, function(v) return ("%d%%"):format(math.floor(v * 100 + 0.5)) end, function() self:ApplyFade() end)
+
+    S.Header("In combat")
     if not self.cfg.alwaysHideInCombat then
         S.Checkbox(db, "hideInCombat", "Hide in combat", "Hide the kit while you're in combat.", false,
             function() self:ApplyCombatHide() end)
     end
-    S.Dropdown(db, "facing", "Layout direction",
-        "Which way the slots lay out round the kit while it's floating (on a screen edge they always face the middle of the screen).",
-        "up", {
-            { "up", "Up (as made)" },
-            { "down", "Down (upside down)" },
-            { "left", "Left (on its side)" },
-            { "right", "Right (on its side)" },
-        }, function() self:SetFacing(db.facing) end)
     S.Slider(db, "flyoutHide", "Drawer close delay in combat",
         "In combat a drawer can't close when you click elsewhere, so it closes by itself this long after the mouse leaves it and its slot.",
         0.5, 0.2, 2, 0.1, function(v) return ("%.1fs"):format(v) end)
 
+    -- The kit's own settings, under its name unless it opens with a header.
+    S.Header(self.name)
     if cfg.Settings then cfg.Settings(self, S) end
 
     S.Header("Slots (this character)")
