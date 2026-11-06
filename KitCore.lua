@@ -36,7 +36,7 @@ local addonName, ns = ...
 -- kit if it's near one.
 ---------------------------------------------------------------------------
 
-local VERSION = 13
+local VERSION = 14
 local C = _G.KitCore
 if C and (C.version or 0) >= VERSION then
     ns.Core = C
@@ -246,7 +246,6 @@ C.BASE_DEFAULTS = {
     fadeOpenAfter = 5,     -- how long, in seconds
     fadeAmount = 0.4,      -- how visible the slots stay when faded (the kit button stays halfway to full)
     tooltipDefault = false, -- slot tooltips in the game's usual spot instead of beside the slot
-    roundSlots = true,
     hideInCombat = false,
     chatNotices = true,    -- false: the kit's own notices stay out of chat (slash commands still answer)
     minimapButton = true,
@@ -592,69 +591,58 @@ function Kit:UpdateHotkeys()
     end
 end
 
--- Round (gold ring) or square (bag slot) look for a full-size slot.
-function Kit:ApplyShape(b, round)
+-- The round look (gold ring) for a full-size slot. Slots are always round
+-- (the square option went in v14); calling it again refreshes the ring art
+-- for the slot's size on screen. (A second argument, from older kits, is
+-- ignored.)
+function Kit:ApplyShape(b)
     if b.isSmall then return end
-    round = round and true or false
     local MASK = self.media .. "circle_mask"
-    if b.roundParts and round then
+    if b.roundParts then
         b.roundParts.ring:SetTexture(self:RingArt(b), nil, nil, "LINEAR")
+        return
     end
-    if b.isRound == round then return end
-    b.isRound = round
-    if not b.roundParts then
-        local mask = b:CreateMaskTexture()
-        mask:SetTexture(MASK, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-        mask:SetPoint("TOPLEFT", 1, -1)
-        mask:SetPoint("BOTTOMRIGHT", -1, 1)
-        local slotMask = b:CreateMaskTexture()
-        slotMask:SetTexture(MASK, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-        slotMask:SetPoint("TOPLEFT", 1, -1)
-        slotMask:SetPoint("BOTTOMRIGHT", -1, 1)
-        local ring = b:CreateTexture(nil, "OVERLAY", nil, 6)
-        ring:SetTexture(self:RingArt(b), nil, nil, "LINEAR")
-        ring:SetPoint("TOPLEFT", -1, 1)
-        ring:SetPoint("BOTTOMRIGHT", 1, -1)
-        local hl = b:CreateTexture(nil, "HIGHLIGHT")
-        hl:SetTexture(self.media .. "glow_ring")
-        hl:SetBlendMode("ADD")
-        hl:SetPoint("CENTER")
-        hl:SetSize(b:GetWidth() * 1.35, b:GetHeight() * 1.35)
-        b.roundParts = { mask = mask, slotMask = slotMask, ring = ring, hl = hl }
-    end
-    local p = b.roundParts
-    p.ring:SetShown(round)
-    p.hl:SetShown(round)
-    if round then
-        b.icon:AddMaskTexture(p.mask)
-        b.slotBg:AddMaskTexture(p.slotMask)
-    else
-        b.icon:RemoveMaskTexture(p.mask)
-        b.slotBg:RemoveMaskTexture(p.slotMask)
-    end
-    for _, t in ipairs({ b.border, b.IconBorder, b.GetNormalTexture and b:GetNormalTexture() }) do
-        if t then t:SetAlpha(round and 0 or 1) end
-    end
-    for _, t in ipairs({ b.GetHighlightTexture and b:GetHighlightTexture(), b.GetPushedTexture and b:GetPushedTexture() }) do
-        if t and t ~= p.hl then t:SetAlpha(round and 0 or 1) end
+    b.isRound = true
+    local mask = b:CreateMaskTexture()
+    mask:SetTexture(MASK, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+    mask:SetPoint("TOPLEFT", 1, -1)
+    mask:SetPoint("BOTTOMRIGHT", -1, 1)
+    local slotMask = b:CreateMaskTexture()
+    slotMask:SetTexture(MASK, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+    slotMask:SetPoint("TOPLEFT", 1, -1)
+    slotMask:SetPoint("BOTTOMRIGHT", -1, 1)
+    local ring = b:CreateTexture(nil, "OVERLAY", nil, 6)
+    ring:SetTexture(self:RingArt(b), nil, nil, "LINEAR")
+    ring:SetPoint("TOPLEFT", -1, 1)
+    ring:SetPoint("BOTTOMRIGHT", 1, -1)
+    local hl = b:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetTexture(self.media .. "glow_ring")
+    hl:SetBlendMode("ADD")
+    hl:SetPoint("CENTER")
+    hl:SetSize(b:GetWidth() * 1.35, b:GetHeight() * 1.35)
+    b.roundParts = { mask = mask, slotMask = slotMask, ring = ring, hl = hl }
+    b.icon:AddMaskTexture(mask)
+    if b.slotBg then b.slotBg:AddMaskTexture(slotMask) end
+    for _, t in ipairs({ b.border, b.IconBorder, b.GetNormalTexture and b:GetNormalTexture(),
+            b.GetHighlightTexture and b:GetHighlightTexture(), b.GetPushedTexture and b:GetPushedTexture() }) do
+        if t and t ~= hl then t:SetAlpha(0) end
     end
     if b.glow then
-        b.glow:SetTexture(self.media .. (round and "glow_ring" or "glow_square"))
-        local mul = round and 1.6 or 1.9
-        b.glow:SetSize(b:GetWidth() * mul, b:GetHeight() * mul)
+        b.glow:SetTexture(self.media .. "glow_ring")
+        b.glow:SetSize(b:GetWidth() * 1.6, b:GetHeight() * 1.6)
     end
     if b.hotkey then
         b.hotkey:ClearAllPoints()
-        b.hotkey:SetPoint("TOPRIGHT", b, "TOPRIGHT", round and -3 or -2, round and -4 or -3)
+        b.hotkey:SetPoint("TOPRIGHT", b, "TOPRIGHT", -3, -4)
     end
     if b.pin then
         b.pin:ClearAllPoints()
-        b.pin:SetPoint("CENTER", b, "CENTER", round and -11 or -13, round and 11 or 13)
+        b.pin:SetPoint("CENTER", b, "CENTER", -11, 11)
     end
-    if b.sel then b.sel:SetTexture(self.media .. (round and "glow_ring" or "glow_square")) end
+    if b.sel then b.sel:SetTexture(self.media .. "glow_ring") end
     if b.cooldown then
-        Try(b.cooldown.SetSwipeTexture, b.cooldown, round and MASK or "Interface\\Buttons\\WHITE8X8")
-        Try(b.cooldown.SetUseCircularEdge, b.cooldown, round)
+        Try(b.cooldown.SetSwipeTexture, b.cooldown, MASK)
+        Try(b.cooldown.SetUseCircularEdge, b.cooldown, true)
     end
 end
 
@@ -694,12 +682,12 @@ end
 
 function Kit:ApplyShapes()
     for _, btn in pairs(self.slots) do
-        self:ApplyShape(btn, self.db.roundSlots)
+        self:ApplyShape(btn)
         if btn.ring then btn.ring:SetTexture(self:SmallRingArt(btn), nil, nil, "LINEAR") end
         if btn.sub then btn.sub.ring:SetTexture(self:SmallRingArt(btn.sub), nil, nil, "LINEAR") end
     end
     for _, fly in pairs(self.flyouts) do
-        for _, b in ipairs(fly.buttons) do self:ApplyShape(b, self.db.roundSlots) end
+        for _, b in ipairs(fly.buttons) do self:ApplyShape(b) end
     end
     if self.cfg.OnShapes then self.cfg.OnShapes(self) end
 end
@@ -1224,8 +1212,8 @@ function Kit:CreateSlot(slot)
         btn.pin:SetPoint("CENTER", btn, "CENTER", -7, 7)
         self:AddGlow(btn, "glow_ring", 1.7)
     else
-        self:AddGlow(btn, "glow_square", 1.9)
-        self:ApplyShape(btn, self.db.roundSlots)
+        self:AddGlow(btn, "glow_ring", 1.6)
+        self:ApplyShape(btn)
     end
 
     btn:HookScript("OnHide", function(b)
@@ -1558,7 +1546,7 @@ function Kit:FlyButton(fly, i)
     b.cooldown:SetAllPoints()
     Try(b.cooldown.SetDrawEdge, b.cooldown, false)
     b.sel = b:CreateTexture(nil, "OVERLAY")
-    b.sel:SetTexture(self.media .. "glow_square")
+    b.sel:SetTexture(self.media .. "glow_ring")
     b.sel:SetBlendMode("ADD")
     b.sel:SetVertexColor(0.75, 0.55, 1)
     b.sel:SetPoint("CENTER")
@@ -1610,7 +1598,7 @@ function Kit:FlyButton(fly, i)
         GameTooltip:Show()
     end)
     b:SetScript("OnLeave", GameTooltip_Hide)
-    self:ApplyShape(b, self.db.roundSlots)
+    self:ApplyShape(b)
     -- Drag a choice along its flyout to change the order (out of combat).
     if fly.slotBtn.slot.reorder then
         b:SetMovable(true)
@@ -3483,8 +3471,6 @@ function Kit:BuildSettings()
             { "left", "Left (on its side)" },
             { "right", "Right (on its side)" },
         }, function() self:SetFacing(db.facing) end)
-    S.Checkbox(db, "roundSlots", "Round slots",
-        "Round icons with a gold ring instead of square bag slots.", true, function() self:ApplyShapes() end)
     S.Checkbox(db, "tooltipDefault", "Default tooltip position",
         "Show slot tooltips where the game normally shows tooltips, instead of beside the slot.", false)
 
