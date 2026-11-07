@@ -3769,8 +3769,10 @@ end
 -- wheel) to bind it, Escape to unbind. The cover sits over the secure button
 -- so a click in this mode never uses the item or spell underneath.
 -- On the pin with other kits, each kit opens in place, fanned in its own
--- slice (as in combat), so none takes the pin and they can all be open. A
--- kit that was open before goes back to open after; the rest close.
+-- slice (as in combat), so none takes the pin and they can all be open.
+-- Kits in a Kit Dock tuck box come out of it, full size along its edge (Kit
+-- Dock v25), and go back in after. A kit that was open before goes back to
+-- open after; the rest close.
 ---------------------------------------------------------------------------
 
 local QKB_IDLE = 0.5            -- the covers' ring while not hovered
@@ -3914,14 +3916,16 @@ end
 
 -- Leaving the mode: covers off now; the kit goes back as it was once it's
 -- out of combat.
-function Kit:QkbLeave()
+function Kit:QkbLeave(reopenLater)
     self:QkbCovers(false)
     if not self.qkbOpen then return end
     if InCombatLockdown() then self.qkbLeavePending = true return end
-    self:QkbRestore()
+    self:QkbRestore(reopenLater)
 end
 
-function Kit:QkbRestore()
+-- Closes what the mode opened. A kit that was open before opens again now,
+-- or (reopenLater) once the dock has put every kit back (QkbReopen).
+function Kit:QkbRestore(reopenLater)
     self.qkbLeavePending = nil
     if not self.qkbOpen or InCombatLockdown() then return end
     self.qkbOpen = nil
@@ -3933,9 +3937,16 @@ function Kit:QkbRestore()
         local D = self.Dock
         if D and D.Closed then D.Closed(self.key) end
     end
-    if was and self.db.shown ~= false then self:SetOpen(true) end
+    self.qkbReopen = was and true or nil
+    if not reopenLater then self:QkbReopen() end
     self:ArmOpenFade()
     self:ApplyFade()
+end
+
+function Kit:QkbReopen()
+    local was = self.qkbReopen
+    self.qkbReopen = nil
+    if was and self.db.shown ~= false and not InCombatLockdown() then self:SetOpen(true) end
 end
 
 -- The mode opened or closed (the game's frame showing or hiding).
@@ -3944,15 +3955,22 @@ function C.SetQuickKeybind(on)
     if C.qkb == on then return end
     C.qkb = on
     local kits = C.kits or {}
+    local D
+    for _, kit in ipairs(kits) do D = D or kit.Dock end
     if on then
         if InCombatLockdown() then C.qkb = false return end
         for _, kit in ipairs(kits) do pcall(kit.QkbClose, kit) end
         for _, kit in ipairs(kits) do pcall(kit.QkbOpen, kit) end
-        -- Kits on an edge lay out with room for being open.
-        local D = kits[1] and kits[1].Dock
-        if D and D.Layout then pcall(D.Layout) end
+        -- Kits on an edge lay out with room for being open, and the tuck
+        -- boxes let their kits out.
+        if D then pcall(D.SetQuickKeybind or D.Layout, true) end
     else
-        for _, kit in ipairs(kits) do pcall(kit.QkbLeave, kit) end
+        -- Close what the mode opened, then the boxes take their kits back,
+        -- then kits that were open before open again (from the box, if
+        -- that's where they live).
+        for _, kit in ipairs(kits) do pcall(kit.QkbLeave, kit, true) end
+        if D and D.SetQuickKeybind then pcall(D.SetQuickKeybind, false) end
+        for _, kit in ipairs(kits) do pcall(kit.QkbReopen, kit) end
     end
 end
 
