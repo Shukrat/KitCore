@@ -36,7 +36,7 @@ local addonName, ns = ...
 -- kit if it's near one.
 ---------------------------------------------------------------------------
 
-local VERSION = 14
+local VERSION = 15
 local C = _G.KitCore
 if C and (C.version or 0) >= VERSION then
     ns.Core = C
@@ -311,6 +311,9 @@ C.BASE_CHAR = {
 --   divider       { y, width, texture, below = { slotKey, ... }, edgeAfter = n }
 --                 a line across the kit at y while it's open and any of the
 --                 "below" slots show; on an edge, between column n and n + 1
+--   optionsWindow true: settings open in the kit's own window (sections down
+--                 the left, in the kits' panel look) instead of the game's
+--                 options page, which stays too
 --   slash         { "/wk", "/warlockkit" }
 --   bindingHeader "WARLOCKKIT" (as in Bindings.xml)
 --   KitArt(kit), KitTooltip(kit), BeforeRefresh(kit), Tick(kit)
@@ -3368,6 +3371,9 @@ end
 ---------------------------------------------------------------------------
 
 function Kit:OpenSettings()
+    -- The kit's own window, for kits that have it; the game's options page
+    -- otherwise (or if the window can't be made).
+    if self.cfg.optionsWindow and self:OpenOptions() then return end
     if self.openSettings then
         self.openSettings()
     else
@@ -3375,75 +3381,11 @@ function Kit:OpenSettings()
     end
 end
 
-function Kit:BuildSettings()
+-- Every setting, in order, through a builder S with Header, Checkbox,
+-- Slider, Dropdown and Button. The game's options page (BuildSettings) and
+-- the kit's own window (OpenOptions) both draw from it.
+function Kit:SettingsList(S)
     local cfg, db, cdb = self.cfg, self.db, self.cdb
-    local registered = {}
-    local VAR_BOOL = (Settings.VarType and Settings.VarType.Boolean) or "boolean"
-    local VAR_NUM = (Settings.VarType and Settings.VarType.Number) or "number"
-    local category, layout = Settings.RegisterVerticalLayoutCategory(self.name)
-    local P = self.prefix
-
-    local function OnChange(setting, fn)
-        if not fn then return end
-        if Settings.SetOnValueChangedCallback then
-            Settings.SetOnValueChangedCallback(setting:GetVariable(), function() fn() end)
-        elseif setting.SetValueChangedCallback then
-            setting:SetValueChangedCallback(function() fn() end)
-        end
-    end
-
-    -- A header goes in only once something follows it, and a header straight
-    -- after another replaces it (so a kit's section can open with its own).
-    local S, pending = {}, nil
-    function S.Header(text) pending = text end
-    local function Flush()
-        if pending and CreateSettingsListSectionHeaderInitializer then
-            layout:AddInitializer(CreateSettingsListSectionHeaderInitializer(pending))
-        end
-        pending = nil
-    end
-    function S.Checkbox(tbl, key, name, tooltip, default, fn, id)
-        Flush()
-        local s = Settings.RegisterAddOnSetting(category, P .. "_" .. (id or key), key, tbl, VAR_BOOL, name, default)
-        Settings.CreateCheckbox(category, s, tooltip)
-        OnChange(s, fn)
-        registered[#registered + 1] = { setting = s, tbl = tbl, key = key }
-        return s
-    end
-    function S.Slider(tbl, key, name, tooltip, default, min, max, step, fmt, fn)
-        Flush()
-        local s = Settings.RegisterAddOnSetting(category, P .. "_" .. key, key, tbl, VAR_NUM, name, default)
-        local opts = Settings.CreateSliderOptions(min, max, step)
-        if MinimalSliderWithSteppersMixin and fmt then
-            opts:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, fmt)
-        end
-        Settings.CreateSlider(category, s, opts, tooltip)
-        OnChange(s, fn)
-        registered[#registered + 1] = { setting = s, tbl = tbl, key = key }
-        return s
-    end
-    -- list: { { value, label }, ... } (string values)
-    function S.Dropdown(tbl, key, name, tooltip, default, list, fn)
-        if not (Settings.CreateDropdown and Settings.CreateControlTextContainer) then return end
-        Flush()
-        local VAR_STR = (Settings.VarType and Settings.VarType.String) or "string"
-        local s = Settings.RegisterAddOnSetting(category, P .. "_" .. key, key, tbl, VAR_STR, name, default)
-        local function Options()
-            local c = Settings.CreateControlTextContainer()
-            for _, o in ipairs(list) do c:Add(o[1], o[2]) end
-            return c:GetData()
-        end
-        Settings.CreateDropdown(category, s, Options, tooltip)
-        OnChange(s, fn)
-        registered[#registered + 1] = { setting = s, tbl = tbl, key = key }
-        return s
-    end
-    function S.Button(name, text, tooltip, fn)
-        if CreateSettingsButtonInitializer then
-            Flush()
-            layout:AddInitializer(CreateSettingsButtonInitializer(name, text, fn, tooltip, true))
-        end
-    end
     local pct = function(v) return math.floor(v * 100 + 0.5) .. "%" end
     local refresh = function() self:Refresh(false) end
 
@@ -3531,6 +3473,78 @@ function Kit:BuildSettings()
             self:Print("Open Esc > Options > Keybindings and look for " .. self.name .. ".")
         end
     end)
+end
+
+function Kit:BuildSettings()
+    local cfg, db, cdb = self.cfg, self.db, self.cdb
+    local registered = {}
+    local VAR_BOOL = (Settings.VarType and Settings.VarType.Boolean) or "boolean"
+    local VAR_NUM = (Settings.VarType and Settings.VarType.Number) or "number"
+    local category, layout = Settings.RegisterVerticalLayoutCategory(self.name)
+    local P = self.prefix
+
+    local function OnChange(setting, fn)
+        if not fn then return end
+        if Settings.SetOnValueChangedCallback then
+            Settings.SetOnValueChangedCallback(setting:GetVariable(), function() fn() end)
+        elseif setting.SetValueChangedCallback then
+            setting:SetValueChangedCallback(function() fn() end)
+        end
+    end
+
+    -- A header goes in only once something follows it, and a header straight
+    -- after another replaces it (so a kit's section can open with its own).
+    local S, pending = {}, nil
+    function S.Header(text) pending = text end
+    local function Flush()
+        if pending and CreateSettingsListSectionHeaderInitializer then
+            layout:AddInitializer(CreateSettingsListSectionHeaderInitializer(pending))
+        end
+        pending = nil
+    end
+    function S.Checkbox(tbl, key, name, tooltip, default, fn, id)
+        Flush()
+        local s = Settings.RegisterAddOnSetting(category, P .. "_" .. (id or key), key, tbl, VAR_BOOL, name, default)
+        Settings.CreateCheckbox(category, s, tooltip)
+        OnChange(s, fn)
+        registered[#registered + 1] = { setting = s, tbl = tbl, key = key }
+        return s
+    end
+    function S.Slider(tbl, key, name, tooltip, default, min, max, step, fmt, fn)
+        Flush()
+        local s = Settings.RegisterAddOnSetting(category, P .. "_" .. key, key, tbl, VAR_NUM, name, default)
+        local opts = Settings.CreateSliderOptions(min, max, step)
+        if MinimalSliderWithSteppersMixin and fmt then
+            opts:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, fmt)
+        end
+        Settings.CreateSlider(category, s, opts, tooltip)
+        OnChange(s, fn)
+        registered[#registered + 1] = { setting = s, tbl = tbl, key = key }
+        return s
+    end
+    -- list: { { value, label }, ... } (string values)
+    function S.Dropdown(tbl, key, name, tooltip, default, list, fn)
+        if not (Settings.CreateDropdown and Settings.CreateControlTextContainer) then return end
+        Flush()
+        local VAR_STR = (Settings.VarType and Settings.VarType.String) or "string"
+        local s = Settings.RegisterAddOnSetting(category, P .. "_" .. key, key, tbl, VAR_STR, name, default)
+        local function Options()
+            local c = Settings.CreateControlTextContainer()
+            for _, o in ipairs(list) do c:Add(o[1], o[2]) end
+            return c:GetData()
+        end
+        Settings.CreateDropdown(category, s, Options, tooltip)
+        OnChange(s, fn)
+        registered[#registered + 1] = { setting = s, tbl = tbl, key = key }
+        return s
+    end
+    function S.Button(name, text, tooltip, fn)
+        if CreateSettingsButtonInitializer then
+            Flush()
+            layout:AddInitializer(CreateSettingsButtonInitializer(name, text, fn, tooltip, true))
+        end
+    end
+    self:SettingsList(S)
 
     Settings.RegisterAddOnCategory(category)
     self.openSettings = function() Settings.OpenToCategory(category:GetID()) end
@@ -3541,6 +3555,455 @@ function Kit:BuildSettings()
             end
         end
     end
+end
+
+---------------------------------------------------------------------------
+-- The kit's own settings window (cfg.optionsWindow = true): the same list
+-- as the game's options page, drawn in the kits' panel look (a dark panel
+-- with the gold tooltip edge, a gold title over a faint gold line), its
+-- sections down the left and the chosen one's settings on the right, each
+-- with its description under it. The game's options page stays too.
+---------------------------------------------------------------------------
+
+local OPT = { w = 680, h = 520, nav = 172, head = 40, pad = 14, gap = 14 }
+local GOLD = { 0.78, 0.64, 0.3 }
+local WHITE8 = "Interface\\Buttons\\WHITE8X8"
+
+local function OptPanel(kind, name, parent)
+    local ok, f = pcall(CreateFrame, kind or "Frame", name, parent, "BackdropTemplate")
+    if not ok or not f then f = CreateFrame(kind or "Frame", name, parent) end
+    if f.SetBackdrop then
+        f:SetBackdrop({ bgFile = WHITE8, edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 12,
+            insets = { left = 3, right = 3, top = 3, bottom = 3 } })
+        f:SetBackdropColor(0.04, 0.03, 0.05, 0.94)
+        f:SetBackdropBorderColor(GOLD[1], GOLD[2], GOLD[3], 0.9)
+    else
+        local t = f:CreateTexture(nil, "BACKGROUND")
+        t:SetAllPoints()
+        t:SetColorTexture(0.04, 0.03, 0.05, 0.94)
+    end
+    return f
+end
+
+-- A thin gold line round a frame (wells, boxes, the dropdown).
+local function GoldEdge(f, a)
+    for _, e in ipairs({ { "TOPLEFT", "TOPRIGHT" }, { "BOTTOMLEFT", "BOTTOMRIGHT" },
+        { "TOPLEFT", "BOTTOMLEFT", true }, { "TOPRIGHT", "BOTTOMRIGHT", true } }) do
+        local t = f:CreateTexture(nil, "BORDER")
+        t:SetPoint(e[1])
+        t:SetPoint(e[2])
+        if e[3] then t:SetWidth(1) else t:SetHeight(1) end
+        t:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], a or 0.6)
+    end
+end
+
+local function Well(f, a)
+    local t = f:CreateTexture(nil, "BACKGROUND")
+    t:SetAllPoints()
+    t:SetColorTexture(0, 0, 0, a or 0.6)
+    GoldEdge(f, 0.55)
+end
+
+-- The list, gathered into sections: { title, items = { item, ... } }.
+function Kit:CollectOptions()
+    local sections, cur, pending = {}, nil, nil
+    local function Add(item)
+        if pending or not cur then
+            cur = { title = pending or self.name, items = {} }
+            sections[#sections + 1] = cur
+            pending = nil
+        end
+        cur.items[#cur.items + 1] = item
+    end
+    local S = {}
+    function S.Header(text) pending = text end
+    function S.Checkbox(tbl, key, name, tip, default, fn)
+        Add({ kind = "check", tbl = tbl, key = key, name = name, tip = tip, default = default, fn = fn })
+    end
+    function S.Slider(tbl, key, name, tip, default, min, max, step, fmt, fn)
+        Add({ kind = "slider", tbl = tbl, key = key, name = name, tip = tip, default = default,
+            min = min, max = max, step = step, fmt = fmt, fn = fn })
+    end
+    function S.Dropdown(tbl, key, name, tip, default, list, fn)
+        Add({ kind = "dropdown", tbl = tbl, key = key, name = name, tip = tip, default = default, list = list, fn = fn })
+    end
+    function S.Button(name, text, tip, fn)
+        Add({ kind = "button", name = name, text = text, tip = tip, fn = fn })
+    end
+    self:SettingsList(S)
+    return sections
+end
+
+local function Value(item)
+    local v = item.tbl[item.key]
+    if v == nil then v = item.default end
+    return v
+end
+
+-- A change from the window: store it, run its follow-up, and keep the
+-- game's options page in step.
+function Kit:OptionChanged(item, v)
+    item.tbl[item.key] = v
+    if item.fn then
+        local ok, err = pcall(item.fn, v)
+        if not ok then geterrorhandler()(err) end
+    end
+    if self.OnSettingsChanged then pcall(self.OnSettingsChanged) end
+end
+
+-- Label and description down the left of a row; returns the bottom offset.
+-- (Widths are set outright so the wrapped heights can be measured now.)
+local function Words(row, item, left, right, top, w)
+    local tw = math.max(60, w - left - right)
+    row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    row.label:SetPoint("TOPLEFT", left, -top)
+    row.label:SetWidth(tw)
+    row.label:SetJustifyH("LEFT")
+    row.label:SetText(item.name)
+    local h = top + row.label:GetStringHeight()
+    if item.tip and item.tip ~= "" then
+        row.desc = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        row.desc:SetPoint("TOPLEFT", row.label, "BOTTOMLEFT", 0, -3)
+        row.desc:SetWidth(tw)
+        row.desc:SetJustifyH("LEFT")
+        row.desc:SetSpacing(2)
+        row.desc:SetText(item.tip)
+        h = h + 3 + row.desc:GetStringHeight()
+    end
+    return h
+end
+
+local ROW = {}
+
+function ROW.check(kit, parent, item, w)
+    local row = CreateFrame("Button", nil, parent)
+    row:SetWidth(w)
+    local box = CreateFrame("Frame", nil, row)
+    box:SetSize(16, 16)
+    box:SetPoint("TOPLEFT", 2, -3)
+    Well(box, 0.7)
+    local tick = box:CreateTexture(nil, "OVERLAY")
+    tick:SetPoint("CENTER", 1, 0)
+    tick:SetSize(22, 22)
+    tick:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
+    tick:SetVertexColor(1, 0.85, 0.4)
+    local h = Words(row, item, 28, 4, 3, w)
+    row:SetHeight(h + 4)
+    local hl = row:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetPoint("TOPLEFT", -6, 2)
+    hl:SetPoint("BOTTOMRIGHT", 6, -2)
+    hl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.07)
+    function row.Paint() tick:SetShown(Value(item) and true or false) end
+    row:SetScript("OnClick", function()
+        kit:OptionChanged(item, not Value(item))
+        row.Paint()
+    end)
+    return row
+end
+
+function ROW.slider(kit, parent, item, w)
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetWidth(w)
+    local h = Words(row, item, 0, 64, 0, w)
+    local val = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    val:SetPoint("TOPRIGHT", 0, 0)
+    val:SetJustifyH("RIGHT")
+    local s = CreateFrame("Slider", nil, row)
+    s:SetOrientation("HORIZONTAL")
+    s:SetPoint("TOPLEFT", 6, -(h + 10))
+    s:SetPoint("TOPRIGHT", -6, -(h + 10))
+    s:SetHeight(16)
+    s:SetMinMaxValues(item.min, item.max)
+    if s.SetValueStep then s:SetValueStep(item.step) end
+    if s.SetObeyStepOnDrag then s:SetObeyStepOnDrag(true) end
+    local track = s:CreateTexture(nil, "BACKGROUND")
+    track:SetPoint("LEFT")
+    track:SetPoint("RIGHT")
+    track:SetHeight(4)
+    track:SetColorTexture(0, 0, 0, 0.8)
+    local fill = s:CreateTexture(nil, "ARTWORK")
+    fill:SetPoint("LEFT", track, "LEFT")
+    fill:SetHeight(4)
+    fill:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.75)
+    local thumb = s:CreateTexture(nil, "OVERLAY")
+    thumb:SetSize(10, 16)
+    thumb:SetColorTexture(1, 0.85, 0.45, 1)
+    s:SetThumbTexture(thumb)
+    local function Show(v)
+        val:SetText(item.fmt and item.fmt(v) or tostring(v))
+        local k = (item.max > item.min) and (v - item.min) / (item.max - item.min) or 0
+        fill:SetWidth(math.max(1, k * (s:GetWidth() or 1)))
+    end
+    local painting
+    function row.Paint()
+        painting = true
+        local v = Value(item)
+        s:SetValue(v)
+        Show(v)
+        painting = false
+    end
+    s:SetScript("OnValueChanged", function(_, v)
+        if item.step and item.step > 0 then
+            v = item.min + math.floor((v - item.min) / item.step + 0.5) * item.step
+            v = tonumber(("%.4f"):format(v))
+        end
+        Show(v)
+        if painting or v == item.tbl[item.key] then return end
+        kit:OptionChanged(item, v)
+    end)
+    s:SetScript("OnSizeChanged", function() Show(Value(item)) end)
+    s:EnableMouseWheel(false)
+    row:SetHeight(h + 30)
+    return row
+end
+
+local function OptionLabel(item, v)
+    for _, o in ipairs(item.list) do if o[1] == v then return o[2] end end
+    return tostring(v)
+end
+
+function ROW.dropdown(kit, parent, item, w)
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetWidth(w)
+    local bw = 190
+    local h = Words(row, item, 0, bw + 14, 3, w)
+    local b = CreateFrame("Button", nil, row)
+    b:SetSize(bw, 22)
+    b:SetPoint("TOPRIGHT", 0, 0)
+    Well(b, 0.7)
+    local text = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    text:SetPoint("LEFT", 8, 0)
+    text:SetPoint("RIGHT", -20, 0)
+    text:SetJustifyH("LEFT")
+    local arrow = b:CreateTexture(nil, "OVERLAY")
+    arrow:SetSize(12, 12)
+    arrow:SetPoint("RIGHT", -6, 0)
+    arrow:SetTexture("Interface\\Buttons\\Arrow-Down-Up")
+    arrow:SetVertexColor(1, 0.85, 0.45)
+    local hl = b:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetAllPoints()
+    hl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.12)
+    function row.Paint() text:SetText(OptionLabel(item, Value(item))) end
+    b:SetScript("OnClick", function(self)
+        if MenuUtil and MenuUtil.CreateContextMenu then
+            MenuUtil.CreateContextMenu(self, function(_, root)
+                for _, o in ipairs(item.list) do
+                    root:CreateRadio(o[2], function() return Value(item) == o[1] end, function()
+                        kit:OptionChanged(item, o[1])
+                        row.Paint()
+                    end, o[1])
+                end
+            end)
+        else
+            -- No menus on this build: step to the next choice.
+            local cur, i = Value(item), 1
+            for n, o in ipairs(item.list) do if o[1] == cur then i = n end end
+            local nxt = item.list[i % #item.list + 1]
+            kit:OptionChanged(item, nxt[1])
+            row.Paint()
+        end
+    end)
+    row:SetHeight(math.max(h, 22) + 4)
+    return row
+end
+
+function ROW.button(kit, parent, item, w)
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetWidth(w)
+    local h = Words(row, item, 0, 124, 3, w)
+    local b = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+    b:SetSize(110, 22)
+    b:SetPoint("TOPRIGHT", 0, 0)
+    b:SetText(item.text)
+    b:SetScript("OnClick", function()
+        local ok, err = pcall(item.fn)
+        if not ok then geterrorhandler()(err) end
+        if kit.optionsUI then kit:PaintOptions() end
+    end)
+    function row.Paint() end
+    row:SetHeight(math.max(h, 22) + 4)
+    return row
+end
+
+-- One section's page (built the first time it's shown).
+local function BuildPage(kit, ui, index)
+    local sec = ui.sections[index]
+    local page = CreateFrame("Frame", nil, ui.child)
+    page:SetPoint("TOPLEFT")
+    local w = ui.child:GetWidth()
+    page:SetWidth(w)
+    local head = page:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    head:SetPoint("TOPLEFT", 0, 0)
+    head:SetText(sec.title)
+    local line = page:CreateTexture(nil, "BORDER")
+    line:SetPoint("TOPLEFT", 0, -26)
+    line:SetPoint("TOPRIGHT", 0, -26)
+    line:SetHeight(1)
+    line:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.25)
+    local y = 38
+    page.rows = {}
+    for _, item in ipairs(sec.items) do
+        local make = ROW[item.kind]
+        if make then
+            local row = make(kit, page, item, w)
+            row:SetPoint("TOPLEFT", 0, -y)
+            y = y + row:GetHeight() + OPT.gap
+            page.rows[#page.rows + 1] = row
+        end
+    end
+    page:SetHeight(y)
+    page:Hide()
+    return page
+end
+
+local function ShowPage(kit, index)
+    local ui = kit.optionsUI
+    index = math.max(1, math.min(index or 1, #ui.sections))
+    ui.current = index
+    for i, nav in ipairs(ui.nav) do
+        local on = i == index
+        nav.text:SetFontObject(on and "GameFontNormal" or "GameFontHighlightSmall")
+        nav.bar:SetShown(on)
+        nav.sel:SetShown(on)
+    end
+    for _, page in pairs(ui.pages) do page:Hide() end
+    ui.pages[index] = ui.pages[index] or BuildPage(kit, ui, index)
+    local page = ui.pages[index]
+    for _, row in ipairs(page.rows) do row.Paint() end
+    page:Show()
+    ui.child:SetHeight(page:GetHeight())
+    ui.scroll:SetVerticalScroll(0)
+    ui.UpdateBar()
+end
+
+function Kit:PaintOptions()
+    local ui = self.optionsUI
+    if not (ui and ui.current and ui.pages[ui.current]) then return end
+    for _, row in ipairs(ui.pages[ui.current].rows) do row.Paint() end
+end
+
+function Kit:BuildOptions()
+    local ui = { sections = self:CollectOptions(), pages = {}, nav = {} }
+    local name = self.prefix .. "Options"
+    local f = OptPanel("Frame", name, UIParent)
+    f:SetSize(OPT.w, OPT.h)
+    f:SetPoint("CENTER", 0, 40)
+    f:SetFrameStrata("DIALOG")
+    f:SetToplevel(true)
+    f:EnableMouse(true)
+    f:SetMovable(true)
+    f:SetClampedToScreen(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+    f:SetScript("OnDragStop", f.StopMovingOrSizing)
+    f:Hide()
+    if UISpecialFrames then table.insert(UISpecialFrames, name) end -- Esc closes it
+
+    -- Header: the kit's art, its name, and a close button, over a faint gold line.
+    local art = f:CreateTexture(nil, "ARTWORK")
+    art:SetSize(26, 26)
+    art:SetPoint("TOPLEFT", OPT.pad - 2, -8)
+    local tex = self.cfg.minimapArt and (type(self.cfg.minimapArt) == "function" and self.cfg.minimapArt(self) or self.cfg.minimapArt)
+    if tex then art:SetTexture(tex, nil, nil, "LINEAR") else art:Hide() end
+    local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    title:SetPoint("LEFT", art, "RIGHT", 8, 0)
+    title:SetText(self.name .. " settings")
+    local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+    close:SetSize(24, 24)
+    close:SetPoint("TOPRIGHT", -2, -2)
+    close:SetScript("OnClick", function() f:Hide() end)
+    local sep = f:CreateTexture(nil, "BORDER")
+    sep:SetPoint("TOPLEFT", OPT.pad, -OPT.head)
+    sep:SetPoint("TOPRIGHT", -OPT.pad, -OPT.head)
+    sep:SetHeight(1)
+    sep:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.35)
+
+    -- Sections down the left, with a faint gold line beside them.
+    local navY = OPT.head + 10
+    for i, sec in ipairs(ui.sections) do
+        local b = CreateFrame("Button", nil, f)
+        b:SetSize(OPT.nav - OPT.pad - 6, 22)
+        b:SetPoint("TOPLEFT", OPT.pad, -(navY + (i - 1) * 24))
+        b.sel = b:CreateTexture(nil, "BACKGROUND")
+        b.sel:SetAllPoints()
+        b.sel:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.1)
+        b.bar = b:CreateTexture(nil, "ARTWORK")
+        b.bar:SetPoint("TOPLEFT")
+        b.bar:SetPoint("BOTTOMLEFT")
+        b.bar:SetWidth(2)
+        b.bar:SetColorTexture(1, 0.85, 0.45, 1)
+        local hl = b:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetAllPoints()
+        hl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.06)
+        b.text = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        b.text:SetPoint("LEFT", 10, 0)
+        b.text:SetPoint("RIGHT", -4, 0)
+        b.text:SetJustifyH("LEFT")
+        b.text:SetWordWrap(false)
+        b.text:SetText(sec.title)
+        b:SetScript("OnClick", function() ShowPage(self, i) end)
+        ui.nav[i] = b
+    end
+    local vline = f:CreateTexture(nil, "BORDER")
+    vline:SetPoint("TOPLEFT", OPT.nav, -(OPT.head + 8))
+    vline:SetPoint("BOTTOMLEFT", OPT.nav, OPT.pad)
+    vline:SetWidth(1)
+    vline:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.2)
+
+    -- The chosen section's settings, scrolling with the mouse wheel.
+    local scroll = CreateFrame("ScrollFrame", nil, f)
+    scroll:SetPoint("TOPLEFT", OPT.nav + 18, -(OPT.head + 14))
+    scroll:SetPoint("BOTTOMRIGHT", -(OPT.pad + 14), OPT.pad)
+    local child = CreateFrame("Frame", nil, scroll)
+    child:SetSize(OPT.w - OPT.nav - 18 - OPT.pad - 14, 10)
+    scroll:SetScrollChild(child)
+    -- A slim gold bar showing where you are, when there's more to see.
+    local bar = f:CreateTexture(nil, "ARTWORK")
+    bar:SetWidth(3)
+    bar:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.6)
+    local function UpdateBar()
+        local view, full = scroll:GetHeight() or 0, child:GetHeight() or 0
+        if full <= view + 1 then bar:Hide() return end
+        local k = view / full
+        local h = math.max(20, view * k)
+        local at = (scroll:GetVerticalScroll() or 0) / (full - view)
+        bar:ClearAllPoints()
+        bar:SetHeight(h)
+        bar:SetPoint("TOPRIGHT", scroll, "TOPRIGHT", 12, -at * (view - h))
+        bar:Show()
+    end
+    scroll:EnableMouseWheel(true)
+    scroll:SetScript("OnMouseWheel", function(sf, delta)
+        local full, view = child:GetHeight() or 0, sf:GetHeight() or 0
+        local v = math.max(0, math.min(math.max(0, full - view), sf:GetVerticalScroll() - delta * 48))
+        sf:SetVerticalScroll(v)
+        UpdateBar()
+    end)
+    ui.scroll, ui.child, ui.UpdateBar = scroll, child, UpdateBar
+    ui.frame = f
+    f:SetScript("OnShow", function() self:PaintOptions() end)
+    self.optionsUI = ui
+    ShowPage(self, 1)
+end
+
+-- Open the window (built the first time), at a section if one's named.
+function Kit:OpenOptions(section)
+    if not self.optionsUI then
+        local ok, err = pcall(self.BuildOptions, self)
+        if not ok then
+            self.optionsUI = nil
+            geterrorhandler()(err)
+            return false
+        end
+    end
+    local ui = self.optionsUI
+    if section then
+        for i, sec in ipairs(ui.sections) do
+            if sec.title:lower():find(section:lower(), 1, true) then ShowPage(self, i) break end
+        end
+    end
+    if ui.frame:IsShown() and not section then ui.frame:Hide() else ui.frame:Show() end
+    return true
 end
 
 function Kit:SetupSettings()
