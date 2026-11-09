@@ -315,7 +315,7 @@ C.BASE_CHAR = {
 --                 "below" slots show; on an edge, between column n and n + 1
 --   optionsWindow true: settings open in the kit's own window (sections down
 --                 the left, in the kits' panel look) instead of the game's
---                 options page, which stays too
+--                 options page; from v17 the kit isn't listed there at all
 --   slash         { "/wk", "/warlockkit" }
 --   bindingHeader "WARLOCKKIT" (as in Bindings.xml)
 --   KitArt(kit), KitTooltip(kit), BeforeRefresh(kit), Tick(kit)
@@ -3612,7 +3612,7 @@ end
 -- as the game's options page, drawn in the kits' panel look (a dark panel
 -- with the gold tooltip edge, a gold title over a faint gold line), its
 -- sections down the left and the chosen one's settings on the right, each
--- with its description under it. The game's options page stays too.
+-- with its description under it. The kit isn't on the game's options page.
 ---------------------------------------------------------------------------
 
 local OPT = { w = 680, h = 520, nav = 172, head = 40, pad = 14, gap = 14 }
@@ -4119,6 +4119,9 @@ function Kit:OpenOptions(section)
 end
 
 function Kit:SetupSettings()
+    -- A kit with its own window keeps its settings there only (v17): nothing
+    -- in Esc > Options > AddOns.
+    if self.cfg.optionsWindow then return end
     if not (Settings and Settings.RegisterVerticalLayoutCategory and Settings.RegisterAddOnSetting) then return end
     local ok, err = pcall(self.BuildSettings, self)
     if not ok then
