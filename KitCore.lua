@@ -36,7 +36,7 @@ local addonName, ns = ...
 -- kit if it's near one.
 ---------------------------------------------------------------------------
 
-local VERSION = 15
+local VERSION = 16
 local C = _G.KitCore
 if C and (C.version or 0) >= VERSION then
     ns.Core = C
@@ -239,6 +239,8 @@ C.BASE_DEFAULTS = {
     point = { "CENTER", "CENTER", 0, -160, "ui" },
     scale = 1,
     kitSize = 1,
+    buttonSize = 1, -- the slots' buttons, in their places (1: as made)
+    spread = 1,     -- the slots' distance from the center icon (1: as made)
     shown = true,          -- false: the whole kit is hidden (settings or the shared minimap menu)
     locked = false,
     fadeIdle = false,
@@ -508,7 +510,7 @@ function Kit:AddGlow(frame, texture, sizeMul)
     g:SetSize(frame:GetWidth() * sizeMul, frame:GetHeight() * sizeMul)
     g:Hide()
     C.glows[g] = true
-    frame.glow = g
+    frame.glow, frame.glowMul = g, sizeMul
 end
 
 -- color: { r, g, b }, or the kit's glow colour.
@@ -638,6 +640,7 @@ function Kit:ApplyShape(b)
     if b.glow then
         b.glow:SetTexture(self.media .. "glow_ring")
         b.glow:SetSize(b:GetWidth() * 1.6, b:GetHeight() * 1.6)
+        b.glowMul = 1.6
     end
     if b.hotkey then
         b.hotkey:ClearAllPoints()
@@ -1442,7 +1445,8 @@ function Kit:PlaceSub(btn)
     elseif sb.def.below then
         x, y = self:Face(0, -(btn:GetHeight() / 2 + SUB_BELOW))
     else
-        x, y = SUB_CORNER[1], SUB_CORNER[2]
+        local bs = self.db.buttonSize or 1 -- (on a smaller button, closer in)
+        x, y = SUB_CORNER[1] * bs, SUB_CORNER[2] * bs
     end
     sb:ClearAllPoints()
     sb:SetPoint("CENTER", btn, "CENTER", x, y)
@@ -2321,9 +2325,10 @@ function Kit:LayoutHomes()
         for _, ring in ipairs(rings) do self:LayoutOneRing(ring, base) end
     end
     local moved = false
+    local sp = self.db.spread or 1 -- (Distance from center)
     for _, btn in pairs(self.slots) do
         local b = base[btn] or btn.slot.pos
-        local x, y = self:Face(b[1], b[2])
+        local x, y = self:Face(b[1] * sp, b[2] * sp)
         if self.trial then
             self.trial.home[btn] = { x, y } -- (the real home spots stay as they are)
         elseif btn.homeX ~= x or btn.homeY ~= y then
@@ -2338,8 +2343,9 @@ end
 function Kit:FaceDivider()
     local dv, d = self.divider, self.cfg.divider
     if not dv or dv.edged then return end
-    local x, y = self:Face(0, d.y)
-    local w = d.width or 200
+    local sp = self.db.spread or 1
+    local x, y = self:Face(0, d.y * sp)
+    local w = (d.width or 200) * sp
     local side = self:Sideways()
     dv:ClearAllPoints()
     dv:SetPoint("CENTER", self.kit, "CENTER", x, y)
@@ -2465,7 +2471,8 @@ function Kit:Reach()
     for _, slot in ipairs(self.cfg.slots) do
         local btn = self.slots[slot.key]
         if not (btn and btn.hidden) then -- (a slot that isn't there doesn't need room)
-        local x, y = self:Face(slot.pos[1], slot.pos[2])
+        local sp = self.db.spread or 1
+        local x, y = self:Face(slot.pos[1] * sp, slot.pos[2] * sp)
         local h = slot.small and 15 or half
         local extra = slot.sub and 8 or 0
         local below = slot.sub and slot.sub.below and 26 or 0
@@ -3138,8 +3145,31 @@ end
 -- itself (BaseScale) as it lays it out, from where it really stood. Slots
 -- are resized inside one BeginMove / EndMove, so they glide to their new
 -- spots with the button instead of snapping.
+-- The slots' buttons at the Button size setting: each shrinks round its own
+-- middle, so nothing moves (the spacing stays as the layout made it). Out of
+-- combat only (the buttons are secure).
+function Kit:ApplyButtonSize()
+    if InCombatLockdown() then return end
+    local bs = self.db.buttonSize or 1
+    local function Size(b, base)
+        local w = base * bs
+        if math.abs(b:GetWidth() - w) < 0.01 then return end
+        b:SetSize(w, w)
+        if b.glow then b.glow:SetSize(w * (b.glowMul or 1.6), w * (b.glowMul or 1.6)) end
+        if b.roundParts and b.roundParts.hl then b.roundParts.hl:SetSize(w * 1.35, w * 1.35) end
+    end
+    for _, btn in pairs(self.slots) do
+        Size(btn, btn.isSmall and 22 or self.BTN)
+        if btn.sub then
+            Size(btn.sub, 22)
+            self:PlaceSub(btn)
+        end
+    end
+end
+
 function Kit:ApplyPosition()
     if InCombatLockdown() then self.pending = true return end
+    self:ApplyButtonSize()
     local db = self.db
     local scale = db.scale * (db.kitSize or 1)
     self:BeginMove()
@@ -3416,10 +3446,14 @@ function Kit:SettingsList(S)
         0.5, 0.2, 2, 0.1, function(v) return ("%.1fs"):format(v) end)
 
     S.Header("Look")
-    S.Slider(db, "scale", "Size", "Scales the kit and its slots together.", 1, 0.6, 1.6, 0.05, pct,
+    S.Slider(db, "scale", "Overall size", "The whole kit: the center icon, the buttons round it and the space between them.", 1, 0.6, 1.6, 0.05, pct,
         function() self:ApplyPosition() end)
-    S.Slider(db, "kitSize", "Kit button size", "Makes the button in the middle smaller without changing the slots around it.",
+    S.Slider(db, "kitSize", "Center icon size", "Just the icon in the middle: the buttons round it stay where they are.",
         1, 0.5, 1, 0.05, pct, function() self:ApplyPosition() end)
+    S.Slider(db, "buttonSize", "Button size", "Just the buttons round the center icon: each gets smaller in its place, so they spread out a little.",
+        1, 0.6, 1, 0.05, pct, function() self:ApplyPosition() end)
+    S.Slider(db, "spread", "Distance from center", "How far the buttons sit from the center icon: lower brings them in close, higher spreads them out.",
+        1, 0.8, 1.5, 0.05, pct, function() self:Refresh(false) self:ApplyPosition() end)
     S.Dropdown(db, "facing", "Layout direction",
         "Which way the slots lay out round the kit while it's floating (on a screen edge they always face the middle of the screen).",
         "up", {
