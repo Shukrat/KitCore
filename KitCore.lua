@@ -36,7 +36,7 @@ local addonName, ns = ...
 -- kit if it's near one.
 ---------------------------------------------------------------------------
 
-local VERSION = 16
+local VERSION = 17
 local C = _G.KitCore
 if C and (C.version or 0) >= VERSION then
     ns.Core = C
@@ -335,9 +335,10 @@ C.BASE_CHAR = {
 --   events        { EVENT = function(kit, ...) end }
 --   unitEvents    { EVENT = { units = { "player" }, fn = function(kit, ...) end } }
 --   Settings(kit, S)    the kit's own section of the settings panel
---   GeneralSettings(kit, S), LookSettings(kit, S)
+--   GeneralSettings(kit, S), CombatSettings(kit, S), LookSettings(kit, S)
 --                       more settings in the General section (before its Combat
---                       part) and at the end of Look. S.Subheader("text", when)
+--                       part), at the end of that Combat part (v17), and at the
+--                       end of Look. S.Subheader("text", when)
 --                       starts a group inside a section; with when (a function),
 --                       the settings window shows the group only while it's true.
 --   Menu(kit, root)     the kit's own lines in its right-click menu, between
@@ -3444,6 +3445,7 @@ function Kit:SettingsList(S)
     S.Slider(db, "flyoutHide", "Drawer close delay in combat",
         "In combat a drawer can't close when you click elsewhere, so it closes by itself this long after the mouse leaves it and its slot.",
         0.5, 0.2, 2, 0.1, function(v) return ("%.1fs"):format(v) end)
+    if cfg.CombatSettings then cfg.CombatSettings(self, S) end
 
     S.Header("Look")
     S.Slider(db, "scale", "Overall size", "The whole kit: the center icon, the buttons round it and the space between them.", 1, 0.6, 1.6, 0.05, pct,
