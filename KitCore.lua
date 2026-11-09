@@ -335,8 +335,9 @@ C.BASE_CHAR = {
 --   Settings(kit, S)    the kit's own section of the settings panel
 --   GeneralSettings(kit, S), LookSettings(kit, S)
 --                       more settings in the General section (before its Combat
---                       part) and at the end of Look. S.Subheader("text") starts
---                       a group inside a section.
+--                       part) and at the end of Look. S.Subheader("text", when)
+--                       starts a group inside a section; with when (a function),
+--                       the settings window shows the group only while it's true.
 --   Menu(kit, root)     the kit's own lines in its right-click menu, between
 --                 "Pin in place" and "Settings" (root is the game's menu
 --                 description: root:CreateCheckbox, root:CreateButton, ...;
@@ -3393,6 +3394,7 @@ function Kit:SettingsList(S)
     local pct = function(v) return math.floor(v * 100 + 0.5) .. "%" end
     local refresh = function() self:Refresh(false) end
 
+    S.Group("Kit")
     S.Header("General")
     S.Checkbox(db, "shown", "Show " .. self.name,
         "Turn off to hide the whole kit (its button and every slot) without uninstalling it.",
@@ -3444,11 +3446,7 @@ function Kit:SettingsList(S)
         "How see-through the kit's slots get when it fades (when idle or left open): 0% is gone until you mouse over. The kit button fades half as much, so you can still find it.",
         0.4, 0, 0.9, 0.05, function(v) return ("%d%%"):format(math.floor(v * 100 + 0.5)) end, function() self:ApplyFade() end)
 
-    -- The kit's own settings, under its name unless it opens with a header.
-    S.Header(self.name)
-    if cfg.Settings then cfg.Settings(self, S) end
-
-    S.Header("Pinned buttons (this character)")
+    S.Header("Pinned buttons")
     local listed = cfg.slots
     if cfg.menuOrder then
         listed = {}
@@ -3457,7 +3455,7 @@ function Kit:SettingsList(S)
     for _, slot in ipairs(listed) do
         if not slot.noPin then
             S.Checkbox(cdb.pinned, slot.key, slot.label,
-                "Keep it out when the kit is closed. You can also shift-right-click the slot.",
+                "Keep it out when the kit is closed (this character only). You can also shift-right-click the slot.",
                 false, refresh, "pin_" .. slot.key)
         end
     end
@@ -3478,6 +3476,12 @@ function Kit:SettingsList(S)
             self:Print("Open Esc > Options > Keybindings and look for " .. self.name .. ".")
         end
     end)
+
+    -- The kit's own settings, under its name unless it opens with a header
+    -- (and its own group in the window's list unless it names one).
+    S.Group(self.name)
+    S.Header(self.name)
+    if cfg.Settings then cfg.Settings(self, S) end
 end
 
 function Kit:BuildSettings()
@@ -3503,7 +3507,8 @@ function Kit:BuildSettings()
     -- a header of its own, likewise only once something follows it.
     local S, pending, pendingSub = {}, nil, nil
     function S.Header(text) pending, pendingSub = text, nil end
-    function S.Subheader(text) pendingSub = text end
+    function S.Subheader(text) pendingSub = text end -- (its "when" is the window's only)
+    function S.Group() end -- (the window's nav only)
     local function Flush()
         if CreateSettingsListSectionHeaderInitializer then
             if pending then layout:AddInitializer(CreateSettingsListSectionHeaderInitializer(pending)) end
@@ -3615,22 +3620,27 @@ end
 
 -- The list, gathered into sections: { title, items = { item, ... } }.
 function Kit:CollectOptions()
-    local sections, cur, pending, pendingSub = {}, nil, nil, nil
+    local sections, cur, pending, pendingSub, when, group = {}, nil, nil, nil, nil, nil
     local function Add(item)
         if pending or not cur then
-            cur = { title = pending or self.name, items = {} }
+            cur = { title = pending or self.name, items = {}, group = group }
             sections[#sections + 1] = cur
             pending = nil
         end
         if pendingSub then
-            cur.items[#cur.items + 1] = { kind = "sub", name = pendingSub }
+            cur.items[#cur.items + 1] = { kind = "sub", name = pendingSub, when = when }
             pendingSub = nil
         end
+        item.when = when
         cur.items[#cur.items + 1] = item
     end
     local S = {}
-    function S.Header(text) pending, pendingSub = text, nil end
-    function S.Subheader(text) pendingSub = text end
+    function S.Header(text) pending, pendingSub, when = text, nil, nil end
+    -- A group inside a section. when (optional): a function; the window shows
+    -- the group only while it says true (settings for one style, say).
+    function S.Subheader(text, w) pendingSub, when = text, w end
+    -- A label over the next sections in the window's list down the left.
+    function S.Group(text) group = text end
     function S.Checkbox(tbl, key, name, tip, default, fn)
         Add({ kind = "check", tbl = tbl, key = key, name = name, tip = tip, default = default, fn = fn })
     end
@@ -3663,6 +3673,14 @@ function Kit:OptionChanged(item, v)
         if not ok then geterrorhandler()(err) end
     end
     if self.OnSettingsChanged then pcall(self.OnSettingsChanged) end
+    -- Groups shown only for some choices: lay the page out again.
+    local ui = self.optionsUI
+    local page = ui and ui.current and ui.pages[ui.current]
+    if page and page.dynamic then
+        page.Relayout()
+        ui.child:SetHeight(page:GetHeight())
+        ui.UpdateBar()
+    end
 end
 
 -- Label and description down the left of a row; returns the bottom offset.
@@ -3871,18 +3889,34 @@ local function BuildPage(kit, ui, index)
     line:SetPoint("TOPRIGHT", 0, -26)
     line:SetHeight(1)
     line:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.25)
-    local y = 38
     page.rows = {}
     for _, item in ipairs(sec.items) do
         local make = ROW[item.kind]
         if make then
             local row = make(kit, page, item, w)
-            row:SetPoint("TOPLEFT", 0, -y)
-            y = y + row:GetHeight() + OPT.gap
+            row.item = item
+            if item.when then page.dynamic = true end
             page.rows[#page.rows + 1] = row
         end
     end
-    page:SetHeight(y)
+    -- Stack the rows, leaving out groups whose "when" says no.
+    function page.Relayout()
+        local y = 38
+        for _, row in ipairs(page.rows) do
+            local ok, show = true, true
+            if row.item.when then ok, show = pcall(row.item.when) end
+            if ok and show then
+                row:ClearAllPoints()
+                row:SetPoint("TOPLEFT", 0, -y)
+                row:Show()
+                y = y + row:GetHeight() + OPT.gap
+            else
+                row:Hide()
+            end
+        end
+        page:SetHeight(y)
+    end
+    page.Relayout()
     page:Hide()
     return page
 end
@@ -3901,6 +3935,7 @@ local function ShowPage(kit, index)
     ui.pages[index] = ui.pages[index] or BuildPage(kit, ui, index)
     local page = ui.pages[index]
     for _, row in ipairs(page.rows) do row.Paint() end
+    page.Relayout()
     page:Show()
     ui.child:SetHeight(page:GetHeight())
     ui.scroll:SetVerticalScroll(0)
@@ -3950,11 +3985,21 @@ function Kit:BuildOptions()
     sep:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.35)
 
     -- Sections down the left, with a faint gold line beside them.
-    local navY = OPT.head + 10
+    -- Grouped under small grey labels (Kit, the kit's name, and any groups
+    -- the kit names).
+    local navY, lastGroup = OPT.head + 8, nil
     for i, sec in ipairs(ui.sections) do
+        if sec.group and sec.group ~= lastGroup then
+            lastGroup = sec.group
+            local g = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+            g:SetPoint("TOPLEFT", OPT.pad + 2, -(navY + (i > 1 and 6 or 2)))
+            g:SetText(sec.group:upper())
+            navY = navY + (i > 1 and 22 or 18)
+        end
         local b = CreateFrame("Button", nil, f)
         b:SetSize(OPT.nav - OPT.pad - 6, 22)
-        b:SetPoint("TOPLEFT", OPT.pad, -(navY + (i - 1) * 24))
+        b:SetPoint("TOPLEFT", OPT.pad, -navY)
+        navY = navY + 23
         b.sel = b:CreateTexture(nil, "BACKGROUND")
         b.sel:SetAllPoints()
         b.sel:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.1)
