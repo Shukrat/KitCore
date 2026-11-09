@@ -36,7 +36,7 @@ local addonName, ns = ...
 -- kit if it's near one.
 ---------------------------------------------------------------------------
 
-local VERSION = 17
+local VERSION = 18
 local C = _G.KitCore
 if C and (C.version or 0) >= VERSION then
     ns.Core = C
@@ -711,6 +711,39 @@ function U.SetIcon(btn, texture, greyed)
     btn.icon:SetDesaturated(greyed and true or false)
     local v = greyed and 0.6 or 1
     btn.icon:SetVertexColor(v, v, v)
+    btn.greyed, btn.noMana = greyed and true or false, nil
+end
+
+-- The spell a button casts on a plain left click, or nil: its "spell"
+-- attribute, or for a macro the spell after its first /cast (the names in
+-- the kits' macros come from spell IDs, so this works in any language).
+function U.ButtonSpell(btn)
+    local t = btn:GetAttribute("type")
+    if t == "spell" then return btn:GetAttribute("spell") end
+    if t ~= "macro" then return nil end
+    local text = btn:GetAttribute("macrotext")
+    for line in (text or ""):gmatch("[^\n]+") do
+        local rest = line:match("^%s*/cast%s+(.+)$")
+        if rest then
+            rest = rest:gsub("%[.-%]", ""):gsub(";.*$", ""):match("^%s*(.-)%s*$")
+            if rest ~= "" then return rest end
+        end
+    end
+end
+
+-- True when a spell is short of the power it costs (mana, mostly) right
+-- now. Looked up as the rank you'd cast, so a cheaper rank still counts.
+-- Anything the game won't tell an addon (a secret value) counts as fine.
+function U.OutOfMana(spell)
+    if not spell then return false end
+    local key = type(spell) == "number" and spell or U.SpellByName(spell) or spell
+    local f = (C_Spell and C_Spell.IsSpellUsable) or IsUsableSpell
+    if not f then return false end
+    local ok, short = pcall(function()
+        local _, noMana = f(key)
+        return noMana and true or false
+    end)
+    return ok and short or false
 end
 
 ---------------------------------------------------------------------------
@@ -1934,6 +1967,7 @@ function Kit:PaintFlyout(fly)
             local n = Val(c.count)
             b.count:SetText(n and n > 1 and n or "")
             if c.cooldown then U.SetCooldown(b.cooldown, c.cooldown()) else b.cooldown:Clear() end
+            self:TintMana(b)
         end
     end
 end
@@ -1970,6 +2004,41 @@ function Kit:PaintSlot(btn)
     if slot.Paint then slot.Paint(self, btn) end
     local sb = btn.sub
     if sb and sb:IsShown() and sb.def.Paint then sb.def.Paint(self, sb) end
+    self:TintMana(btn)
+    if sb and sb:IsShown() then self:TintMana(sb) end
+end
+
+-- A slot (or flyout choice) whose spell you can't afford turns red. Greyed
+-- ones (unlearned, no pet, no shards and so on) stay grey.
+local NO_MANA = { 0.9, 0.25, 0.25 }
+function Kit:TintMana(b)
+    if not (b and b.icon) then return end
+    local short = not b.greyed and U.OutOfMana(U.ButtonSpell(b))
+    if short then
+        b.icon:SetVertexColor(NO_MANA[1], NO_MANA[2], NO_MANA[3])
+    elseif b.noMana then
+        local v = b.greyed and 0.6 or 1
+        b.icon:SetVertexColor(v, v, v)
+    end
+    b.noMana = short or nil
+end
+
+-- Only the red tint, when mana changes (cheap: no repaint).
+function Kit:PaintMana()
+    if not self.built then return end
+    for _, btn in pairs(self.slots) do
+        if btn:IsShown() then
+            self:TintMana(btn)
+            if btn.sub and btn.sub:IsShown() then self:TintMana(btn.sub) end
+        end
+    end
+    for _, fly in pairs(self.flyouts) do
+        if fly:IsShown() then
+            for i, b in ipairs(fly.buttons) do
+                if i <= (fly.count or 0) then self:TintMana(b) end
+            end
+        end
+    end
 end
 
 -- Fading eases rather than snapping: self.fadeT runs from 0 (full) to 1
@@ -4228,6 +4297,7 @@ local BASE_EVENTS = {
     "PLAYER_ENTERING_WORLD", "BAG_UPDATE_DELAYED", "SPELLS_CHANGED", "BAG_UPDATE_COOLDOWN",
     "SPELL_UPDATE_COOLDOWN", "UPDATE_BINDINGS", "ITEM_DATA_LOAD_RESULT", "UI_SCALE_CHANGED",
     "DISPLAY_SIZE_CHANGED", "GLOBAL_MOUSE_DOWN", "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED",
+    "SPELL_UPDATE_USABLE",
 }
 
 function Kit:OnEvent(event, ...)
@@ -4262,6 +4332,8 @@ function Kit:OnEvent(event, ...)
         self:Refresh(false)
     elseif event == "BAG_UPDATE_COOLDOWN" or event == "SPELL_UPDATE_COOLDOWN" then
         self:PaintAll()
+    elseif event == "SPELL_UPDATE_USABLE" or (event == "UNIT_POWER_UPDATE" and ... == "player") then
+        self:PaintMana()
     elseif event == "UPDATE_BINDINGS" then
         self:UpdateHotkeys()
     elseif event == "ITEM_DATA_LOAD_RESULT" then
@@ -4374,6 +4446,13 @@ function Kit:Build()
     for e, u in pairs(cfg.unitEvents or {}) do
         pcall(self.events.RegisterUnitEvent, self.events, e, unpack(u.units))
     end
+    -- Your mana, for the red tint (with the kit's own units, if it watches power too).
+    local pu = cfg.unitEvents and cfg.unitEvents.UNIT_POWER_UPDATE
+    local units = { "player" }
+    for _, u in ipairs(pu and pu.units or {}) do
+        if u ~= "player" then units[#units + 1] = u end
+    end
+    pcall(self.events.RegisterUnitEvent, self.events, "UNIT_POWER_UPDATE", unpack(units))
 
     -- Twice a second: anything the kit watches that raises no event.
     if cfg.Tick then
