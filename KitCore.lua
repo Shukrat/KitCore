@@ -3423,10 +3423,10 @@ function Kit:SettingsList(S)
     S.Dropdown(db, "facing", "Layout direction",
         "Which way the slots lay out round the kit while it's floating (on a screen edge they always face the middle of the screen).",
         "up", {
-            { "up", "Up (as made)" },
-            { "down", "Down (upside down)" },
-            { "left", "Left (on its side)" },
-            { "right", "Right (on its side)" },
+            { "up", "Up" },
+            { "down", "Down" },
+            { "left", "Left" },
+            { "right", "Right" },
         }, function() self:SetFacing(db.facing) end)
     S.Checkbox(db, "tooltipDefault", "Default tooltip position",
         "Show slot tooltips where the game normally shows tooltips, instead of beside the slot.", false)
