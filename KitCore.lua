@@ -240,6 +240,7 @@ C.BASE_DEFAULTS = {
     scale = 1,
     kitSize = 1,
     buttonSize = 1, -- the slots' buttons, in their places (1: as made)
+    spread = 1,     -- the slots' distance from the center icon (1: as made)
     shown = true,          -- false: the whole kit is hidden (settings or the shared minimap menu)
     locked = false,
     fadeIdle = false,
@@ -2324,9 +2325,10 @@ function Kit:LayoutHomes()
         for _, ring in ipairs(rings) do self:LayoutOneRing(ring, base) end
     end
     local moved = false
+    local sp = self.db.spread or 1 -- (Distance from center)
     for _, btn in pairs(self.slots) do
         local b = base[btn] or btn.slot.pos
-        local x, y = self:Face(b[1], b[2])
+        local x, y = self:Face(b[1] * sp, b[2] * sp)
         if self.trial then
             self.trial.home[btn] = { x, y } -- (the real home spots stay as they are)
         elseif btn.homeX ~= x or btn.homeY ~= y then
@@ -2341,8 +2343,9 @@ end
 function Kit:FaceDivider()
     local dv, d = self.divider, self.cfg.divider
     if not dv or dv.edged then return end
-    local x, y = self:Face(0, d.y)
-    local w = d.width or 200
+    local sp = self.db.spread or 1
+    local x, y = self:Face(0, d.y * sp)
+    local w = (d.width or 200) * sp
     local side = self:Sideways()
     dv:ClearAllPoints()
     dv:SetPoint("CENTER", self.kit, "CENTER", x, y)
@@ -2468,7 +2471,8 @@ function Kit:Reach()
     for _, slot in ipairs(self.cfg.slots) do
         local btn = self.slots[slot.key]
         if not (btn and btn.hidden) then -- (a slot that isn't there doesn't need room)
-        local x, y = self:Face(slot.pos[1], slot.pos[2])
+        local sp = self.db.spread or 1
+        local x, y = self:Face(slot.pos[1] * sp, slot.pos[2] * sp)
         local h = slot.small and 15 or half
         local extra = slot.sub and 8 or 0
         local below = slot.sub and slot.sub.below and 26 or 0
@@ -3448,6 +3452,8 @@ function Kit:SettingsList(S)
         1, 0.5, 1, 0.05, pct, function() self:ApplyPosition() end)
     S.Slider(db, "buttonSize", "Button size", "Just the buttons round the center icon: each gets smaller in its place, so they spread out a little.",
         1, 0.6, 1, 0.05, pct, function() self:ApplyPosition() end)
+    S.Slider(db, "spread", "Distance from center", "How far the buttons sit from the center icon: lower brings them in close, higher spreads them out.",
+        1, 0.8, 1.5, 0.05, pct, function() self:Refresh(false) self:ApplyPosition() end)
     S.Dropdown(db, "facing", "Layout direction",
         "Which way the slots lay out round the kit while it's floating (on a screen edge they always face the middle of the screen).",
         "up", {
