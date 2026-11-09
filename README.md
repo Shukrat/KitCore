@@ -1,6 +1,6 @@
 # Kit Core
 
-The shared parts of the kits for WoW Forever: the round kit button and the ring of slots around it, opening and closing, slots pinned so they stay out, secure flyouts (they open and their choices work in combat too), opening and closing the kit from its button in combat (floating kits and kits on a screen edge), dragging, keeping the kit on screen, screen-edge layout, the settings panel, the minimap button, slash commands and key bindings.
+The shared parts of the kits for WoW Forever: the round kit button and the ring of slots around it, opening and closing, slots pinned so they stay out, secure flyouts (they open and their choices work in combat too), opening and closing the kit from its button in combat (floating kits and kits on a screen edge), dragging, keeping the kit on screen, screen-edge layout, the settings panel, the minimap button, slash commands and key bindings (including the game's Quick Keybind Mode: every kit opens fully while it's up, so any slot, corner button or kit button can be bound by hovering it and pressing a key).
 
 A kit hands Kit Core a description (its slots, what each one does, how it paints) and Kit Core runs the rest. [Kit Dock](https://github.com/Shukrat/KitDock) is optional: with it, a kit can join the gold pin and snap to screen edges (or, with `edgesOnly`, only the edges); without it, the kit stands on its own.
 

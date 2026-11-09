@@ -34,6 +34,11 @@ local addonName, ns = ...
 -- snippet puts the real button (see GRIP_CLICK). When combat ends the drop
 -- is finished like any other drag: saved, and snapped to an edge or another
 -- kit if it's near one.
+--
+-- From v18 the kits work with the game's Quick Keybind Mode (Esc > Options >
+-- Keybindings > Quick Keybind Mode, or /keybind): while it's up every kit
+-- opens fully, and hovering any slot, corner button or kit button and
+-- pressing a key binds it there, as on the action bars.
 ---------------------------------------------------------------------------
 
 local VERSION = 18
@@ -2093,6 +2098,7 @@ function Kit:FadeAlpha()
 end
 
 function Kit:FadeIdle()
+    if self.qkbOpen then return false end -- (binding keys: everything at full)
     if self.openFaded then return true end
     return self.db.fadeIdle and not self.open and self.hovering == 0
         and not (self.cfg.Busy and self.cfg.Busy(self))
@@ -2104,6 +2110,7 @@ end
 function Kit:ArmOpenFade()
     self.openFaded = nil
     self.openFadeCount = (self.openFadeCount or 0) + 1
+    if self.qkbOpen then return end
     if not self.db.fadeOpen or not self.open or self.hovering > 0 or self.flyOpen then return end
     if not (C_Timer and C_Timer.After) then return end
     local count = self.openFadeCount
@@ -3351,7 +3358,7 @@ function Kit:RegisterDock()
         kit = self.kit,
         name = self.name,
         edgesOnly = self.cfg.edgesOnly,
-        IsOpen = function() return self.open end,
+        IsOpen = function() return self.open and not self:QkbInPlace() end,
         Close = function() self:SetOpen(false) end,
         Tuck = function(on) self:Tuck(on) end,
         PlaceFree = function() self:PlaceFree() end,
@@ -4403,6 +4410,7 @@ function Kit:OnEvent(event, ...)
         end
         self:StopGhost()
         self.combatPress = nil
+        if self.qkbLeavePending then self:QkbRestore() end -- (Quick Keybind Mode closed in combat)
         self:Refresh(false)
         -- Moved or opened in combat: catch the dock up a frame from now (see
         -- FinishCombatMove), the move first, so the dock lays the kit out
@@ -4425,11 +4433,248 @@ function Kit:OnEvent(event, ...)
     end
 end
 
+---------------------------------------------------------------------------
+-- Quick Keybind Mode (from v15)
+--
+-- While the game's Quick Keybind Mode is up, every kit opens fully, and each
+-- slot, corner button and kit button gets a cover that works like an action
+-- button in that mode: hover it and press a key (or a mouse button, or the
+-- wheel) to bind it, Escape to unbind. The cover sits over the secure button
+-- so a click in this mode never uses the item or spell underneath.
+-- On the pin with other kits, each kit opens in place, fanned in its own
+-- slice (as in combat), so none takes the pin and they can all be open.
+-- Kits in a Kit Dock tuck box come out of it, full size along its edge (Kit
+-- Dock v25), and go back in after. A kit that was open before goes back to
+-- open after; the rest close.
+---------------------------------------------------------------------------
+
+local QKB_IDLE = 0.5            -- the covers' ring while not hovered
+local QKB_COLOR = { 0.45, 0.8, 1 } -- (blue, so it isn't mistaken for a reminder glow)
+
+local function InQuickKeybind()
+    local f = _G.QuickKeybindFrame
+    return f and f:IsShown() and true or false
+end
+U.InQuickKeybind = InQuickKeybind
+
+-- On the pin with other kits and open only for Quick Keybind Mode: Kit Dock
+-- is told it's closed, so it doesn't hand it the pin and tuck the rest.
+function Kit:QkbInPlace()
+    if not self.qkbOpen then return false end
+    local D = self.Dock
+    return D and D.IsDocked and D.IsDocked(self.key) and not (D.EdgeSide and D.EdgeSide(self.key)) and true or false
+end
+
+-- What can be bound in this kit: { frame, binding command }.
+function Kit:QkbTargets()
+    local list = {}
+    local H = self.cfg.bindingHeader
+    if H then list[#list + 1] = { self.kit, H .. "_TOGGLE", 1.3 } end
+    for _, slot in ipairs(self.cfg.slots) do
+        local btn = self.slots[slot.key]
+        if btn then
+            list[#list + 1] = { btn, "CLICK " .. btn:GetName() .. ":LeftButton", slot.small and 1.7 or 1.6 }
+            local sb = btn.sub
+            if sb then list[#list + 1] = { sb, "CLICK " .. sb:GetName() .. ":LeftButton", 1.7 } end
+        end
+    end
+    return list
+end
+
+-- The tooltip the game shows over an action button in this mode. (The mode
+-- calls this on the hovered button after each key, by this name.)
+local function QkbTooltip(ov)
+    local tip = _G.QuickKeybindTooltip or GameTooltip
+    tip:SetOwner(ov, "ANCHOR_RIGHT")
+    local cmd = ov.commandName
+    tip:AddLine(GetBindingName and GetBindingName(cmd) or cmd, 1, 1, 1)
+    local key = GetBindingKey(cmd)
+    if key then
+        tip:AddLine(GetBindingText and GetBindingText(key) or key, 0.1, 1, 0.1)
+        tip:AddLine(ESCAPE_TO_UNBIND or "Press Escape to unbind.", 1, 0.82, 0)
+    else
+        tip:AddLine(NOT_BOUND or "Not bound", 1, 0.1, 0.1)
+        tip:AddLine(PRESS_KEY_TO_BIND or "Press a key to bind.", 1, 0.82, 0)
+    end
+    tip:Show()
+end
+
+local function QkbFrame() return _G.QuickKeybindFrame end
+
+-- The cover over one bindable button (made the first time it's needed, out
+-- of combat).
+function Kit:QkbCover(frame, command, mul)
+    local ov = frame.kcQkb
+    if not ov then
+        ov = CreateFrame("Button", nil, frame)
+        ov:SetAllPoints(frame)
+        ov:RegisterForClicks("AnyUp")
+        ov:EnableMouseWheel(true)
+        ov:Hide()
+        local hl = ov:CreateTexture(nil, "OVERLAY", nil, 7)
+        hl:SetTexture(self.media .. "glow_ring")
+        hl:SetBlendMode("ADD")
+        hl:SetPoint("CENTER")
+        hl:SetVertexColor(QKB_COLOR[1], QKB_COLOR[2], QKB_COLOR[3])
+        ov.hl = hl
+        ov.QuickKeybindButtonSetTooltip = QkbTooltip
+        ov:SetScript("OnEnter", function(o)
+            local f = QkbFrame()
+            if not (f and f:IsShown()) then return end
+            Try(f.SetSelected, f, o.commandName, o)
+            o.hl:SetAlpha(1)
+            QkbTooltip(o)
+        end)
+        ov:SetScript("OnLeave", function(o)
+            local f = QkbFrame()
+            if f and f:IsShown() then Try(f.SetSelected, f, nil, nil) end
+            o.hl:SetAlpha(QKB_IDLE)
+            local tip = _G.QuickKeybindTooltip
+            if tip then tip:Hide() end
+            GameTooltip:Hide()
+        end)
+        ov:SetScript("OnClick", function(o, button)
+            -- (left and right clicks do nothing here, as on the action bars;
+            -- other mouse buttons get bound)
+            local f = QkbFrame()
+            if f and f:IsShown() and button ~= "LeftButton" and button ~= "RightButton" then
+                Try(f.OnKeyDown, f, button)
+            end
+        end)
+        ov:SetScript("OnMouseWheel", function(o, delta)
+            local f = QkbFrame()
+            if f and f:IsShown() then Try(f.OnMouseWheel, f, delta) end
+        end)
+        frame.kcQkb = ov
+    end
+    ov.commandName = command
+    ov:SetFrameLevel(frame:GetFrameLevel() + 20)
+    ov.hl:SetSize(frame:GetWidth() * mul, frame:GetHeight() * mul)
+    ov.hl:SetAlpha(QKB_IDLE)
+    return ov
+end
+
+function Kit:QkbCovers(on)
+    for _, t in ipairs(self:QkbTargets()) do
+        local frame = t[1]
+        if on then
+            if not InCombatLockdown() or frame.kcQkb then self:QkbCover(frame, t[2], t[3]):Show() end
+        elseif frame.kcQkb then
+            frame.kcQkb:Hide()
+        end
+    end
+end
+
+-- Entering the mode, step 1 (every kit, before any opens): an open kit
+-- closes, so one that took the pin hands it back first.
+function Kit:QkbClose()
+    if not self.built or self.qkbOpen or InCombatLockdown() then return end
+    self.qkbWasOpen = self.open
+    self:CloseFlyouts()
+    if self.open then self:SetOpen(false) end
+end
+
+-- Step 2: open fully, in place on the pin, and put the covers on.
+function Kit:QkbOpen()
+    if not self.built or self.qkbOpen or InCombatLockdown() then return end
+    self.qkbOpen = true
+    self.qkbLeavePending = nil
+    if self.db.shown ~= false then
+        self.open = true
+        self:Refresh("open")
+        self:ApplyFade()
+    end
+    self:QkbCovers(true)
+end
+
+-- Leaving the mode: covers off now; the kit goes back as it was once it's
+-- out of combat.
+function Kit:QkbLeave(reopenLater)
+    self:QkbCovers(false)
+    if not self.qkbOpen then return end
+    if InCombatLockdown() then self.qkbLeavePending = true return end
+    self:QkbRestore(reopenLater)
+end
+
+-- Closes what the mode opened. A kit that was open before opens again now,
+-- or (reopenLater) once the dock has put every kit back (QkbReopen).
+function Kit:QkbRestore(reopenLater)
+    self.qkbLeavePending = nil
+    if not self.qkbOpen or InCombatLockdown() then return end
+    self.qkbOpen = nil
+    local was = self.qkbWasOpen
+    self.qkbWasOpen = nil
+    if self.open then
+        self.open = false
+        self:Refresh("close")
+        local D = self.Dock
+        if D and D.Closed then D.Closed(self.key) end
+    end
+    self.qkbReopen = was and true or nil
+    if not reopenLater then self:QkbReopen() end
+    self:ArmOpenFade()
+    self:ApplyFade()
+end
+
+function Kit:QkbReopen()
+    local was = self.qkbReopen
+    self.qkbReopen = nil
+    if was and self.db.shown ~= false and not InCombatLockdown() then self:SetOpen(true) end
+end
+
+-- The mode opened or closed (the game's frame showing or hiding).
+function C.SetQuickKeybind(on)
+    on = on and true or false
+    if C.qkb == on then return end
+    C.qkb = on
+    local kits = C.kits or {}
+    local D
+    for _, kit in ipairs(kits) do D = D or kit.Dock end
+    if on then
+        if InCombatLockdown() then C.qkb = false return end
+        for _, kit in ipairs(kits) do pcall(kit.QkbClose, kit) end
+        for _, kit in ipairs(kits) do pcall(kit.QkbOpen, kit) end
+        -- Kits on an edge lay out with room for being open, and the tuck
+        -- boxes let their kits out.
+        if D then pcall(D.SetQuickKeybind or D.Layout, true) end
+    else
+        -- Close what the mode opened, then the boxes take their kits back,
+        -- then kits that were open before open again (from the box, if
+        -- that's where they live).
+        for _, kit in ipairs(kits) do pcall(kit.QkbLeave, kit, true) end
+        if D and D.SetQuickKeybind then pcall(D.SetQuickKeybind, false) end
+        for _, kit in ipairs(kits) do pcall(kit.QkbReopen, kit) end
+    end
+end
+
+-- Follow the game's Quick Keybind frame. It's in its own Blizzard addon,
+-- which may load after the kits. Hooked once for all copies; the hook calls
+-- through C, so a newer copy's SetQuickKeybind is the one that runs.
+local function HookQuickKeybind()
+    local f = _G.QuickKeybindFrame
+    if C.qkbHooked or not f or not f.HookScript then return end
+    C.qkbHooked = true
+    f:HookScript("OnShow", function() C.SetQuickKeybind(true) end)
+    f:HookScript("OnHide", function() C.SetQuickKeybind(false) end)
+    if f:IsShown() then C.SetQuickKeybind(true) end
+end
+C.qkbWatch = C.qkbWatch or CreateFrame("Frame")
+C.qkbWatch:RegisterEvent("ADDON_LOADED")
+C.qkbWatch:RegisterEvent("PLAYER_LOGIN")
+C.qkbWatch:SetScript("OnEvent", function(f, event, name)
+    if event == "ADDON_LOADED" and name ~= "Blizzard_QuickKeybind" then return end
+    HookQuickKeybind()
+    if C.qkbHooked then f:UnregisterAllEvents() end
+end)
+HookQuickKeybind()
+
 function Kit:Build()
     local cfg = self.cfg
     self:BuildKit()
     for _, slot in ipairs(cfg.slots) do self:CreateSlot(slot) end
     self.built = true
+    C.kits = C.kits or {}
+    C.kits[#C.kits + 1] = self -- (for Quick Keybind Mode)
     self:UpdateHotkeys()
     self:ApplyPosition()
     self:RegisterDock()
