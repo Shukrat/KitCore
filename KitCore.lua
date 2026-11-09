@@ -334,7 +334,9 @@ C.BASE_CHAR = {
 --   unitEvents    { EVENT = { units = { "player" }, fn = function(kit, ...) end } }
 --   Settings(kit, S)    the kit's own section of the settings panel
 --   GeneralSettings(kit, S), LookSettings(kit, S)
---                       more settings at the end of the General and Look sections
+--                       more settings in the General section (before its Combat
+--                       part) and at the end of Look. S.Subheader("text") starts
+--                       a group inside a section.
 --   Menu(kit, root)     the kit's own lines in its right-click menu, between
 --                 "Pin in place" and "Settings" (root is the game's menu
 --                 description: root:CreateCheckbox, root:CreateButton, ...;
@@ -3401,6 +3403,8 @@ function Kit:SettingsList(S)
         function() self:ApplyMinimap() end)
     S.Checkbox(db, "chatNotices", "Chat messages",
         "Notices in chat when something changes (pinned in place, always shown, snoozed and the like). Slash commands still answer in chat.", true)
+    if cfg.GeneralSettings then cfg.GeneralSettings(self, S) end
+    S.Subheader("Combat")
     if not self.cfg.alwaysHideInCombat then
         S.Checkbox(db, "hideInCombat", "Hide in combat", "Hide the kit while you're in combat.", false,
             function() self:ApplyCombatHide() end)
@@ -3408,7 +3412,6 @@ function Kit:SettingsList(S)
     S.Slider(db, "flyoutHide", "Drawer close delay in combat",
         "In combat a drawer can't close when you click elsewhere, so it closes by itself this long after the mouse leaves it and its slot.",
         0.5, 0.2, 2, 0.1, function(v) return ("%.1fs"):format(v) end)
-    if cfg.GeneralSettings then cfg.GeneralSettings(self, S) end
 
     S.Header("Look")
     S.Slider(db, "scale", "Size", "Scales the kit and its slots together.", 1, 0.6, 1.6, 0.05, pct,
@@ -3496,13 +3499,17 @@ function Kit:BuildSettings()
 
     -- A header goes in only once something follows it, and a header straight
     -- after another replaces it (so a kit's section can open with its own).
-    local S, pending = {}, nil
-    function S.Header(text) pending = text end
+    -- A sub-heading groups settings inside a section; in the game's list it's
+    -- a header of its own, likewise only once something follows it.
+    local S, pending, pendingSub = {}, nil, nil
+    function S.Header(text) pending, pendingSub = text, nil end
+    function S.Subheader(text) pendingSub = text end
     local function Flush()
-        if pending and CreateSettingsListSectionHeaderInitializer then
-            layout:AddInitializer(CreateSettingsListSectionHeaderInitializer(pending))
+        if CreateSettingsListSectionHeaderInitializer then
+            if pending then layout:AddInitializer(CreateSettingsListSectionHeaderInitializer(pending)) end
+            if pendingSub then layout:AddInitializer(CreateSettingsListSectionHeaderInitializer(pendingSub)) end
         end
-        pending = nil
+        pending, pendingSub = nil, nil
     end
     function S.Checkbox(tbl, key, name, tooltip, default, fn, id)
         Flush()
@@ -3608,17 +3615,22 @@ end
 
 -- The list, gathered into sections: { title, items = { item, ... } }.
 function Kit:CollectOptions()
-    local sections, cur, pending = {}, nil, nil
+    local sections, cur, pending, pendingSub = {}, nil, nil, nil
     local function Add(item)
         if pending or not cur then
             cur = { title = pending or self.name, items = {} }
             sections[#sections + 1] = cur
             pending = nil
         end
+        if pendingSub then
+            cur.items[#cur.items + 1] = { kind = "sub", name = pendingSub }
+            pendingSub = nil
+        end
         cur.items[#cur.items + 1] = item
     end
     local S = {}
-    function S.Header(text) pending = text end
+    function S.Header(text) pending, pendingSub = text, nil end
+    function S.Subheader(text) pendingSub = text end
     function S.Checkbox(tbl, key, name, tip, default, fn)
         Add({ kind = "check", tbl = tbl, key = key, name = name, tip = tip, default = default, fn = fn })
     end
@@ -3806,6 +3818,23 @@ function ROW.dropdown(kit, parent, item, w)
         end
     end)
     row:SetHeight(math.max(h, 22) + 4)
+    return row
+end
+
+-- A sub-heading inside a section: small gold words over a faint gold line.
+function ROW.sub(kit, parent, item, w)
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetWidth(w)
+    local text = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    text:SetPoint("TOPLEFT", 0, -6)
+    text:SetText(item.name)
+    local line = row:CreateTexture(nil, "BORDER")
+    line:SetPoint("TOPLEFT", 0, -22)
+    line:SetPoint("TOPRIGHT", 0, -22)
+    line:SetHeight(1)
+    line:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.18)
+    function row.Paint() end
+    row:SetHeight(24)
     return row
 end
 
