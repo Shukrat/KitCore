@@ -300,7 +300,7 @@ C.BASE_CHAR = {
 --                 they go in the box's row with its pinned slots
 --   PlaceExtras(kit, angle)  place those frames off an edge: angle is nil
 --                 normally, or the fan's direction while shrunk on the dock
---   PinSettings(kit, S)  more "Always show" boxes in the Slots section
+--   PinSettings(kit, S)  more boxes in the Pinned buttons section
 --   menuOrder     { slotKey, ... } the order slots are listed in the settings
 --   minimapArt    full-size art for the minimap button (it has its own rim)
 --   glowColor     { r, g, b } the kit's glow colour
@@ -333,6 +333,8 @@ C.BASE_CHAR = {
 --   events        { EVENT = function(kit, ...) end }
 --   unitEvents    { EVENT = { units = { "player" }, fn = function(kit, ...) end } }
 --   Settings(kit, S)    the kit's own section of the settings panel
+--   GeneralSettings(kit, S), LookSettings(kit, S)
+--                       more settings at the end of the General and Look sections
 --   Menu(kit, root)     the kit's own lines in its right-click menu, between
 --                 "Pin in place" and "Settings" (root is the game's menu
 --                 description: root:CreateCheckbox, root:CreateButton, ...;
@@ -3399,6 +3401,14 @@ function Kit:SettingsList(S)
         function() self:ApplyMinimap() end)
     S.Checkbox(db, "chatNotices", "Chat messages",
         "Notices in chat when something changes (pinned in place, always shown, snoozed and the like). Slash commands still answer in chat.", true)
+    if not self.cfg.alwaysHideInCombat then
+        S.Checkbox(db, "hideInCombat", "Hide in combat", "Hide the kit while you're in combat.", false,
+            function() self:ApplyCombatHide() end)
+    end
+    S.Slider(db, "flyoutHide", "Drawer close delay in combat",
+        "In combat a drawer can't close when you click elsewhere, so it closes by itself this long after the mouse leaves it and its slot.",
+        0.5, 0.2, 2, 0.1, function(v) return ("%.1fs"):format(v) end)
+    if cfg.GeneralSettings then cfg.GeneralSettings(self, S) end
 
     S.Header("Look")
     S.Slider(db, "scale", "Size", "Scales the kit and its slots together.", 1, 0.6, 1.6, 0.05, pct,
@@ -3415,6 +3425,7 @@ function Kit:SettingsList(S)
         }, function() self:SetFacing(db.facing) end)
     S.Checkbox(db, "tooltipDefault", "Default tooltip position",
         "Show slot tooltips where the game normally shows tooltips, instead of beside the slot.", false)
+    if cfg.LookSettings then cfg.LookSettings(self, S) end
 
     S.Header("Fading")
     S.Checkbox(db, "fadeIdle", "Fade when idle",
@@ -3430,20 +3441,11 @@ function Kit:SettingsList(S)
         "How see-through the kit's slots get when it fades (when idle or left open): 0% is gone until you mouse over. The kit button fades half as much, so you can still find it.",
         0.4, 0, 0.9, 0.05, function(v) return ("%d%%"):format(math.floor(v * 100 + 0.5)) end, function() self:ApplyFade() end)
 
-    S.Header("In combat")
-    if not self.cfg.alwaysHideInCombat then
-        S.Checkbox(db, "hideInCombat", "Hide in combat", "Hide the kit while you're in combat.", false,
-            function() self:ApplyCombatHide() end)
-    end
-    S.Slider(db, "flyoutHide", "Drawer close delay in combat",
-        "In combat a drawer can't close when you click elsewhere, so it closes by itself this long after the mouse leaves it and its slot.",
-        0.5, 0.2, 2, 0.1, function(v) return ("%.1fs"):format(v) end)
-
     -- The kit's own settings, under its name unless it opens with a header.
     S.Header(self.name)
     if cfg.Settings then cfg.Settings(self, S) end
 
-    S.Header("Slots (this character)")
+    S.Header("Pinned buttons (this character)")
     local listed = cfg.slots
     if cfg.menuOrder then
         listed = {}
@@ -3451,8 +3453,8 @@ function Kit:SettingsList(S)
     end
     for _, slot in ipairs(listed) do
         if not slot.noPin then
-            S.Checkbox(cdb.pinned, slot.key, "Always show: " .. slot.label,
-                "Keep this slot out when the kit is closed. You can also shift-right-click the slot.",
+            S.Checkbox(cdb.pinned, slot.key, slot.label,
+                "Keep it out when the kit is closed. You can also shift-right-click the slot.",
                 false, refresh, "pin_" .. slot.key)
         end
     end
