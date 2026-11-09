@@ -36,7 +36,7 @@ local addonName, ns = ...
 -- kit if it's near one.
 ---------------------------------------------------------------------------
 
-local VERSION = 16
+local VERSION = 17
 local C = _G.KitCore
 if C and (C.version or 0) >= VERSION then
     ns.Core = C
@@ -87,8 +87,21 @@ function U.ItemIcon(id)
     return icon or 134400 -- question mark
 end
 
+-- Items a kit asked about before the client had them. Only these arriving
+-- (ITEM_DATA_LOAD_RESULT) refresh a kit: the client also loads item data for
+-- every tooltip, comparison and set piece you mouse over, and refreshing on
+-- all of those made kits re-lay themselves out over and over while you
+-- hovered gear (stutter, worst while moving).
+C.wantItems = C.wantItems or {}
+
+function U.WantItem(id)
+    if id then C.wantItems[id] = true end
+end
+
 function U.ItemName(id)
-    return id and C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(id) or nil
+    local name = id and C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(id) or nil
+    if id and not name then U.WantItem(id) end
+    return name
 end
 
 function U.SpellIcon(id)
@@ -2822,6 +2835,18 @@ function Kit:PushSnapshot()
     self:PushMoveInfo()
 end
 
+-- A refresh on the next frame, however many things ask for one before then.
+-- For events that come in bursts (auras, cooldowns): one layout, not one per event.
+function Kit:QueueRefresh()
+    if self.refreshNext then return end
+    if not C_Timer then return self:Refresh(false) end
+    self.refreshNext = true
+    C_Timer.After(0, function()
+        self.refreshNext = false
+        self:Refresh(false)
+    end)
+end
+
 function Kit:Refresh(animate)
     if not self.built or self.trial then return end
     self.snap = self.snap or {} -- (a kit made by an older copy's NewKit, before this one loaded)
@@ -4237,7 +4262,13 @@ function Kit:OnEvent(event, ...)
     elseif event == "UPDATE_BINDINGS" then
         self:UpdateHotkeys()
     elseif event == "ITEM_DATA_LOAD_RESULT" then
-        -- Item info arriving (often in bursts at login): one refresh shortly after.
+        -- Item info arriving (often in bursts at login): one refresh shortly
+        -- after. Only for items a kit was waiting on (see C.wantItems), or
+        -- in the first moments after login while everything is loading.
+        local id = ...
+        local early = self.builtAt and GetTime() - self.builtAt < 20
+        if not (early or (id and C.wantItems[id])) then return end
+        if id then C.wantItems[id] = nil end
         if self.refreshQueued or not C_Timer then return end
         self.refreshQueued = true
         C_Timer.After(0.5, function()
@@ -4346,6 +4377,8 @@ function Kit:Build()
     for e, u in pairs(cfg.unitEvents or {}) do
         pcall(self.events.RegisterUnitEvent, self.events, e, unpack(u.units))
     end
+
+    self.builtAt = GetTime()
 
     -- Twice a second: anything the kit watches that raises no event.
     if cfg.Tick then
