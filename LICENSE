@@ -1,27 +1,23 @@
-MIT License
+Copyright (c) 2026 Doug Mansell (Shuklock). All rights reserved.
 
-Copyright (c) 2026 Doug Mansell
+This software, including its code, artwork and other files, is the property
+of the author. No license is granted to copy, modify, merge, publish,
+distribute, sublicense or sell it, in whole or in part, without the author's
+prior written permission.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+You may download this addon from an official source (CurseForge or the
+author's GitHub releases) and use it, unmodified or modified for your own
+personal use, in World of Warcraft. Reading the source code is permitted.
+Redistributing it, or including any part of it in another addon or project,
+is not.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+To ask for permission, contact Shuklock on CurseForge or GitHub.
+
+Versions of this software released before this notice was added were
+licensed under the MIT License, and those versions remain under it.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
----
-
-The MIT license above covers the code. The artwork in the media/ folder
-(kit, tent and tackle box images, rings and glows) is (c) 2026 Doug Mansell,
-all rights reserved, and is not covered by it.
+AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM, OUT
+OF OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.
