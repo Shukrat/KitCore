@@ -39,4 +39,4 @@ Clone this repository next to the kits (e.g. `C:\Users\Doug\Claude\KitCore`) and
 
 ## License
 
-MIT, see `LICENSE`.
+All rights reserved, see `LICENSE`. Releases before this change were MIT and stay MIT.
