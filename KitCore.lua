@@ -39,9 +39,13 @@ local addonName, ns = ...
 -- Keybindings > Quick Keybind Mode, or /keybind): while it's up every kit
 -- opens fully, and hovering any slot, corner button or kit button and
 -- pressing a key binds it there, as on the action bars.
+--
+-- From v19 the minimap button goes through LibDataBroker and LibDBIcon, which
+-- ship in Libs/KitCore/Libs: a kit's .toc loads Libs\KitCore\Libs\Libs.xml
+-- first. Square minimaps and button-bag addons then handle it properly.
 ---------------------------------------------------------------------------
 
-local VERSION = 18
+local VERSION = 19
 local C = _G.KitCore
 if C and (C.version or 0) >= VERSION then
     ns.Core = C
@@ -256,7 +260,7 @@ C.BASE_DEFAULTS = {
     hideInCombat = false,
     chatNotices = true,    -- false: the kit's own notices stay out of chat (slash commands still answer)
     minimapButton = true,
-    minimapAngle = 200,
+    minimapAngle = 200,    -- (before v19; carried into minimapIcon.minimapPos once)
     facing = "up",         -- which way the layout points while the kit floats: up, down, left, right
     flyoutHide = 0.5,      -- seconds a drawer stays open in combat after the mouse leaves it
 }
@@ -3398,83 +3402,91 @@ end
 ---------------------------------------------------------------------------
 -- Minimap button: left-click settings, right-click open / close, drag to
 -- slide it round the minimap. Steps aside for Kit Dock's shared button.
+--
+-- From v19 it's a LibDataBroker launcher shown by LibDBIcon (both shipped in
+-- Libs/KitCore/Libs, loaded by the kit's .toc), named after the kit's prefix.
+-- So square minimaps, minimap reskins and button-bag addons (Leatrix Plus,
+-- MinimapButtonButton, ElvUI ...) place and collect it like any other
+-- addon's button. Its spot is kept in db.minimapIcon (LibDBIcon's minimapPos
+-- and hide); before v19 it was db.minimapAngle, which carries over once.
 ---------------------------------------------------------------------------
 
-function Kit:PlaceMinimap()
-    local b = self.minimap
+local function MinimapLibs()
+    if not LibStub then return end
+    return LibStub("LibDataBroker-1.1", true), LibStub("LibDBIcon-1.0", true)
+end
+
+-- Kit art has its own rim, so LibDBIcon's border and backing go and the art
+-- is drawn 27 across inside the 31 button, as before v19, with no zoom on
+-- press. A button-bag addon may restyle it again; that's its call.
+-- (Kit Dock's shared button does the same.)
+function U.StyleMinimapArt(name, art, glow)
+    local _, dbi = MinimapLibs()
+    local b = dbi and dbi:GetMinimapButton(name)
     if not b then return end
-    local angle = math.rad(self.db.minimapAngle or 200)
-    local r = (Minimap:GetWidth() / 2) + 6
-    b:ClearAllPoints()
-    b:SetPoint("CENTER", Minimap, "CENTER", math.cos(angle) * r, math.sin(angle) * r)
+    if dbi.RemoveButtonBorder then dbi:RemoveButtonBorder(name) elseif b.border then b.border:Hide() end
+    if dbi.RemoveButtonBackground then dbi:RemoveButtonBackground(name) elseif b.background then b.background:Hide() end
+    local icon = b.icon
+    icon:ClearAllPoints()
+    icon:SetPoint("TOPLEFT", 2, -2)
+    icon:SetPoint("BOTTOMRIGHT", -2, 2)
+    icon.UpdateCoord = function(t) t:SetTexCoord(0, 1, 0, 1) end
+    icon:UpdateCoord()
+    icon:SetTexture(art, nil, nil, "LINEAR")
+    if glow then
+        b:SetHighlightTexture(glow)
+        local hl = b:GetHighlightTexture()
+        if hl then
+            hl:SetBlendMode("ADD")
+            hl:SetAlpha(0.5)
+            hl:ClearAllPoints()
+            hl:SetPoint("TOPLEFT", 2, -2)
+            hl:SetPoint("BOTTOMRIGHT", -2, 2)
+        end
+    end
+end
+
+-- (Kept for kits that call it: LibDBIcon does the placing now.)
+function Kit:PlaceMinimap()
+    local _, dbi = MinimapLibs()
+    if dbi and self.minimap then dbi:Refresh(self.prefix) end
 end
 
 function Kit:ApplyMinimap()
-    local b = self.minimap
-    if not b then return end
+    local _, dbi = MinimapLibs()
+    if not (dbi and self.minimap) then return end
     local shared = self.Dock and self.Dock.SharedMinimap and self.Dock.SharedMinimap()
-    b:SetShown(self.db.minimapButton and not shared and true or false)
-    self:PlaceMinimap()
+    local show = self.db.minimapButton and not shared and true or false
+    self.db.minimapIcon.hide = not show -- (button bags read this too)
+    if show then dbi:Show(self.prefix) else dbi:Hide(self.prefix) end
 end
 
 function Kit:SetupMinimap()
     if self.minimap or not Minimap then return end
-    local b = CreateFrame("Button", self.prefix .. "MinimapButton", Minimap)
-    b:SetSize(31, 31)
-    b:SetFrameStrata("MEDIUM")
-    b:SetFrameLevel(Minimap:GetFrameLevel() + 8)
-    b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-    b:RegisterForDrag("LeftButton")
-    local icon = b:CreateTexture(nil, "ARTWORK")
-    if self.cfg.minimapArt then
-        -- The kit's own art, which has its own rim: 27 across inside the 31
-        -- button, the same size as other addons' minimap buttons.
-        icon:SetPoint("TOPLEFT", 2, -2)
-        icon:SetPoint("BOTTOMRIGHT", -2, 2)
-        icon:SetTexture(Val(self.cfg.minimapArt, self), nil, nil, "LINEAR")
-    else
-        icon:SetPoint("TOPLEFT", 7, -7)
-        icon:SetPoint("BOTTOMRIGHT", -7, 7)
-        icon:SetTexture(Val(self.cfg.minimapIcon, self) or 134400)
-        local mask = b:CreateMaskTexture()
-        mask:SetTexture(self.media .. "circle_mask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-        mask:SetAllPoints(icon)
-        icon:AddMaskTexture(mask)
-        local ring = b:CreateTexture(nil, "OVERLAY")
-        ring:SetPoint("TOPLEFT", 2, -2)
-        ring:SetPoint("BOTTOMRIGHT", -2, 2)
-        ring:SetTexture(self.media .. "ring_prof_64", nil, nil, "LINEAR")
+    local ldb, dbi = MinimapLibs()
+    if not (ldb and dbi) then return end -- libraries missing: no button; settings and slash still work
+    local db, name = self.db, self.prefix
+    if type(db.minimapIcon) ~= "table" then
+        db.minimapIcon = { minimapPos = (db.minimapAngle or 200) % 360 } -- the spot from before v19
     end
-    local hl = b:CreateTexture(nil, "HIGHLIGHT")
-    hl:SetTexture(self.media .. "glow_ring")
-    hl:SetBlendMode("ADD")
-    hl:SetPoint("TOPLEFT", 2, -2)
-    hl:SetPoint("BOTTOMRIGHT", -2, 2)
-    hl:SetAlpha(0.5)
-    b:SetScript("OnClick", function(_, mouse)
+    local art = self.cfg.minimapArt and Val(self.cfg.minimapArt, self)
+    local obj = ldb:GetDataObjectByName(name) or ldb:NewDataObject(name, {
+        type = "launcher",
+        label = self.name,
+        icon = art or Val(self.cfg.minimapIcon, self) or 134400,
+    })
+    obj.OnClick = function(_, mouse)
         if mouse == "RightButton" then self:Toggle() else self:OpenSettings() end
-    end)
-    b:SetScript("OnDragStart", function(btn)
-        btn:SetScript("OnUpdate", function()
-            local mx, my = Minimap:GetCenter()
-            local px, py = GetCursorPosition()
-            local sc = Minimap:GetEffectiveScale()
-            self.db.minimapAngle = math.deg(math.atan2(py / sc - my, px / sc - mx)) % 360
-            self:PlaceMinimap()
-        end)
-        GameTooltip:Hide()
-    end)
-    b:SetScript("OnDragStop", function(btn) btn:SetScript("OnUpdate", nil) end)
-    b:SetScript("OnEnter", function(btn)
-        GameTooltip:SetOwner(btn, "ANCHOR_LEFT")
-        GameTooltip:AddLine(self.name)
-        GameTooltip:AddLine("Left-click: settings", 1, 1, 1)
-        GameTooltip:AddLine("Right-click: open / close the kit", 1, 1, 1)
-        GameTooltip:AddLine("Drag: move around the minimap", 1, 1, 1)
-        GameTooltip:Show()
-    end)
-    b:SetScript("OnLeave", GameTooltip_Hide)
-    self.minimap = b
+    end
+    obj.OnTooltipShow = function(tt)
+        tt:AddLine(self.name)
+        tt:AddLine("Left-click: settings", 1, 1, 1)
+        tt:AddLine("Right-click: open / close the kit", 1, 1, 1)
+        tt:AddLine("Drag: move around the minimap", 1, 1, 1)
+    end
+    if not dbi:IsRegistered(name) then dbi:Register(name, obj, db.minimapIcon) end
+    self.minimap = dbi:GetMinimapButton(name)
+    if art then U.StyleMinimapArt(name, art, self.media .. "glow_ring") end
     self:ApplyMinimap()
 end
 

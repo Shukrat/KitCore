@@ -6,7 +6,9 @@ A kit hands Kit Core a description (its slots, what each one does, how it paints
 
 Every kit ships its own copy of `KitCore.lua`; the newest copy loaded runs for every kit (see `VERSION` at the top of the file).
 
-Used by: First Aid Kit, Camping Kit, Fishing Kit and Warlock Kit.
+Used by: First Aid Kit, Camping Kit, Fishing Kit, Warlock Kit and Shaman Kit.
+
+The minimap button is a LibDataBroker launcher shown by LibDBIcon (from v19), so square minimaps and minimap button-bag addons handle it like any other addon's button. The libraries are in `Libs/`, each under its own licence.
 
 ## How a kit uses it
 
@@ -19,7 +21,7 @@ externals:
     tag: v3
 ```
 
-The kit's `.toc` loads `Libs\KitDock\KitDock.lua` (if it uses the dock), then `Libs\KitCore\KitCore.lua`, then its own file, which calls `KitCore.NewKit({ ... })` when it loads. The comment block above `C.NewKit` in `KitCore.lua` lists everything a kit can describe.
+The kit's `.toc` loads `Libs\KitCore\Libs\Libs.xml` first (from v19: LibStub, CallbackHandler, LibDataBroker and LibDBIcon, for the minimap button), then `Libs\KitDock\KitDock.lua` (if it uses the dock), then `Libs\KitCore\KitCore.lua`, then its own file, which calls `KitCore.NewKit({ ... })` when it loads. The comment block above `C.NewKit` in `KitCore.lua` lists everything a kit can describe.
 
 The kit ships the art Kit Core uses in its own `media` folder: `circle_mask`, `glow_ring`, `pin_dot`, `slot_border`, `ring_slot_*` and `ring_prof_*`.
 
