@@ -45,8 +45,10 @@ local addonName, ns = ...
 -- first. Square minimaps and button-bag addons then handle it properly.
 --
 -- From v21 there's a reminder panel, one for every kit, that can be moved
--- anywhere. With it on, the reminders (and pinned buttons) you tick in each
--- kit's settings show there while the kit is closed, instead of beside it.
+-- anywhere. Each kit chooses whether it uses it; for a kit that does, the
+-- reminders you tick in its settings show there while the kit is closed,
+-- instead of beside it, at a full slot's size. A pinned slot stays by its
+-- kit, reminder or not: pinning means "keep it here".
 -- Opened, the kit has them back in their places, glowing as usual. It works
 -- with the kit opening and closing in combat too (see TOGGLE_BODY).
 ---------------------------------------------------------------------------
@@ -269,9 +271,10 @@ C.BASE_DEFAULTS = {
     minimapAngle = 200,    -- (before v19; carried into minimapIcon.minimapPos once)
     facing = "up",         -- which way the layout points while the kit floats: up, down, left, right
     flyoutHide = 0.5,      -- seconds a drawer stays open in combat after the mouse leaves it
-    -- The reminder panel (v21): shared by every kit, so each kit keeps a copy
-    -- and the one changed last wins (see C.SyncPanel). x, y: its starting
-    -- corner from the screen's centre, in UIParent units.
+    -- The reminder panel (v21): its look and spot are shared by every kit, so
+    -- each kit keeps a copy and the one changed last wins (see C.SyncPanel).
+    -- x, y: its starting corner from the screen's centre, in UIParent units.
+    -- on: this kit's own (whether its reminders go there), never shared.
     reminderPanel = {
         on = false,
         layout = "row",        -- "row": so many across, then a new row; "column": so many down
@@ -282,7 +285,7 @@ C.BASE_DEFAULTS = {
         grid = 16, snap = true, -- placing it (as SSBT's grid)
         stamp = 0,
     },
-    panelSlots = {},       -- [slotKey] = true: with the panel on, it shows there while the kit is closed
+    panelSlots = {},       -- [slotKey] = true: with this kit's panel on, it shows there while the kit is closed (unless pinned)
 }
 
 C.BASE_CHAR = {
@@ -2648,8 +2651,10 @@ end
 function Kit:SlotVisible(slot, btn)
     local pop = slot.Pop and not btn.hidden and slot.Pop(self, btn) or false
     local available = self.db.shown ~= false and not btn.hidden
-    local out = (self.cdb.pinned[slot.key] or pop) and true or false
-    local panel = available and out and not self.open and self:PanelAssigned(slot) or false
+    local pinned = self.cdb.pinned[slot.key] and true or false
+    local out = (pinned or pop) and true or false
+    -- (pinned: it stays by the kit, reminder or not)
+    local panel = available and pop and not pinned and not self.open and self:PanelAssigned(slot) or false
     local visible = available and (self.open or (out and ((not self.tucked and not self.quiet) or panel))) and true or false
     return visible, available, pop, panel and true or false
 end
@@ -2947,9 +2952,9 @@ end
 function Kit:PushSnapshot()
     local kit = self.kit
     local ready = self:CanSecureToggle() and self.snap[true] and self.snap[false] and true or false
-    local panelScale = C.panel and C.PanelScale(self)
     for _, slot in ipairs(self.cfg.slots) do
         local btn = self.slots[slot.key]
+        local panelScale = C.panel and C.PanelScale(self, btn)
         -- In the reminder panel in either layout: its size in each (the panel
         -- has its own button size). Otherwise none, so the switch leaves it.
         local inP = {}
@@ -3029,7 +3034,7 @@ function Kit:Refresh(animate)
             if x then panelFrom[btn] = { x, y, btn:GetEffectiveScale() } end
         end
         btn.toPanel = panel
-        btn.panelOut = available and (cdb.pinned[slot.key] or pop) and self:PanelAssigned(slot) or nil
+        btn.panelOut = available and pop and not cdb.pinned[slot.key] and self:PanelAssigned(slot) or nil
         if visible then
             CancelClose(self, btn)
             if not btn:IsShown() then
@@ -3701,13 +3706,14 @@ function Kit:SettingsList(S)
         self:Print("Slot choices reset.")
     end)
 
-    -- The reminder panel (v21): on/off, layout and moving it are shared by
-    -- every kit; what goes in it is this kit's own.
+    -- The reminder panel (v21): whether this kit uses it, and which of its
+    -- reminders go there, are this kit's own; the panel's layout and spot
+    -- are shared by every kit.
     S.Header("Reminder panel")
     local rp = db.reminderPanel
     local shared = function() C.SharePanel(rp) end
-    S.Checkbox(rp, "on", "Use the reminder panel",
-        "One panel for all your kits that you can put anywhere. With a kit closed, the reminders ticked below show there instead of beside the kit. Open the kit and they're back in their places, glowing as usual. Shared by every kit.",
+    S.Checkbox(rp, "on", "Put " .. self.name .. "'s reminders in the panel",
+        "One panel for all your kits that you can put anywhere. With this on and " .. self.name .. " closed, the reminders ticked below show there, full size, instead of beside the kit. Open the kit and they're back in their places, glowing as usual. Each kit has its own switch, so some kits' reminders can be in the panel and others by their kit. A pinned button always stays by its kit.",
         false, shared, "panelOn")
     local panelOn = function() return rp.on and true or false end
     S.Subheader("The panel (every kit)", panelOn)
@@ -3730,11 +3736,9 @@ function Kit:SettingsList(S)
     S.Checkbox(rp, "snap", "Snap when placing", "Line the panel up with the grid, the middle of the screen and your kit buttons as you drag it.", true, shared, "panelSnap")
     S.Slider(rp, "grid", "Grid size", "How far apart the grid's lines are while placing it.",
         16, 8, 32, 8, function(v) return tostring(v) end, shared)
-    local pops, pins = {}, {}
+    local pops = {}
     for _, slot in ipairs(listed) do
-        if not slot.noPanel then
-            if slot.Pop then pops[#pops + 1] = slot elseif not slot.noPin then pins[#pins + 1] = slot end
-        end
+        if not slot.noPanel and slot.Pop then pops[#pops + 1] = slot end
     end
     local function Ticks(group, tip)
         for _, slot in ipairs(group) do
@@ -3743,11 +3747,7 @@ function Kit:SettingsList(S)
     end
     if #pops > 0 then
         S.Subheader("Reminders in the panel", panelOn)
-        Ticks(pops, "When it pops out with the kit closed (missing, wanted or pinned), it shows in the panel.")
-    end
-    if #pins > 0 then
-        S.Subheader("Pinned buttons in the panel", panelOn)
-        Ticks(pins, "When it's pinned, it shows in the panel with the kit closed.")
+        Ticks(pops, "When it pops out with the kit closed (missing or wanted), it shows in the panel. Pinned, it stays by the kit.")
     end
 
     S.Header("Key bindings")
@@ -3905,12 +3905,15 @@ end
 ---------------------------------------------------------------------------
 -- The reminder panel (from v21)
 --
--- One panel for every kit, which you can put anywhere. With it on, each
--- slot ticked for it in a kit's settings (its reminders, and pinned buttons
--- if you like) shows in the panel while that kit is closed, instead of by
--- the kit. The slot itself moves there (anchored to the panel, at the
--- panel's button size), so it still glows, counts down and works on a click
--- or its key binding. Opened, the kit has it back in its place.
+-- One panel for every kit, which you can put anywhere. Each kit has its
+-- own switch for it, so some kits' reminders can be there and others by
+-- their kit. For a kit that uses it, each reminder ticked in its settings
+-- shows in the panel while that kit is closed, instead of by the kit. The
+-- slot itself moves there (anchored to the panel, scaled to fill a full
+-- cell, small reminder buttons included), so it still glows, counts down
+-- and works on a click or its key binding. Opened, the kit has it back in
+-- its place. A pinned slot never goes there: pinned means it stays by the
+-- kit, even when it's also a reminder.
 --
 -- The panel is a grid of cells, all one size (the panel's Button size plus
 -- Spacing), so everything in it lines up. Row layout: so many across
@@ -3936,7 +3939,7 @@ end
 -- (db.reminderPanel) and the one changed last (stamp) wins at login.
 ---------------------------------------------------------------------------
 
-local PANEL_FIELDS = { "on", "layout", "x", "y", "perRow", "perCol", "corner", "size", "gap", "grid", "snap" }
+local PANEL_FIELDS = { "layout", "x", "y", "perRow", "perCol", "corner", "size", "gap", "grid", "snap" }
 local PANEL_BASE = 37      -- a full slot at 100%; every cell is this times the panel's Button size
 local PANEL_PAD = 4        -- round the cells, inside the box
 local PANEL_ALIGN = 10     -- how close (UI units) counts as lined up with something
@@ -3955,8 +3958,16 @@ function C.PanelCfg()
     return best
 end
 
+-- Whether any kit uses the panel (each kit has its own switch, Kit:PanelOn).
 function C.PanelOn()
-    local p = C.PanelCfg()
+    for _, kit in ipairs(C.kits or {}) do
+        if kit:PanelOn() then return true end
+    end
+    return false
+end
+
+function Kit:PanelOn()
+    local p = self.db and self.db.reminderPanel
     return p and p.on and true or false
 end
 
@@ -4003,7 +4014,7 @@ function C.SharePanel(src)
         end
     end
     C.pcfg = src
-    if not src.on and C.panelUnlocked then C.SetPanelUnlocked(false) end
+    if not C.PanelOn() and C.panelUnlocked then C.SetPanelUnlocked(false) end
     C.PlacePanel()
     for _, kit in ipairs(C.kits or {}) do
         if kit.built then
@@ -4394,7 +4405,7 @@ function C.TogglePanelUnlocked(kit)
         return
     end
     if not C.PanelOn() then
-        kit:Print("Turn on the reminder panel first (Settings > Reminder panel).", true)
+        kit:Print("Turn on the reminder panel for a kit first (its Settings > Reminder panel).", true)
         return
     end
     C.SetPanelUnlocked(not C.panelUnlocked)
@@ -4407,7 +4418,7 @@ end
 
 -- Whether a slot goes in the panel with the kit closed (panel on, ticked).
 function Kit:PanelAssigned(slot)
-    if slot.noPanel or not C.PanelOn() then return false end
+    if slot.noPanel or not slot.Pop or not self:PanelOn() then return false end
     local t = self.db and self.db.panelSlots
     return t and t[slot.key] and true or false
 end
@@ -4417,10 +4428,14 @@ function Kit:PanelDefault(slot)
     return slot.Pop and true or false
 end
 
--- The panel's button scale: the same size on screen for every kit's slots.
-function C.PanelScale(kit)
+-- A slot's scale in the panel: every slot there, small reminder buttons
+-- included, fills a full cell (PANEL_BASE at the panel's Button size), the
+-- same size on screen for every kit.
+function C.PanelScale(kit, btn)
     local _, _, size = PanelValues()
-    return size * UIParent:GetEffectiveScale() / kit.holder:GetEffectiveScale()
+    local w = btn and btn:GetWidth() or 0
+    if w <= 0 then w = ((btn and btn.isSmall) and 22 or kit.BTN) * (kit.db.buttonSize or 1) end
+    return size * (PANEL_BASE / w) * UIParent:GetEffectiveScale() / kit.holder:GetEffectiveScale()
 end
 
 -- Lay the panel out: every kit's slots (kit.panelList, from its last
@@ -4464,7 +4479,7 @@ function C.PanelLayout(caller)
             if cy < 0 then row = rows - 1 - row end -- (from the bottom)
             local x = PANEL_PAD + col * step + cell / 2 - w / 2
             local y = h / 2 - (PANEL_PAD + row * step + cell / 2)
-            local be = it.kit.holder:GetEffectiveScale() * C.PanelScale(it.kit)
+            local be = it.kit.holder:GetEffectiveScale() * C.PanelScale(it.kit, it.btn)
             it.btn.panelX, it.btn.panelY = x * pe / be, y * pe / be
         end
         -- While placing it: the size, and faint cells to see the grid it fills.
@@ -4508,8 +4523,8 @@ end
 -- back (the layout has put them by the kit).
 function Kit:PlacePanelSlots()
     local panel = C.panel
-    local scale = C.PanelScale(self)
     for _, btn in pairs(self.slots) do
+        local scale = C.PanelScale(self, btn)
         if btn.toPanel and panel and btn.panelX then
             if sliding[btn] then
                 -- (was sliding in or out of the kit: done with that)
