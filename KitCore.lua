@@ -58,7 +58,7 @@ local VERSION = 21
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
 -- each change while VERSION stays put; back to 0 with a new VERSION.
-local BUILD = 2
+local BUILD = 3
 local C = _G.KitCore
 if C and ((C.version or 0) > VERSION or ((C.version or 0) == VERSION and (C.build or 0) >= BUILD)) then
     ns.Core = C
@@ -286,6 +286,7 @@ C.BASE_DEFAULTS = {
         layout = "row",        -- "row": so many across, then a new row; "column": so many down
         perRow = 8, perCol = 8,
         corner = "TOPLEFT",    -- where it starts filling, and the corner x, y are for
+        middle = true,         -- each row (column) grows out from the middle of the box
         size = 1,              -- its buttons (1: a full slot at 100%)
         gap = 4,               -- between its buttons
         grid = 16, snap = true, -- placing it (as SSBT's grid)
@@ -3733,7 +3734,10 @@ function Kit:SettingsList(S)
     if S.Only then S.Only(function() return rp.layout == "column" end) end
     S.Slider(rp, "perCol", "Buttons per column", "How many down before a new column starts.",
         8, 1, 20, 1, function(v) return tostring(v) end, shared)
-    S.Dropdown(rp, "corner", "Start from", "The corner the first button goes in. The panel grows away from it, and stays put there.",
+    S.Checkbox(rp, "middle", "Grow from the middle",
+        "The first button sits in the middle of the row (column), the next ones spread out evenly either side, and each new row (column) starts in the middle again. Off: they fill from the corner below.",
+        true, shared, "panelMiddle")
+    S.Dropdown(rp, "corner", "Start from", "The corner the first button goes in (growing from the middle: the side new rows or columns are added toward). The panel grows away from it, and stays put there.",
         "TOPLEFT", { { "TOPLEFT", "Top left" }, { "TOPRIGHT", "Top right" }, { "BOTTOMLEFT", "Bottom left" }, { "BOTTOMRIGHT", "Bottom right" } }, shared)
     S.Slider(rp, "size", "Button size", "The buttons in the panel, the same for every kit (100% is a full slot).",
         1, 0.5, 1.5, 0.05, pct, shared)
@@ -3945,7 +3949,7 @@ end
 -- (db.reminderPanel) and the one changed last (stamp) wins at login.
 ---------------------------------------------------------------------------
 
-local PANEL_FIELDS = { "layout", "x", "y", "perRow", "perCol", "corner", "size", "gap", "grid", "snap" }
+local PANEL_FIELDS = { "layout", "x", "y", "perRow", "perCol", "corner", "middle", "size", "gap", "grid", "snap" }
 local PANEL_BASE = 37      -- a full slot at 100%; every cell is this times the panel's Button size
 local PANEL_PAD = 4        -- round the cells, inside the box
 local PANEL_ALIGN = 10     -- how close (UI units) counts as lined up with something
@@ -3985,7 +3989,7 @@ local function PanelValues()
     local gap = math.min(16, math.max(0, tonumber(p.gap) or 4))
     local per = p.layout == "column" and p.perCol or p.perRow
     per = math.min(20, math.max(1, math.floor(tonumber(per) or 8)))
-    return p, corner, size, gap, per, p.layout == "column"
+    return p, corner, size, gap, per, p.layout == "column", p.middle ~= false
 end
 
 -- Every kit's copy made the same as the newest (at each kit's build).
@@ -4460,7 +4464,7 @@ function C.PanelLayout(caller)
     C.panelBusy = true
     local ok, err = pcall(function()
         local on = C.PanelOn()
-        local _, corner, size, gap, per, column = PanelValues()
+        local _, corner, size, gap, per, column, middle = PanelValues()
         local items = {}
         for _, kit in ipairs(C.kits or {}) do
             for _, btn in ipairs(on and kit.built and kit.panelList or {}) do
@@ -4481,6 +4485,12 @@ function C.PanelLayout(caller)
         local pe = f:GetEffectiveScale()
         for i, it in ipairs(items) do
             local along, across = (i - 1) % per, math.floor((i - 1) / per)
+            if middle then
+                -- Centred in its line: the line's buttons spread evenly
+                -- either side of the middle (half a cell over when even).
+                local inLine = math.min(per, #items - across * per)
+                along = along + (per - inLine) / 2
+            end
             local col, row = along, across
             if column then col, row = across, along end
             if cx > 0 then col = cols - 1 - col end -- (from the right)
