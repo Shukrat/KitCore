@@ -54,8 +54,13 @@ local addonName, ns = ...
 ---------------------------------------------------------------------------
 
 local VERSION = 21
+-- Builds of the same VERSION (test builds while a version is in a pull
+-- request): the higher one wins too, so two kits carrying different builds
+-- of one version don't leave the older running for every kit. Raise it with
+-- each change while VERSION stays put; back to 0 with a new VERSION.
+local BUILD = 2
 local C = _G.KitCore
-if C and (C.version or 0) >= VERSION then
+if C and ((C.version or 0) > VERSION or ((C.version or 0) == VERSION and (C.build or 0) >= BUILD)) then
     ns.Core = C
     return
 end
@@ -63,6 +68,7 @@ C = C or {}
 _G.KitCore = C
 ns.Core = C
 C.version = VERSION
+C.build = BUILD
 
 -- Kits are tables with this as their metatable. A newer copy loaded later
 -- replaces the methods in place, so kits made by an older copy pick them up.
