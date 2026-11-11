@@ -43,11 +43,23 @@ local addonName, ns = ...
 -- From v19 the minimap button goes through LibDataBroker and LibDBIcon, which
 -- ship in Libs/KitCore/Libs: a kit's .toc loads Libs\KitCore\Libs\Libs.xml
 -- first. Square minimaps and button-bag addons then handle it properly.
+--
+-- From v21 there's a reminder panel, one for every kit, that can be moved
+-- anywhere. Each kit chooses whether it uses it; for a kit that does, the
+-- reminders you tick in its settings show there (as full-size copies that
+-- glow, count down and cast like the slot) instead of beside the closed kit,
+-- and stay there while it's open. A pinned slot stays by its kit, reminder
+-- or not: pinning means "keep it here".
 ---------------------------------------------------------------------------
 
-local VERSION = 20
+local VERSION = 21
+-- Builds of the same VERSION (test builds while a version is in a pull
+-- request): the higher one wins too, so two kits carrying different builds
+-- of one version don't leave the older running for every kit. Raise it with
+-- each change while VERSION stays put; back to 0 with a new VERSION.
+local BUILD = 7
 local C = _G.KitCore
-if C and (C.version or 0) >= VERSION then
+if C and ((C.version or 0) > VERSION or ((C.version or 0) == VERSION and (C.build or 0) >= BUILD)) then
     ns.Core = C
     return
 end
@@ -55,6 +67,7 @@ C = C or {}
 _G.KitCore = C
 ns.Core = C
 C.version = VERSION
+C.build = BUILD
 
 -- Kits are tables with this as their metatable. A newer copy loaded later
 -- replaces the methods in place, so kits made by an older copy pick them up.
@@ -263,6 +276,22 @@ C.BASE_DEFAULTS = {
     minimapAngle = 200,    -- (before v19; carried into minimapIcon.minimapPos once)
     facing = "up",         -- which way the layout points while the kit floats: up, down, left, right
     flyoutHide = 0.5,      -- seconds a drawer stays open in combat after the mouse leaves it
+    -- The reminder panel (v21): its look and spot are shared by every kit, so
+    -- each kit keeps a copy and the one changed last wins (see C.SyncPanel).
+    -- x, y: its starting corner from the screen's centre, in UIParent units.
+    -- on: this kit's own (whether its reminders go there), never shared.
+    reminderPanel = {
+        on = false,
+        layout = "row",        -- "row": so many across, then a new row; "column": so many down
+        perRow = 8, perCol = 8,
+        corner = "TOPLEFT",    -- where it starts filling, and the corner x, y are for
+        middle = true,         -- each row (column) grows out from the middle of the box
+        size = 1,              -- its buttons (1: a full slot at 100%)
+        gap = 4,               -- between its buttons
+        grid = 16, snap = true, -- placing it (as SSBT's grid)
+        stamp = 0,
+    },
+    panelSlots = {},       -- [slotKey] = true: with this kit's panel on, it shows there while the kit is closed (unless pinned)
 }
 
 C.BASE_CHAR = {
@@ -385,6 +414,9 @@ C.BASE_CHAR = {
 --   Paint(kit, btn)    cosmetic, any time: icon, count, glow, cooldown
 --   Tooltip(kit, btn)  fill GameTooltip (already owned)
 --   Pop(kit, btn)      true to show it with the kit closed (like a pin)
+--   noPanel       never goes in the reminder panel (v21)
+--   panelDefault  in the reminder panel unless you untick it (default: true
+--                 for a slot with Pop, false for the rest)
 --   OnAttribute(kit, btn, name, value)  a flyout choice changed an attribute
 --   OnPick(kit, btn, value)             a flyout "pick" choice (out of combat)
 --   sub = { key, label, Update(kit, sb), Paint(kit, sb), Tooltip(kit, sb) }
@@ -915,6 +947,7 @@ function Kit:BuildKit()
     local header = CreateFrame("Frame", P .. "Secure", holder, "SecureHandlerBaseTemplate")
     header:Execute([[ FLYOUTS = newtable() FLYSLOTS = newtable() NFLY = 0 SLOTS = newtable() NSLOT = 0 ]])
     self.header = header
+    if C.Panel then C.Panel() end -- (the reminder panel, made once for every kit)
 
     -- The kit button is a secure button (with no action of its own) so its
     -- click can run a secure snippet that moves the slots (see KIT_PRE).
@@ -2015,6 +2048,7 @@ function Kit:PaintSlot(btn)
     if sb and sb:IsShown() and sb.def.Paint then sb.def.Paint(self, sb) end
     self:TintMana(btn)
     if sb and sb:IsShown() then self:TintMana(sb) end
+    if btn.twin then self:MirrorTwin(btn) end -- (its copy in the reminder panel)
 end
 
 -- A slot (or flyout choice) whose spell you can't afford turns red. Greyed
@@ -2137,7 +2171,9 @@ end
 function Kit:PaintAll()
     if not self.built then return end
     for _, btn in pairs(self.slots) do
-        if btn:IsShown() then self:PaintSlot(btn) end
+        -- (hidden with the kit closed but its copy in the reminder panel
+        -- showing: painted too, for the copy to follow)
+        if btn:IsShown() or (btn.twin and btn.twin:IsShown()) then self:PaintSlot(btn) end
     end
     for _, fly in pairs(self.flyouts) do
         if fly:IsShown() then self:PaintFlyout(fly) end
@@ -2592,12 +2628,19 @@ function Kit:RunUpdates()
 end
 
 -- Whether a slot shows, with the kit open or closed as self.open says.
--- Also whether it's there at all, and whether something pops it out.
+-- Also whether it's there at all, whether something pops it out, and
+-- whether its reminder shows in the reminder panel (popped, not pinned,
+-- ticked for the panel): then the slot itself only shows with the kit open,
+-- and a copy of it in the panel stands in for it, open or closed.
 function Kit:SlotVisible(slot, btn)
     local pop = slot.Pop and not btn.hidden and slot.Pop(self, btn) or false
     local available = self.db.shown ~= false and not btn.hidden
-    local visible = available and (self.open or ((self.cdb.pinned[slot.key] or pop) and not self.tucked and not self.quiet)) and true or false
-    return visible, available, pop
+    local pinned = self.cdb.pinned[slot.key] and true or false
+    local out = (pinned or pop) and true or false
+    -- (pinned: it stays by the kit, reminder or not)
+    local panel = available and pop and not pinned and self:PanelAssigned(slot) or false
+    local visible = available and (self.open or (out and not panel and not self.tucked and not self.quiet)) and true or false
+    return visible, available, pop, panel and true or false
 end
 
 -- Can the kit button open and close this kit in combat? Shrunk on the pin
@@ -2940,11 +2983,14 @@ function Kit:Refresh(animate)
     end
 
     local slides, total = {}, #cfg.slots
-    local vis = {}
+    local vis, inPanel = {}, {}
     for i, slot in ipairs(cfg.slots) do
         local btn = self.slots[slot.key]
-        local visible, available, pop = self:SlotVisible(slot, btn)
+        local visible, available, pop, panel = self:SlotVisible(slot, btn)
         vis[btn] = visible
+        -- (its reminder in the panel: a copy there, see PlacePanelSlots)
+        btn.inPanel = panel or nil
+        if panel then inPanel[#inPanel + 1] = btn end
         if visible then
             CancelClose(self, btn)
             if not btn:IsShown() then
@@ -2959,7 +3005,7 @@ function Kit:Refresh(animate)
             if btn.fly and btn.fly:IsShown() then btn.fly:Hide() end
             if btn.hidden or Fighting() then btn:Hide() else PlayClose(self, btn, i, total) end -- (see Fighting)
         end
-        btn.wouldShow = available and (cdb.pinned[slot.key] or pop) and true or false
+        btn.wouldShow = available and (cdb.pinned[slot.key] or (pop and not panel)) and true or false
     end
 
     -- The divider shows while the kit is open and its row below is out.
@@ -2981,6 +3027,10 @@ function Kit:Refresh(animate)
     end
 
     self:PlaceSlots()
+    -- This kit's reminders in the panel (open or closed), in its own order.
+    table.sort(inPanel, function(a, b) return (a.order or 0) < (b.order or 0) end)
+    self.panelList = inPanel
+    C.PanelLayout(self)
     self:LayoutFlyouts()
     for _, sl in ipairs(slides) do self:PlaySlide(sl[1], sl[2]) end
     if from and self.Dock and self.Dock.Glide then
@@ -3270,6 +3320,7 @@ function Kit:ApplyPosition()
     self:SetKitArt()
     self:ApplyShapes()
     self:EndMove()
+    if C.PanelLayout then C.PanelLayout() end -- (the slots' size in the reminder panel)
 end
 
 function Kit:SettingsChanged()
@@ -3297,7 +3348,7 @@ function Kit:UpdateArea()
     local W, H = holder:GetWidth(), holder:GetHeight()
     local l, b, r, t
     for _, f in ipairs({ holder:GetChildren() }) do
-        if f ~= area and f:IsVisible() then
+        if f ~= area and f:IsVisible() and not f.atPanel then -- (the reminder panel is elsewhere)
             local fl, fb, fw, fh = f:GetRect()
             if fl and fw and fw > 0 and fh > 0 then
                 local sc = f:GetEffectiveScale() / hs
@@ -3593,6 +3644,63 @@ function Kit:SettingsList(S)
         self:Print("Slot choices reset.")
     end)
 
+    -- The reminder panel (v21), as a section of its own in the kit's group,
+    -- right after the kit's "Reminders" (or at the end of the kit's own
+    -- settings if it has none): whether this kit uses it, and which of its
+    -- reminders go there, are this kit's own; the panel's layout and spot are
+    -- shared by every kit.
+    local panelDone = false
+    local function PanelSection()
+        if panelDone then return end
+        panelDone = true
+        -- The reminder panel (v21): whether this kit uses it, and which of its
+        -- reminders go there, are this kit's own; the panel's layout and spot
+        -- are shared by every kit.
+        S.Header("Reminder panel")
+        local rp = db.reminderPanel
+        local shared = function() C.SharePanel(rp) end
+        S.Checkbox(rp, "on", "Put " .. self.name .. "'s reminders in the panel",
+            "One panel for all your kits that you can put anywhere. With this on and " .. self.name .. " closed, the reminders ticked below show there, full size, instead of beside the kit. They stay in the panel while the kit is open too (and in their places in the kit). Each kit has its own switch, so some kits' reminders can be in the panel and others by their kit. A pinned button always stays by its kit.",
+            false, shared, "panelOn")
+        local panelOn = function() return rp.on and true or false end
+        S.Subheader("The panel (every kit)", panelOn)
+        S.Button("Place the panel", "Move", "Shows a grid and the panel's box of buttons: drag it where you want it. It snaps to the grid, the middle of the screen and your kit buttons; hold Shift to place it freely.",
+            function() C.TogglePanelUnlocked(self) end)
+        S.Dropdown(rp, "layout", "Layout", "Rows: buttons side by side, then a new row. Columns: one under another, then a new column.",
+            "row", { { "row", "Rows" }, { "column", "Columns" } }, shared)
+        if S.Only then S.Only(function() return rp.layout ~= "column" end) end
+        S.Slider(rp, "perRow", "Buttons per row", "How many across before a new row starts.",
+            8, 1, 20, 1, function(v) return tostring(v) end, shared)
+        if S.Only then S.Only(function() return rp.layout == "column" end) end
+        S.Slider(rp, "perCol", "Buttons per column", "How many down before a new column starts.",
+            8, 1, 20, 1, function(v) return tostring(v) end, shared)
+        S.Checkbox(rp, "middle", "Grow from the middle",
+            "The first button sits in the middle of the row (column), the next ones spread out evenly either side, and each new row (column) starts in the middle again. Off: they fill from the corner below.",
+            true, shared, "panelMiddle")
+        S.Dropdown(rp, "corner", "Start from", "The corner the first button goes in (growing from the middle: the side new rows or columns are added toward). The panel grows away from it, and stays put there.",
+            "TOPLEFT", { { "TOPLEFT", "Top left" }, { "TOPRIGHT", "Top right" }, { "BOTTOMLEFT", "Bottom left" }, { "BOTTOMRIGHT", "Bottom right" } }, shared)
+        S.Slider(rp, "size", "Button size", "The buttons in the panel, the same for every kit (100% is a full slot).",
+            1, 0.5, 1.5, 0.05, pct, shared)
+        S.Slider(rp, "gap", "Spacing", "Room between the buttons.",
+            4, 0, 16, 1, function(v) return tostring(v) end, shared)
+        S.Checkbox(rp, "snap", "Snap when placing", "Line the panel up with the grid, the middle of the screen and your kit buttons as you drag it.", true, shared, "panelSnap")
+        S.Slider(rp, "grid", "Grid size", "How far apart the grid's lines are while placing it.",
+            16, 8, 32, 8, function(v) return tostring(v) end, shared)
+        local pops = {}
+        for _, slot in ipairs(listed) do
+            if not slot.noPanel and slot.Pop then pops[#pops + 1] = slot end
+        end
+        local function Ticks(group, tip)
+            for _, slot in ipairs(group) do
+                S.Checkbox(db.panelSlots, slot.key, slot.label, tip, self:PanelDefault(slot), refresh, "panel_" .. slot.key)
+            end
+        end
+        if #pops > 0 then
+            S.Subheader("Reminders in the panel", panelOn)
+            Ticks(pops, "When it pops out with the kit closed (missing or wanted), it shows in the panel. Pinned, it stays by the kit.")
+        end
+    end
+
     S.Header("Key bindings")
     S.Button("Key bindings", "Open", "Bind each slot, and opening the kit.", function()
         if Settings.KEYBINDINGS_CATEGORY_ID then
@@ -3606,7 +3714,21 @@ function Kit:SettingsList(S)
     -- (and its own group in the window's list unless it names one).
     S.Group(self.name)
     S.Header(self.name)
-    if cfg.Settings then cfg.Settings(self, S) end
+    -- (the panel's section goes in when the section after "Reminders" starts)
+    local afterReminders = false
+    local KS = setmetatable({}, { __index = S })
+    function KS.Header(text)
+        if afterReminders then afterReminders = false PanelSection() end
+        S.Header(text)
+        if text == "Reminders" then afterReminders = true end
+    end
+    function KS.Group(text)
+        if afterReminders then afterReminders = false PanelSection() end
+        S.Group(text)
+    end
+    if cfg.Settings then cfg.Settings(self, KS) end
+    S.Group(self.name) -- (a kit with no "Reminders": at the end of its own group)
+    PanelSection()
 end
 
 function Kit:BuildSettings()
@@ -3634,6 +3756,7 @@ function Kit:BuildSettings()
     function S.Header(text) pending, pendingSub = text, nil end
     function S.Subheader(text) pendingSub = text end -- (its "when" is the window's only)
     function S.Group() end -- (the window's nav only)
+    function S.Only() end -- (the window's only)
     local function Flush()
         if CreateSettingsListSectionHeaderInitializer then
             if pending then layout:AddInitializer(CreateSettingsListSectionHeaderInitializer(pending)) end
@@ -3705,7 +3828,7 @@ end
 -- that opens it (v17).
 ---------------------------------------------------------------------------
 
-local OPT = { w = 680, h = 520, nav = 172, head = 40, pad = 14, gap = 14 }
+local OPT = { w = 680, h = 620, nav = 172, head = 40, pad = 14, gap = 14 }
 local GOLD = { 0.78, 0.64, 0.3 }
 local WHITE8 = "Interface\\Buttons\\WHITE8X8"
 
@@ -3744,9 +3867,727 @@ local function Well(f, a)
     GoldEdge(f, 0.55)
 end
 
+---------------------------------------------------------------------------
+-- The reminder panel (from v21)
+--
+-- One panel for every kit, which you can put anywhere. Each kit has its
+-- own switch for it, so some kits' reminders can be there and others by
+-- their kit. For a kit that uses it, each reminder ticked in its settings
+-- shows in the panel instead of by the closed kit, as a full-size copy of
+-- the slot (PanelTwin): it looks like the slot, glows and counts down with
+-- it, and casts or uses what the slot does. The copy stays in the panel
+-- while the kit is open too (the slot is in its place in the kit as well),
+-- so the panel doesn't change as kits open and close, in combat or out.
+-- A pinned slot never goes there: pinned means it stays by the kit, even
+-- when it's also a reminder.
+--
+-- The panel is a grid of cells, all one size (the panel's Button size plus
+-- Spacing), so everything in it lines up. Row layout: so many across
+-- (Buttons per row), then a new row; Column layout: so many down, then a
+-- new column. It fills from the corner you choose (Start from), and that
+-- corner is where it's kept, so it grows away from it. Kits' slots follow
+-- each other in the order the kits loaded, each kit's in its own order.
+--
+-- Moving it works like placing Shuklock's Scrolling Battle Text's scroll
+-- areas: a grid over the screen (gold lines every grid step out from the
+-- middle, the centre lines brighter), the panel shown as its full box of
+-- cells, and a bar at the top with the grid size, Snap and Done. The box
+-- snaps to the screen's centre lines and to the kit buttons' edges and
+-- centres (a bright guide line shows what it lined up with), otherwise its
+-- starting corner to the grid. Hold Shift to place it freely.
+--
+-- The panel is a secure frame (the copies, which are secure, hang from it),
+-- so it's only moved and resized out of combat; the copies only come and go
+-- out of combat too, like the kits' own reminders. Its settings are shared: Kit
+-- Core has no saved variables of its own, so every kit keeps a copy
+-- (db.reminderPanel) and the one changed last (stamp) wins at login.
+---------------------------------------------------------------------------
+
+local PANEL_FIELDS = { "layout", "x", "y", "perRow", "perCol", "corner", "middle", "size", "gap", "grid", "snap" }
+local PANEL_BASE = 37      -- a full slot at 100%; every cell is this times the panel's Button size
+local PANEL_PAD = 4        -- round the cells, inside the box
+local PANEL_ALIGN = 10     -- how close (UI units) counts as lined up with something
+local CORNERS = {
+    TOPLEFT = { -1, 1 }, TOPRIGHT = { 1, 1 }, BOTTOMLEFT = { -1, -1 }, BOTTOMRIGHT = { 1, -1 },
+}
+
+-- The shared settings (the newest copy).
+function C.PanelCfg()
+    if C.pcfg then return C.pcfg end
+    local best
+    for _, kit in ipairs(C.kits or {}) do
+        local p = kit.db and kit.db.reminderPanel
+        if p and (not best or (p.stamp or 0) > (best.stamp or 0)) then best = p end
+    end
+    return best
+end
+
+-- Whether any kit uses the panel (each kit has its own switch, Kit:PanelOn).
+function C.PanelOn()
+    for _, kit in ipairs(C.kits or {}) do
+        if kit:PanelOn() then return true end
+    end
+    return false
+end
+
+function Kit:PanelOn()
+    local p = self.db and self.db.reminderPanel
+    return p and p.on and true or false
+end
+
+-- The settings with anything missing or out of range made sensible.
+local function PanelValues()
+    local p = C.PanelCfg() or {}
+    local corner = CORNERS[p.corner] and p.corner or "TOPLEFT"
+    local size = math.min(1.5, math.max(0.5, tonumber(p.size) or 1))
+    local gap = math.min(16, math.max(0, tonumber(p.gap) or 4))
+    local per = p.layout == "column" and p.perCol or p.perRow
+    per = math.min(20, math.max(1, math.floor(tonumber(per) or 8)))
+    return p, corner, size, gap, per, p.layout == "column", p.middle ~= false
+end
+
+-- Every kit's copy made the same as the newest (at each kit's build).
+function C.SyncPanel()
+    C.pcfg = nil
+    local best = C.PanelCfg()
+    if not best then return end
+    for _, kit in ipairs(C.kits or {}) do
+        local p = kit.db and kit.db.reminderPanel
+        if p and p ~= best then
+            for _, f in ipairs(PANEL_FIELDS) do p[f] = best[f] end
+            p.stamp = best.stamp
+        end
+    end
+    C.pcfg = best
+end
+
+-- A kit's copy was just changed (src): it becomes the newest, every other
+-- kit's copy follows it, and every kit lays itself out again.
+function C.SharePanel(src)
+    local top = 0
+    for _, kit in ipairs(C.kits or {}) do
+        local p = kit.db and kit.db.reminderPanel
+        if p then top = math.max(top, p.stamp or 0) end
+    end
+    src.stamp = top + 1
+    for _, kit in ipairs(C.kits or {}) do
+        local p = kit.db and kit.db.reminderPanel
+        if p and p ~= src then
+            for _, f in ipairs(PANEL_FIELDS) do p[f] = src[f] end
+            p.stamp = src.stamp
+        end
+    end
+    C.pcfg = src
+    if not C.PanelOn() and C.panelUnlocked then C.SetPanelUnlocked(false) end
+    C.PlacePanel()
+    for _, kit in ipairs(C.kits or {}) do
+        if kit.built then
+            kit:Refresh(false) -- (in combat: when it ends)
+            kit:SettingsChanged()
+            if kit.optionsUI and kit.optionsUI.frame:IsShown() then kit:PaintOptions() end
+        end
+    end
+    if C.panelUnlocked then C.PaintMoveBar() end
+end
+
+local function Cursor()
+    local x, y = GetCursorPosition()
+    local s = UIParent:GetEffectiveScale()
+    return x / s - UIParent:GetWidth() / 2, y / s - UIParent:GetHeight() / 2
+end
+
+local function Round(v, step) return math.floor(v / step + 0.5) * step end
+
+---------------------------------------------------------------------------
+-- The panel frame
+---------------------------------------------------------------------------
+
+-- Made the first time a kit asks (BuildKit).
+function C.Panel()
+    if C.panel then return C.panel end
+    local ok, f = pcall(CreateFrame, "Frame", "KitCoreReminderPanel", UIParent, "SecureHandlerBaseTemplate")
+    if not ok or not f then f = CreateFrame("Frame", "KitCoreReminderPanel", UIParent) end
+    f:SetSize(40, 40)
+    f:SetFrameStrata("MEDIUM")
+    f:SetFrameLevel(5) -- (under the slots it holds)
+    f:SetClampedToScreen(true)
+    f:EnableMouse(false)
+    f:SetPoint("TOPLEFT", UIParent, "CENTER", -100, -180)
+
+    -- Only seen while it's being placed: a gold box (the cells it can fill)
+    -- with its name over it.
+    local edit = OptPanel("Frame", nil, f)
+    edit:SetAllPoints()
+    if edit.SetBackdropColor then edit:SetBackdropColor(0.78, 0.64, 0.3, 0.12) end
+    edit.title = edit:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    edit.title:SetPoint("BOTTOM", edit, "TOP", 0, 3)
+    edit.title:SetText("Kit reminders")
+    edit.size = edit:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    edit.size:SetPoint("TOP", edit, "BOTTOM", 0, -3)
+    edit.cells = {}
+    edit:Hide()
+    f.edit = edit
+
+    -- Dragged by hand (not StartMoving), so it can snap as it goes.
+    f:SetScript("OnMouseDown", function(p, mouse)
+        if mouse ~= "LeftButton" or InCombatLockdown() or not C.panelUnlocked then return end
+        local mx, my = Cursor()
+        local cx, cy = C.PanelCentre()
+        p.offX, p.offY = cx - mx, cy - my
+        p.downAt = { mx, my }
+        p.moved = false
+        p:SetScript("OnUpdate", function(pp)
+            local x, y = Cursor()
+            if not pp.moved and math.abs(x - pp.downAt[1]) + math.abs(y - pp.downAt[2]) < 3 then return end
+            pp.moved = true
+            C.DragPanel(x + pp.offX, y + pp.offY)
+        end)
+    end)
+    f:SetScript("OnMouseUp", function(p, mouse)
+        p:SetScript("OnUpdate", nil)
+        C.Guide(nil, nil)
+        if p.moved then
+            p.moved = false
+            C.SharePanel(C.PanelCfg())
+        elseif mouse == "RightButton" then
+            C.SetPanelUnlocked(false)
+        end
+    end)
+    f:SetScript("OnEnter", function(p)
+        if not C.panelUnlocked then return end
+        GameTooltip:SetOwner(p, "ANCHOR_TOP")
+        GameTooltip:AddLine("Kit reminders")
+        GameTooltip:AddLine("Drag to move. Hold Shift to place it freely.", 1, 1, 1)
+        GameTooltip:AddLine("Right-click when you're done.", 1, 1, 1)
+        GameTooltip:Show()
+    end)
+    f:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+    -- Combat starting while it's being placed: done placing (still allowed now).
+    local ev = CreateFrame("Frame")
+    ev:RegisterEvent("PLAYER_REGEN_DISABLED")
+    ev:RegisterEvent("PLAYER_REGEN_ENABLED")
+    ev:SetScript("OnEvent", function(_, event)
+        if event == "PLAYER_REGEN_DISABLED" then
+            if C.panelUnlocked and not InCombatLockdown() then C.SetPanelUnlocked(false) end
+        elseif C.panelPending then
+            C.panelPending = nil
+            C.PlacePanel()
+            C.PanelLayout()
+        end
+    end)
+    C.panel = f
+    return f
+end
+
+-- Its saved spot: the starting corner, from the screen's centre.
+function C.PlacePanel()
+    local f = C.panel
+    if not f then return end
+    if InCombatLockdown() then C.panelPending = true return end
+    local p, corner = PanelValues()
+    local x, y = tonumber(p.x) or -100, tonumber(p.y) or -180
+    local k = f:GetEffectiveScale() / UIParent:GetEffectiveScale()
+    f:ClearAllPoints()
+    f:SetPoint(corner, UIParent, "CENTER", x / k, y / k)
+end
+
+-- The box's centre from the screen's centre, from its corner and size.
+function C.PanelCentre()
+    local f = C.panel
+    local p, corner = PanelValues()
+    local c = CORNERS[corner]
+    local x, y = tonumber(p.x) or -100, tonumber(p.y) or -180
+    return x - c[1] * f:GetWidth() / 2, y - c[2] * f:GetHeight() / 2
+end
+
+---------------------------------------------------------------------------
+-- Placing it: the grid, guides and snapping (as SSBT's Move.lua)
+---------------------------------------------------------------------------
+
+local function BuildGrid()
+    local g = CreateFrame("Frame", "KitCoreGrid", UIParent)
+    g:SetAllPoints()
+    g:SetFrameStrata("BACKGROUND")
+    g:SetFrameLevel(1)
+    g:EnableMouse(false)
+    local shade = g:CreateTexture(nil, "BACKGROUND")
+    shade:SetAllPoints()
+    shade:SetColorTexture(0, 0, 0, 0.25)
+    g.lines = {}
+    g.guideV = g:CreateTexture(nil, "OVERLAY")
+    g.guideV:SetWidth(2)
+    g.guideV:SetColorTexture(1, 0.85, 0.45, 0.9)
+    g.guideH = g:CreateTexture(nil, "OVERLAY")
+    g.guideH:SetHeight(2)
+    g.guideH:SetColorTexture(1, 0.85, 0.45, 0.9)
+    g:SetScript("OnSizeChanged", function() C.DrawGrid() end)
+    g:Hide()
+    return g
+end
+
+function C.DrawGrid()
+    local g = C.grid
+    if not g then return end
+    local p = C.PanelCfg() or {}
+    local step = tonumber(p.grid) or 16
+    local w, h = UIParent:GetWidth(), UIParent:GetHeight()
+    local n = 0
+    local function Add(vertical, at)
+        n = n + 1
+        local t = g.lines[n]
+        if not t then
+            t = g:CreateTexture(nil, "ARTWORK")
+            g.lines[n] = t
+        end
+        t:ClearAllPoints()
+        t:Show()
+        local centre = math.abs(at) < 0.5
+        t:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], centre and 0.45 or 0.1)
+        if vertical then
+            t:SetWidth(centre and 2 or 1)
+            t:SetPoint("TOP", UIParent, "TOP", at, 0)
+            t:SetPoint("BOTTOM", UIParent, "BOTTOM", at, 0)
+        else
+            t:SetHeight(centre and 2 or 1)
+            t:SetPoint("LEFT", UIParent, "LEFT", 0, at)
+            t:SetPoint("RIGHT", UIParent, "RIGHT", 0, at)
+        end
+    end
+    for x = 0, w / 2, step do
+        Add(true, x)
+        if x > 0 then Add(true, -x) end
+    end
+    for y = 0, h / 2, step do
+        Add(false, y)
+        if y > 0 then Add(false, -y) end
+    end
+    for i = n + 1, #g.lines do g.lines[i]:Hide() end
+end
+
+function C.Guide(vx, hy)
+    local g = C.grid
+    if not g then return end
+    g.guideV:ClearAllPoints()
+    g.guideH:ClearAllPoints()
+    if vx then
+        g.guideV:SetPoint("TOP", UIParent, "TOP", vx, 0)
+        g.guideV:SetPoint("BOTTOM", UIParent, "BOTTOM", vx, 0)
+        g.guideV:Show()
+    else
+        g.guideV:Hide()
+    end
+    if hy then
+        g.guideH:SetPoint("LEFT", UIParent, "LEFT", 0, hy)
+        g.guideH:SetPoint("RIGHT", UIParent, "RIGHT", 0, hy)
+        g.guideH:Show()
+    else
+        g.guideH:Hide()
+    end
+end
+
+-- Lines a value up with the nearest of a set of targets, if one is close.
+local function Nearest(values, targets)
+    local best, bestD, bestAt
+    for _, v in ipairs(values) do
+        for _, t in ipairs(targets) do
+            local d = math.abs(v - t)
+            if d <= PANEL_ALIGN and (not bestD or d < bestD) then
+                best, bestD, bestAt = t - v, d, t
+            end
+        end
+    end
+    return best, bestAt
+end
+
+-- Where the kit buttons' edges and centres are, along one axis (and the
+-- screen's centre line), from the screen's centre.
+local function Targets(vertical)
+    local list = { 0 }
+    local us = UIParent:GetEffectiveScale()
+    local ux, uy = UIParent:GetWidth() / 2, UIParent:GetHeight() / 2
+    for _, kit in ipairs(C.kits or {}) do
+        local b = kit.built and kit.kit
+        if b and b:IsVisible() then
+            local x, y = b:GetCenter()
+            if x then
+                local k = b:GetEffectiveScale() / us
+                local half = b:GetWidth() * k / 2
+                local c = vertical and (x * k - ux) or (y * k - uy)
+                list[#list + 1] = c - half
+                list[#list + 1] = c
+                list[#list + 1] = c + half
+            end
+        end
+    end
+    return list
+end
+
+-- The box dragged so its centre is at (x, y): snapped, saved as its
+-- starting corner, and moved there.
+function C.DragPanel(x, y)
+    local f = C.panel
+    local p, corner = PanelValues()
+    local c = CORNERS[corner]
+    local hw, hh = f:GetWidth() / 2, f:GetHeight() / 2
+    local gx, gy
+    if p.snap ~= false and not IsShiftKeyDown() then
+        local step = tonumber(p.grid) or 16
+        local dx, dy
+        dx, gx = Nearest({ x - hw, x, x + hw }, Targets(true))
+        dy, gy = Nearest({ y - hh, y, y + hh }, Targets(false))
+        -- (otherwise its starting corner on the grid)
+        if dx then x = x + dx else x = Round(x + c[1] * hw, step) - c[1] * hw end
+        if dy then y = y + dy else y = Round(y + c[2] * hh, step) - c[2] * hh end
+    end
+    -- Kept on screen.
+    local W, H = UIParent:GetWidth() / 2, UIParent:GetHeight() / 2
+    x = math.max(-W + hw, math.min(W - hw, x))
+    y = math.max(-H + hh, math.min(H - hh, y))
+    p.x, p.y = math.floor(x + c[1] * hw + 0.5), math.floor(y + c[2] * hh + 0.5)
+    C.PlacePanel()
+    C.Guide(gx, gy)
+end
+
+-- The bar at the top while placing it.
+local GRID_SIZES = { 8, 16, 24, 32 }
+
+local function SmallButton(parent, text, w, fn)
+    local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    b:SetSize(w, 22)
+    b:SetText(text)
+    b:SetScript("OnClick", fn)
+    return b
+end
+
+local function BuildMoveBar()
+    local bar = OptPanel("Frame", "KitCoreMoveBar", UIParent)
+    bar:SetSize(420, 64)
+    bar:SetPoint("TOP", 0, -20)
+    bar:SetFrameStrata("FULLSCREEN_DIALOG")
+    bar:EnableMouse(true)
+    bar:SetMovable(true)
+    bar:SetClampedToScreen(true)
+    bar:RegisterForDrag("LeftButton")
+    bar:SetScript("OnDragStart", bar.StartMoving)
+    bar:SetScript("OnDragStop", bar.StopMovingOrSizing)
+    if UISpecialFrames then table.insert(UISpecialFrames, "KitCoreMoveBar") end -- Esc closes it
+
+    local title = bar:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    title:SetPoint("TOPLEFT", 12, -9)
+    title:SetText("Placing the reminder panel")
+    local hint = bar:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    hint:SetPoint("LEFT", title, "RIGHT", 10, 0)
+    hint:SetText("Drag to move, Shift for free")
+
+    local x = 12
+    local function Place(f, w)
+        f:SetPoint("BOTTOMLEFT", x, 10)
+        x = x + w + 8
+    end
+
+    -- Grid size: steps through the sizes.
+    local grid = SmallButton(bar, "", 80, nil)
+    grid:SetScript("OnClick", function()
+        local p = C.PanelCfg()
+        local i = 1
+        for n, g in ipairs(GRID_SIZES) do if g == tonumber(p.grid) then i = n end end
+        p.grid = GRID_SIZES[i % #GRID_SIZES + 1]
+        C.SharePanel(p)
+        C.DrawGrid()
+    end)
+    Place(grid, 80)
+    bar.grid = grid
+
+    local snap = CreateFrame("Button", nil, bar)
+    snap:SetSize(84, 22)
+    local box = CreateFrame("Frame", nil, snap)
+    box:SetSize(16, 16)
+    box:SetPoint("LEFT", 2, 0)
+    Well(box, 0.7)
+    local tick = box:CreateTexture(nil, "OVERLAY")
+    tick:SetPoint("CENTER", 1, 0)
+    tick:SetSize(22, 22)
+    tick:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
+    tick:SetVertexColor(1, 0.85, 0.4)
+    local label = snap:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    label:SetPoint("LEFT", box, "RIGHT", 6, 0)
+    label:SetText("Snap")
+    snap:SetScript("OnClick", function()
+        local p = C.PanelCfg()
+        p.snap = p.snap == false
+        C.SharePanel(p)
+    end)
+    Place(snap, 60)
+    bar.tick = tick
+
+    Place(SmallButton(bar, "Settings", 80, function()
+        local kit = C.kits and C.kits[1]
+        if kit then kit:OpenOptions("Reminder panel") end
+    end), 80)
+    local done = SmallButton(bar, "Done", 70, function() bar:Hide() end)
+    done:SetPoint("BOTTOMRIGHT", -12, 10)
+    bar:Hide()
+    -- (Esc or Done: finished placing. Set only now: a new frame starts shown,
+    -- so the Hide above would otherwise end the placing it was built for.)
+    bar:SetScript("OnHide", function() if C.panelUnlocked then C.SetPanelUnlocked(false) end end)
+    return bar
+end
+
+function C.PaintMoveBar()
+    local bar, p = C.moveBar, C.PanelCfg()
+    if not (bar and p) then return end
+    bar.grid:SetText("Grid " .. (tonumber(p.grid) or 16))
+    bar.tick:SetShown(p.snap ~= false)
+end
+
+-- Placing it: the grid, the bar, its box; it takes the mouse until done.
+function C.SetPanelUnlocked(on)
+    local f = C.panel
+    if not f or InCombatLockdown() then return end
+    on = on and true or false
+    C.panelUnlocked = on
+    f:EnableMouse(on)
+    f.edit:SetShown(on)
+    if on then
+        C.grid = C.grid or BuildGrid()
+        C.moveBar = C.moveBar or BuildMoveBar()
+        C.DrawGrid()
+        C.Guide(nil, nil)
+        C.grid:Show()
+        C.PaintMoveBar()
+        C.moveBar:Show()
+    else
+        f:SetScript("OnUpdate", nil)
+        if C.grid then C.grid:Hide() end
+        if C.moveBar and C.moveBar:IsShown() then C.moveBar:Hide() end
+    end
+    C.PanelLayout()
+end
+
+function C.TogglePanelUnlocked(kit)
+    if InCombatLockdown() then
+        kit:Print("The reminder panel can only move out of combat.", true)
+        return
+    end
+    if not C.PanelOn() then
+        kit:Print("Turn on the reminder panel for a kit first (its Settings > Reminder panel).", true)
+        return
+    end
+    C.SetPanelUnlocked(not C.panelUnlocked)
+    if kit.optionsUI then kit:PaintOptions() end
+end
+
+---------------------------------------------------------------------------
+-- What goes in it, and where
+---------------------------------------------------------------------------
+
+-- Whether a slot goes in the panel with the kit closed (panel on, ticked).
+function Kit:PanelAssigned(slot)
+    if slot.noPanel or not slot.Pop or not self:PanelOn() then return false end
+    local t = self.db and self.db.panelSlots
+    return t and t[slot.key] and true or false
+end
+
+function Kit:PanelDefault(slot)
+    if slot.panelDefault ~= nil then return slot.panelDefault and true or false end
+    return slot.Pop and true or false
+end
+
+-- A slot's scale in the panel: every slot there, small reminder buttons
+-- included, fills a full cell (PANEL_BASE at the panel's Button size), the
+-- same size on screen for every kit.
+function C.PanelScale(kit, btn)
+    local _, _, size = PanelValues()
+    local w = btn and btn:GetWidth() or 0
+    if w <= 0 then w = ((btn and btn.isSmall) and 22 or kit.BTN) * (kit.db.buttonSize or 1) end
+    return size * (PANEL_BASE / w) * UIParent:GetEffectiveScale() / kit.holder:GetEffectiveScale()
+end
+
+-- Lay the panel out: every kit's reminders in it (kit.panelList, from its
+-- last refresh) in cells, each copy's spot from the panel's centre
+-- (panelX/Y, in the copy's own units at the panel's size), the panel sized
+-- to its cells; then each kit puts its copies there. Out of combat only.
+function C.PanelLayout()
+    local f = C.panel
+    if not f or C.panelBusy then return end
+    if InCombatLockdown() then C.panelPending = true return end
+    C.panelBusy = true
+    local ok, err = pcall(function()
+        local on = C.PanelOn()
+        local _, corner, size, gap, per, column, middle = PanelValues()
+        local items = {}
+        for _, kit in ipairs(C.kits or {}) do
+            for _, btn in ipairs(on and kit.built and kit.panelList or {}) do
+                local twin = kit:PanelTwin(btn)
+                if twin then items[#items + 1] = { btn = twin, kit = kit } end
+            end
+        end
+        -- The box: "per" cells along, as many lines as it takes (at least one).
+        local lines = math.max(1, math.ceil(#items / per))
+        local cols, rows = per, lines
+        if column then cols, rows = lines, per end
+        local cell = PANEL_BASE * size
+        local step = cell + gap
+        local w = cols * step - gap + PANEL_PAD * 2
+        local h = rows * step - gap + PANEL_PAD * 2
+        f:SetSize(w, h)
+        C.PlacePanel() -- (the corner stays put; it grows away from it)
+        local cx, cy = CORNERS[corner][1], CORNERS[corner][2]
+        local pe = f:GetEffectiveScale()
+        for i, it in ipairs(items) do
+            local along, across = (i - 1) % per, math.floor((i - 1) / per)
+            if middle then
+                -- Centred in its line: the line's buttons spread evenly
+                -- either side of the middle (half a cell over when even).
+                local inLine = math.min(per, #items - across * per)
+                along = along + (per - inLine) / 2
+            end
+            local col, row = along, across
+            if column then col, row = across, along end
+            if cx > 0 then col = cols - 1 - col end -- (from the right)
+            if cy < 0 then row = rows - 1 - row end -- (from the bottom)
+            local x = PANEL_PAD + col * step + cell / 2 - w / 2
+            local y = h / 2 - (PANEL_PAD + row * step + cell / 2)
+            local be = it.kit.holder:GetEffectiveScale() * C.PanelScale(it.kit, it.btn)
+            it.btn.panelX, it.btn.panelY = x * pe / be, y * pe / be
+        end
+        -- While placing it: the size, and faint cells to see the grid it fills.
+        local edit = f.edit
+        edit.size:SetText(("%d x %d"):format(cols, rows))
+        local n = 0
+        if C.panelUnlocked then
+            for row = 0, rows - 1 do
+                for col = 0, cols - 1 do
+                    n = n + 1
+                    local t = edit.cells[n]
+                    if not t then
+                        t = edit:CreateTexture(nil, "ARTWORK")
+                        t:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.1)
+                        edit.cells[n] = t
+                    end
+                    t:ClearAllPoints()
+                    t:SetSize(cell, cell)
+                    t:SetPoint("TOPLEFT", edit, "TOPLEFT", PANEL_PAD + col * step, -(PANEL_PAD + row * step))
+                    t:Show()
+                end
+            end
+        end
+        for i = n + 1, #edit.cells do edit.cells[i]:Hide() end
+        for _, kit in ipairs(C.kits or {}) do
+            if kit.built then kit:PlacePanelSlots() end
+        end
+    end)
+    C.panelBusy = nil
+    if not ok then
+        local h = geterrorhandler and geterrorhandler()
+        if h then h(err) end
+    end
+end
+
+-- A slot's copy in the panel (made the first time, out of combat): a
+-- full-size secure button that does what the slot does (its click
+-- attributes are copied over whenever they change out of combat) and looks
+-- as it does (MirrorTwin, on every paint), but never moves with the kit.
+-- So the panel stays as it is while the kit opens and closes, in combat
+-- too; the slot itself only shows with the kit open.
+local TWIN_KEYS = { "type", "spell", "item", "macro", "macrotext", "unit", "action",
+    "shift-type1", "shift-spell1", "shift-item1", "shift-macrotext1" }
+
+function Kit:CopyTwinAttributes(btn)
+    local t = btn.twin
+    if not t or InCombatLockdown() then return end
+    for _, k in ipairs(TWIN_KEYS) do t:SetAttribute(k, btn:GetAttribute(k)) end
+end
+
+function Kit:PanelTwin(btn)
+    if btn.twin then return btn.twin end
+    if InCombatLockdown() then return nil end
+    local t = self:MakeItemButton(self.prefix .. "Panel_" .. btn.slot.key, self.holder, true)
+    t:SetFrameStrata("MEDIUM")
+    t:SetFrameLevel(12)
+    t.src, t.isTwin, t.atPanel = btn, true, true -- (atPanel: not part of the kit's own area)
+    t.cooldown = CreateFrame("Cooldown", nil, t, "CooldownFrameTemplate")
+    t.cooldown:SetAllPoints()
+    Try(t.cooldown.SetDrawEdge, t.cooldown, false)
+    t.note = t:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
+    t.note:SetPoint("TOP", t, "BOTTOM", 0, -1)
+    self:AddGlow(t, "glow_ring", 1.6)
+    self:ApplyShape(t)
+    self:HoverTip(t, function(b)
+        local slot = btn.slot
+        self:TipOwner(b)
+        if slot.Tooltip then slot.Tooltip(self, btn) else GameTooltip:AddLine(slot.label) end
+        GameTooltip:Show()
+    end)
+    t:Hide()
+    btn.twin = t
+    btn:HookScript("OnAttributeChanged", function(b, name)
+        for _, k in ipairs(TWIN_KEYS) do
+            if k == name then self:CopyTwinAttributes(b) break end
+        end
+    end)
+    self:CopyTwinAttributes(btn)
+    return t
+end
+
+-- The copy looks as the slot does: icon, greyed or tinted, count, note,
+-- glow and cooldown.
+function Kit:MirrorTwin(btn)
+    local t = btn.twin
+    if not (t and t:IsShown()) then return end
+    local si, ti = btn.icon, t.icon
+    if si and ti then
+        ti:SetTexture(si:GetTexture())
+        Try(ti.SetDesaturated, ti, si.IsDesaturated and si:IsDesaturated() or false)
+        ti:SetVertexColor(si:GetVertexColor())
+        ti:SetAlpha(si:GetAlpha())
+    end
+    if t.count then t.count:SetText(btn.count and btn.count:GetText() or "") end
+    t.note:SetText(btn.note and btn.note:GetText() or "")
+    if btn.glow and btn.glow:IsShown() then
+        local r, g, b = btn.glow:GetVertexColor()
+        self:SetGlow(t, true, { r, g, b })
+    else
+        self:SetGlow(t, false)
+    end
+    local ok, start, dur = pcall(btn.cooldown.GetCooldownTimes, btn.cooldown)
+    if ok and start and dur and dur > 0 then
+        t.cooldown:SetCooldown(start / 1000, dur / 1000)
+    else
+        t.cooldown:Clear()
+    end
+end
+
+-- Put this kit's copies in their cells (at the panel's size) and show them;
+-- hide the ones whose reminder isn't in the panel any more.
+function Kit:PlacePanelSlots()
+    local panel = C.panel
+    for _, btn in pairs(self.slots) do
+        local t = btn.twin
+        if t then
+            if btn.inPanel and panel and t.panelX and C.PanelOn() then
+                local scale = C.PanelScale(self, t)
+                if math.abs(t:GetScale() - scale) > 0.001 then t:SetScale(scale) end
+                if t.panelAtX ~= t.panelX or t.panelAtY ~= t.panelY then
+                    t:ClearAllPoints()
+                    t:SetPoint("CENTER", panel, "CENTER", t.panelX, t.panelY)
+                    t.panelAtX, t.panelAtY = t.panelX, t.panelY
+                end
+                self:CopyTwinAttributes(btn)
+                t:Show()
+                self:PaintSlot(btn)
+            elseif t:IsShown() then
+                t:Hide()
+            end
+        end
+    end
+end
+
 -- The list, gathered into sections: { title, items = { item, ... } }.
 function Kit:CollectOptions()
     local sections, cur, pending, pendingSub, when, group = {}, nil, nil, nil, nil, nil
+    local itemWhen
     local function Add(item)
         if pending or not cur then
             cur = { title = pending or self.name, items = {}, group = group }
@@ -3757,10 +4598,19 @@ function Kit:CollectOptions()
             cur.items[#cur.items + 1] = { kind = "sub", name = pendingSub, when = when }
             pendingSub = nil
         end
-        item.when = when
+        -- (S.Only: this item alone, inside its group's own "when")
+        local only, grp = itemWhen, when
+        itemWhen = nil
+        if only and grp then
+            item.when = function() return grp() and only() end
+        else
+            item.when = only or grp
+        end
         cur.items[#cur.items + 1] = item
     end
     local S = {}
+    -- The next setting only shows while fn says true (the window only).
+    function S.Only(fn) itemWhen = fn end
     function S.Header(text) pending, pendingSub, when = text, nil, nil end
     -- A group inside a section. when (optional): a function; the window shows
     -- the group only while it says true (settings for one style, say).
@@ -4339,6 +5189,7 @@ function Kit:RunSlash(msg)
         self:Print(slash .. " - settings   " .. slash .. " lock | unlock | show | hide | reset")
         self:Print(slash .. " minimap - show or hide the minimap button")
         self:Print(slash .. " face up | down | left | right - which way the layout points")
+        self:Print(slash .. " panel - move the reminder panel (shared by every kit)")
         if self.Dock and not cfg.edgesOnly then self:Print(slash .. " dock - dock every kit on the pin   " .. slash .. " flip") end
         for _, line in ipairs(cfg.helpLines or {}) do self:Print(line) end
     elseif InCombatLockdown() then
@@ -4363,6 +5214,8 @@ function Kit:RunSlash(msg)
         else
             self:Print(slash .. " face up | down | left | right   (now " .. (self.db.facing or "up") .. ")")
         end
+    elseif cmd == "panel" then
+        C.TogglePanelUnlocked(self)
     elseif cmd == "flip" and self.Dock and not cfg.edgesOnly then
         self.Dock.Flip()
     elseif cmd == "reset" then
@@ -4759,7 +5612,15 @@ function Kit:Build()
     for _, slot in ipairs(cfg.slots) do self:CreateSlot(slot) end
     self.built = true
     C.kits = C.kits or {}
-    C.kits[#C.kits + 1] = self -- (for Quick Keybind Mode)
+    C.kits[#C.kits + 1] = self -- (for Quick Keybind Mode, and the reminder panel)
+    -- The reminder panel: which slots go there (reminders unless you untick
+    -- them), and its shared settings brought in line with the other kits'.
+    self.db.panelSlots = self.db.panelSlots or {}
+    for _, slot in ipairs(cfg.slots) do
+        if self.db.panelSlots[slot.key] == nil then self.db.panelSlots[slot.key] = self:PanelDefault(slot) end
+    end
+    C.SyncPanel()
+    C.PlacePanel()
     self:UpdateHotkeys()
     self:ApplyPosition()
     self:RegisterDock()
