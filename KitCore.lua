@@ -57,7 +57,7 @@ local VERSION = 21
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
 -- each change while VERSION stays put; back to 0 with a new VERSION.
-local BUILD = 5
+local BUILD = 6
 local C = _G.KitCore
 if C and ((C.version or 0) > VERSION or ((C.version or 0) == VERSION and (C.build or 0) >= BUILD)) then
     ns.Core = C
@@ -3644,51 +3644,61 @@ function Kit:SettingsList(S)
         self:Print("Slot choices reset.")
     end)
 
-    -- The reminder panel (v21): whether this kit uses it, and which of its
-    -- reminders go there, are this kit's own; the panel's layout and spot
-    -- are shared by every kit.
-    S.Header("Reminder panel")
-    local rp = db.reminderPanel
-    local shared = function() C.SharePanel(rp) end
-    S.Checkbox(rp, "on", "Put " .. self.name .. "'s reminders in the panel",
-        "One panel for all your kits that you can put anywhere. With this on and " .. self.name .. " closed, the reminders ticked below show there, full size, instead of beside the kit. They stay in the panel while the kit is open too (and in their places in the kit). Each kit has its own switch, so some kits' reminders can be in the panel and others by their kit. A pinned button always stays by its kit.",
-        false, shared, "panelOn")
-    local panelOn = function() return rp.on and true or false end
-    S.Subheader("The panel (every kit)", panelOn)
-    S.Button("Place the panel", "Move", "Shows a grid and the panel's box of buttons: drag it where you want it. It snaps to the grid, the middle of the screen and your kit buttons; hold Shift to place it freely.",
-        function() C.TogglePanelUnlocked(self) end)
-    S.Dropdown(rp, "layout", "Layout", "Rows: buttons side by side, then a new row. Columns: one under another, then a new column.",
-        "row", { { "row", "Rows" }, { "column", "Columns" } }, shared)
-    if S.Only then S.Only(function() return rp.layout ~= "column" end) end
-    S.Slider(rp, "perRow", "Buttons per row", "How many across before a new row starts.",
-        8, 1, 20, 1, function(v) return tostring(v) end, shared)
-    if S.Only then S.Only(function() return rp.layout == "column" end) end
-    S.Slider(rp, "perCol", "Buttons per column", "How many down before a new column starts.",
-        8, 1, 20, 1, function(v) return tostring(v) end, shared)
-    S.Checkbox(rp, "middle", "Grow from the middle",
-        "The first button sits in the middle of the row (column), the next ones spread out evenly either side, and each new row (column) starts in the middle again. Off: they fill from the corner below.",
-        true, shared, "panelMiddle")
-    S.Dropdown(rp, "corner", "Start from", "The corner the first button goes in (growing from the middle: the side new rows or columns are added toward). The panel grows away from it, and stays put there.",
-        "TOPLEFT", { { "TOPLEFT", "Top left" }, { "TOPRIGHT", "Top right" }, { "BOTTOMLEFT", "Bottom left" }, { "BOTTOMRIGHT", "Bottom right" } }, shared)
-    S.Slider(rp, "size", "Button size", "The buttons in the panel, the same for every kit (100% is a full slot).",
-        1, 0.5, 1.5, 0.05, pct, shared)
-    S.Slider(rp, "gap", "Spacing", "Room between the buttons.",
-        4, 0, 16, 1, function(v) return tostring(v) end, shared)
-    S.Checkbox(rp, "snap", "Snap when placing", "Line the panel up with the grid, the middle of the screen and your kit buttons as you drag it.", true, shared, "panelSnap")
-    S.Slider(rp, "grid", "Grid size", "How far apart the grid's lines are while placing it.",
-        16, 8, 32, 8, function(v) return tostring(v) end, shared)
-    local pops = {}
-    for _, slot in ipairs(listed) do
-        if not slot.noPanel and slot.Pop then pops[#pops + 1] = slot end
-    end
-    local function Ticks(group, tip)
-        for _, slot in ipairs(group) do
-            S.Checkbox(db.panelSlots, slot.key, slot.label, tip, self:PanelDefault(slot), refresh, "panel_" .. slot.key)
+    -- The reminder panel (v21), as a section of its own in the kit's group,
+    -- right after the kit's "Reminders" (or at the end of the kit's own
+    -- settings if it has none): whether this kit uses it, and which of its
+    -- reminders go there, are this kit's own; the panel's layout and spot are
+    -- shared by every kit.
+    local panelDone = false
+    local function PanelSection()
+        if panelDone then return end
+        panelDone = true
+        -- The reminder panel (v21): whether this kit uses it, and which of its
+        -- reminders go there, are this kit's own; the panel's layout and spot
+        -- are shared by every kit.
+        S.Header("Reminder panel")
+        local rp = db.reminderPanel
+        local shared = function() C.SharePanel(rp) end
+        S.Checkbox(rp, "on", "Put " .. self.name .. "'s reminders in the panel",
+            "One panel for all your kits that you can put anywhere. With this on and " .. self.name .. " closed, the reminders ticked below show there, full size, instead of beside the kit. They stay in the panel while the kit is open too (and in their places in the kit). Each kit has its own switch, so some kits' reminders can be in the panel and others by their kit. A pinned button always stays by its kit.",
+            false, shared, "panelOn")
+        local panelOn = function() return rp.on and true or false end
+        S.Subheader("The panel (every kit)", panelOn)
+        S.Button("Place the panel", "Move", "Shows a grid and the panel's box of buttons: drag it where you want it. It snaps to the grid, the middle of the screen and your kit buttons; hold Shift to place it freely.",
+            function() C.TogglePanelUnlocked(self) end)
+        S.Dropdown(rp, "layout", "Layout", "Rows: buttons side by side, then a new row. Columns: one under another, then a new column.",
+            "row", { { "row", "Rows" }, { "column", "Columns" } }, shared)
+        if S.Only then S.Only(function() return rp.layout ~= "column" end) end
+        S.Slider(rp, "perRow", "Buttons per row", "How many across before a new row starts.",
+            8, 1, 20, 1, function(v) return tostring(v) end, shared)
+        if S.Only then S.Only(function() return rp.layout == "column" end) end
+        S.Slider(rp, "perCol", "Buttons per column", "How many down before a new column starts.",
+            8, 1, 20, 1, function(v) return tostring(v) end, shared)
+        S.Checkbox(rp, "middle", "Grow from the middle",
+            "The first button sits in the middle of the row (column), the next ones spread out evenly either side, and each new row (column) starts in the middle again. Off: they fill from the corner below.",
+            true, shared, "panelMiddle")
+        S.Dropdown(rp, "corner", "Start from", "The corner the first button goes in (growing from the middle: the side new rows or columns are added toward). The panel grows away from it, and stays put there.",
+            "TOPLEFT", { { "TOPLEFT", "Top left" }, { "TOPRIGHT", "Top right" }, { "BOTTOMLEFT", "Bottom left" }, { "BOTTOMRIGHT", "Bottom right" } }, shared)
+        S.Slider(rp, "size", "Button size", "The buttons in the panel, the same for every kit (100% is a full slot).",
+            1, 0.5, 1.5, 0.05, pct, shared)
+        S.Slider(rp, "gap", "Spacing", "Room between the buttons.",
+            4, 0, 16, 1, function(v) return tostring(v) end, shared)
+        S.Checkbox(rp, "snap", "Snap when placing", "Line the panel up with the grid, the middle of the screen and your kit buttons as you drag it.", true, shared, "panelSnap")
+        S.Slider(rp, "grid", "Grid size", "How far apart the grid's lines are while placing it.",
+            16, 8, 32, 8, function(v) return tostring(v) end, shared)
+        local pops = {}
+        for _, slot in ipairs(listed) do
+            if not slot.noPanel and slot.Pop then pops[#pops + 1] = slot end
         end
-    end
-    if #pops > 0 then
-        S.Subheader("Reminders in the panel", panelOn)
-        Ticks(pops, "When it pops out with the kit closed (missing or wanted), it shows in the panel. Pinned, it stays by the kit.")
+        local function Ticks(group, tip)
+            for _, slot in ipairs(group) do
+                S.Checkbox(db.panelSlots, slot.key, slot.label, tip, self:PanelDefault(slot), refresh, "panel_" .. slot.key)
+            end
+        end
+        if #pops > 0 then
+            S.Subheader("Reminders in the panel", panelOn)
+            Ticks(pops, "When it pops out with the kit closed (missing or wanted), it shows in the panel. Pinned, it stays by the kit.")
+        end
     end
 
     S.Header("Key bindings")
@@ -3704,7 +3714,21 @@ function Kit:SettingsList(S)
     -- (and its own group in the window's list unless it names one).
     S.Group(self.name)
     S.Header(self.name)
-    if cfg.Settings then cfg.Settings(self, S) end
+    -- (the panel's section goes in when the section after "Reminders" starts)
+    local afterReminders = false
+    local KS = setmetatable({}, { __index = S })
+    function KS.Header(text)
+        if afterReminders then afterReminders = false PanelSection() end
+        S.Header(text)
+        if text == "Reminders" then afterReminders = true end
+    end
+    function KS.Group(text)
+        if afterReminders then afterReminders = false PanelSection() end
+        S.Group(text)
+    end
+    if cfg.Settings then cfg.Settings(self, KS) end
+    S.Group(self.name) -- (a kit with no "Reminders": at the end of its own group)
+    PanelSection()
 end
 
 function Kit:BuildSettings()
@@ -3804,7 +3828,7 @@ end
 -- that opens it (v17).
 ---------------------------------------------------------------------------
 
-local OPT = { w = 680, h = 520, nav = 172, head = 40, pad = 14, gap = 14 }
+local OPT = { w = 680, h = 620, nav = 172, head = 40, pad = 14, gap = 14 }
 local GOLD = { 0.78, 0.64, 0.3 }
 local WHITE8 = "Interface\\Buttons\\WHITE8X8"
 
