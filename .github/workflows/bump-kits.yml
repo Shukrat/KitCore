@@ -1,0 +1,91 @@
+# When a Kit Core version tag (v23, v24, ...) is pushed, opens a pull request
+# in each kit that moves its .pkgmeta to the new tag (branch kit-core-<tag>).
+# The PRs are left open so each kit can be tested before merging.
+#
+# Needs a KITS_TOKEN secret on this repository: a fine-grained personal access
+# token with access to the kit repositories below, with "Contents" and
+# "Pull requests" set to Read and write. (The built-in GITHUB_TOKEN can't
+# push to other repositories.)
+#
+# To add a kit, add it to the matrix. Run it by hand from the Actions tab
+# (Run workflow) to redo a tag, e.g. after a kit was added.
+name: Bump kits
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Kit Core tag to move the kits to (e.g. v22)"
+        required: true
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        kit:
+          - WarlockKit
+          - FishingKit
+          - FirstAidKit
+          - CampingKit
+          - ConsumablesManager
+    env:
+      GH_TOKEN: ${{ secrets.KITS_TOKEN }}
+      TAG: ${{ inputs.tag || github.ref_name }}
+      REPO: Shukrat/${{ matrix.kit }}
+    steps:
+      - name: Open the pull request
+        run: |
+          set -euo pipefail
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::The KITS_TOKEN secret isn't set on KitCore."
+            exit 1
+          fi
+          if ! [[ "$TAG" =~ ^v[0-9]+$ ]]; then
+            echo "Tag $TAG isn't a Kit Core version tag (vN); nothing to do."
+            exit 0
+          fi
+          BRANCH="kit-core-$TAG"
+
+          gh auth setup-git
+          gh repo clone "$REPO" kit -- --depth 1
+          cd kit
+
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null; then
+            echo "$REPO already has a $BRANCH branch; leaving it alone."
+            exit 0
+          fi
+
+          # Change only the tag: line inside the Libs/KitCore: block.
+          awk -v tag="$TAG" '
+            /^[^ \t#]/            { blk = 0 }
+            /^  [^ \t#]/          { blk = ($1 == "Libs/KitCore:") }
+            blk && /^    tag:/    { sub(/tag:[^\r]*/, "tag: " tag); found = 1 }
+                                  { print }
+            END                   { exit !found }
+          ' .pkgmeta > .pkgmeta.new || {
+            echo "::error::$REPO's .pkgmeta has no Libs/KitCore tag line."
+            exit 1
+          }
+          mv .pkgmeta.new .pkgmeta
+
+          if git diff --quiet; then
+            echo "$REPO is already on Kit Core $TAG."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git commit -am "Kit Core $TAG"
+          git push -u origin "$BRANCH"
+
+          gh pr create --repo "$REPO" --head "$BRANCH" \
+            --title "Kit Core $TAG" \
+            --body "Moves \`.pkgmeta\` to Kit Core [$TAG](https://github.com/Shukrat/KitCore/releases/tag/$TAG) ([changes](https://github.com/Shukrat/KitCore/commits/$TAG)).
+
+          Opened by KitCore's Bump kits workflow. Test the kit with this version, then merge."

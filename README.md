@@ -35,7 +35,7 @@ Each kit adds itself to the shared `ForeverUI.elements` list, so ForeverImmersio
 
 1. Raise `VERSION` in `KitCore.lua`.
 2. Tag the commit `v<VERSION>` (e.g. `v3`) and push the tag.
-3. In each kit, bump the `tag:` in `.pkgmeta` once you've tested it.
+3. The Bump kits workflow (`.github/workflows/bump-kits.yml`) opens a pull request in each kit moving its `.pkgmeta` to the new tag. Test each kit, then merge its PR. It needs a `KITS_TOKEN` secret (see the top of the workflow); a new kit goes in its list.
 
 ## Local development (Windows)
 
