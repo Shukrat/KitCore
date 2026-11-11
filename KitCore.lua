@@ -58,7 +58,7 @@ local VERSION = 21
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
 -- each change while VERSION stays put; back to 0 with a new VERSION.
-local BUILD = 3
+local BUILD = 4
 local C = _G.KitCore
 if C and ((C.version or 0) > VERSION or ((C.version or 0) == VERSION and (C.build or 0) >= BUILD)) then
     ns.Core = C
@@ -1183,10 +1183,6 @@ function Kit:OpenMenu()
             function() return self.db.locked and true or false end,
             function() self:SetLocked(not self.db.locked) end)
         if self.cfg.Menu then self.cfg.Menu(self, root) end
-        if C.PanelOn and C.PanelOn() then
-            root:CreateButton(C.panelUnlocked and "Done moving reminders" or "Move reminder panel",
-                function() C.TogglePanelUnlocked(self) end)
-        end
         root:CreateDivider()
         root:CreateButton("Settings", function() self:OpenSettings() end)
     end)
@@ -3724,7 +3720,7 @@ function Kit:SettingsList(S)
         false, shared, "panelOn")
     local panelOn = function() return rp.on and true or false end
     S.Subheader("The panel (every kit)", panelOn)
-    S.Button("Place the panel", "Move", "Shows a grid and the panel's box of buttons: drag it where you want it. It snaps to the grid, the middle of the screen and your kit buttons; hold Shift to place it freely. Also in any kit's right-click menu.",
+    S.Button("Place the panel", "Move", "Shows a grid and the panel's box of buttons: drag it where you want it. It snaps to the grid, the middle of the screen and your kit buttons; hold Shift to place it freely.",
         function() C.TogglePanelUnlocked(self) end)
     S.Dropdown(rp, "layout", "Layout", "Rows: buttons side by side, then a new row. Columns: one under another, then a new column.",
         "row", { { "row", "Rows" }, { "column", "Columns" } }, shared)
