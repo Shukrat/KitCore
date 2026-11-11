@@ -57,7 +57,7 @@ local VERSION = 21
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
 -- each change while VERSION stays put; back to 0 with a new VERSION.
-local BUILD = 6
+local BUILD = 7
 local C = _G.KitCore
 if C and ((C.version or 0) > VERSION or ((C.version or 0) == VERSION and (C.build or 0) >= BUILD)) then
     ns.Core = C
@@ -5010,26 +5010,99 @@ function Kit:BuildOptions()
     child:SetSize(OPT.w - OPT.nav - 18 - OPT.pad - 14, 10)
     scroll:SetScrollChild(child)
     -- A slim gold bar showing where you are, when there's more to see.
-    local bar = f:CreateTexture(nil, "ARTWORK")
+    -- Drag it to scroll, or click the track beside it to jump there.
+    local function MaxScroll()
+        return math.max(0, (child:GetHeight() or 0) - (scroll:GetHeight() or 0))
+    end
+    local track = CreateFrame("Frame", nil, f)
+    track:SetPoint("TOPLEFT", scroll, "TOPRIGHT", 0, 0)
+    track:SetPoint("BOTTOMLEFT", scroll, "BOTTOMRIGHT", 0, 0)
+    track:SetWidth(14)
+    track:EnableMouse(true)
+    local thumb = CreateFrame("Frame", nil, track)
+    thumb:SetWidth(14)
+    thumb:EnableMouse(true)
+    thumb:SetFrameLevel(track:GetFrameLevel() + 1)
+    local bar = thumb:CreateTexture(nil, "ARTWORK")
+    bar:SetPoint("TOPRIGHT", thumb, "TOPRIGHT", -2, 0)
+    bar:SetPoint("BOTTOMRIGHT", thumb, "BOTTOMRIGHT", -2, 0)
     bar:SetWidth(3)
     bar:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.6)
+    local function Lit(on)
+        bar:SetWidth(on and 5 or 3)
+        bar:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], on and 0.95 or 0.6)
+    end
     local function UpdateBar()
         local view, full = scroll:GetHeight() or 0, child:GetHeight() or 0
-        if full <= view + 1 then bar:Hide() return end
-        local k = view / full
-        local h = math.max(20, view * k)
+        if full <= view + 1 then
+            if scroll:GetVerticalScroll() ~= 0 then scroll:SetVerticalScroll(0) end
+            track:Hide()
+            return
+        end
+        -- A page that got shorter can leave us scrolled past its end.
+        if (scroll:GetVerticalScroll() or 0) > full - view then scroll:SetVerticalScroll(full - view) end
+        local h = math.max(20, view * view / full)
         local at = (scroll:GetVerticalScroll() or 0) / (full - view)
-        bar:ClearAllPoints()
-        bar:SetHeight(h)
-        bar:SetPoint("TOPRIGHT", scroll, "TOPRIGHT", 12, -at * (view - h))
-        bar:Show()
+        thumb:ClearAllPoints()
+        thumb:SetHeight(h)
+        thumb:SetPoint("TOP", track, "TOP", 0, -at * (view - h))
+        track:Show()
     end
+    local function SetScroll(v)
+        scroll:SetVerticalScroll(math.max(0, math.min(MaxScroll(), v)))
+        UpdateBar()
+    end
+    -- Cursor height in the track's own units, so UI scale doesn't matter.
+    local function CursorY()
+        local _, y = GetCursorPosition()
+        return y / track:GetEffectiveScale()
+    end
+    thumb:SetScript("OnMouseDown", function(t, button)
+        if button ~= "LeftButton" then return end
+        t.fromY, t.fromV = CursorY(), scroll:GetVerticalScroll() or 0
+        t:SetScript("OnUpdate", function(t2)
+            local view = scroll:GetHeight() or 0
+            local room = view - (t2:GetHeight() or 0)
+            if room <= 0 then return end
+            -- Cursor moving down the screen scrolls the page down.
+            SetScroll(t2.fromV + (t2.fromY - CursorY()) * MaxScroll() / room)
+        end)
+        Lit(true)
+    end)
+    thumb:SetScript("OnMouseUp", function(t)
+        t:SetScript("OnUpdate", nil)
+        if not t:IsMouseOver() then Lit(false) end
+    end)
+    thumb:SetScript("OnHide", function(t)
+        t:SetScript("OnUpdate", nil)
+        Lit(false)
+    end)
+    thumb:SetScript("OnEnter", function() Lit(true) end)
+    thumb:SetScript("OnLeave", function(t)
+        if not t:GetScript("OnUpdate") then Lit(false) end
+    end)
+    -- Clicking the track centres the thumb on the click, then you can keep dragging.
+    track:SetScript("OnMouseDown", function(_, button)
+        if button ~= "LeftButton" then return end
+        local top = track:GetTop() or 0
+        local view = scroll:GetHeight() or 0
+        local h = thumb:GetHeight() or 0
+        local room = view - h
+        if room <= 0 then return end
+        local frac = (top - CursorY() - h / 2) / room
+        SetScroll(frac * MaxScroll())
+        thumb:GetScript("OnMouseDown")(thumb, "LeftButton")
+    end)
+    track:SetScript("OnMouseUp", function()
+        thumb:GetScript("OnMouseUp")(thumb)
+    end)
+    track:EnableMouseWheel(true)
+    track:SetScript("OnMouseWheel", function(_, delta)
+        SetScroll((scroll:GetVerticalScroll() or 0) - delta * 48)
+    end)
     scroll:EnableMouseWheel(true)
     scroll:SetScript("OnMouseWheel", function(sf, delta)
-        local full, view = child:GetHeight() or 0, sf:GetHeight() or 0
-        local v = math.max(0, math.min(math.max(0, full - view), sf:GetVerticalScroll() - delta * 48))
-        sf:SetVerticalScroll(v)
-        UpdateBar()
+        SetScroll((sf:GetVerticalScroll() or 0) - delta * 48)
     end)
     ui.scroll, ui.child, ui.UpdateBar = scroll, child, UpdateBar
     ui.frame = f
