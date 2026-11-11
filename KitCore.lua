@@ -4308,7 +4308,6 @@ local function BuildMoveBar()
     bar:SetScript("OnDragStart", bar.StartMoving)
     bar:SetScript("OnDragStop", bar.StopMovingOrSizing)
     if UISpecialFrames then table.insert(UISpecialFrames, "KitCoreMoveBar") end -- Esc closes it
-    bar:SetScript("OnHide", function() if C.panelUnlocked then C.SetPanelUnlocked(false) end end)
 
     local title = bar:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     title:SetPoint("TOPLEFT", 12, -9)
@@ -4365,6 +4364,9 @@ local function BuildMoveBar()
     local done = SmallButton(bar, "Done", 70, function() bar:Hide() end)
     done:SetPoint("BOTTOMRIGHT", -12, 10)
     bar:Hide()
+    -- (Esc or Done: finished placing. Set only now: a new frame starts shown,
+    -- so the Hide above would otherwise end the placing it was built for.)
+    bar:SetScript("OnHide", function() if C.panelUnlocked then C.SetPanelUnlocked(false) end end)
     return bar
 end
 
