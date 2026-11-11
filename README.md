@@ -4,6 +4,8 @@ The shared parts of the kits for WoW Forever: the round kit button and the ring 
 
 A kit hands Kit Core a description (its slots, what each one does, how it paints) and Kit Core runs the rest. [Kit Dock](https://github.com/Shukrat/KitDock) is optional: with it, a kit can join the gold pin and snap to screen edges (or, with `edgesOnly`, only the edges); without it, the kit stands on its own.
 
+From v21 there's a reminder panel shared by every kit: turn it on in any kit's settings (Reminder panel), drag it anywhere, and tick which of each kit's reminders (and pinned buttons) go there. With a kit closed, those slots sit in the panel instead of beside the kit; open the kit and they're back in their places, glowing as usual. Closing a kit in combat puts them back in the panel too. A kit can mark a slot `noPanel` (never in the panel) or set `panelDefault`.
+
 Every kit ships its own copy of `KitCore.lua`; the newest copy loaded runs for every kit (see `VERSION` at the top of the file).
 
 Used by: First Aid Kit, Camping Kit, Fishing Kit, Warlock Kit and Shaman Kit.
