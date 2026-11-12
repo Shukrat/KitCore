@@ -52,7 +52,7 @@ local addonName, ns = ...
 -- or not: pinning means "keep it here".
 ---------------------------------------------------------------------------
 
-local VERSION = 22
+local VERSION = 23
 -- Builds of the same VERSION (test builds while a version is in a pull
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
@@ -3800,6 +3800,7 @@ function Kit:BuildSettings()
         registered[#registered + 1] = { setting = s, tbl = tbl, key = key }
         return s
     end
+    function S.Text() end -- (the kit's own window only)
     function S.Button(name, text, tooltip, fn)
         if CreateSettingsButtonInitializer then
             Flush()
@@ -4635,6 +4636,11 @@ function Kit:CollectOptions()
     function S.Button(name, text, tip, fn)
         Add({ kind = "button", name = name, text = text, tip = tip, fn = fn })
     end
+    -- A line of text to type (v23): saved as a string ("" when emptied) on
+    -- Enter or when the box loses focus. hint: grey words in the empty box.
+    function S.Text(tbl, key, name, tip, default, fn, hint)
+        Add({ kind = "text", tbl = tbl, key = key, name = name, tip = tip, default = default, fn = fn, hint = hint })
+    end
     self:SettingsList(S)
     return sections
 end
@@ -4851,6 +4857,54 @@ function ROW.button(kit, parent, item, w)
         if kit.optionsUI then kit:PaintOptions() end
     end)
     function row.Paint() end
+    row:SetHeight(math.max(h, 22) + 4)
+    return row
+end
+
+-- A line of text to type (S.Text, v23).
+function ROW.text(kit, parent, item, w)
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetWidth(w)
+    local bw = 190
+    local h = Words(row, item, 0, bw + 14, 3, w)
+    local well = CreateFrame("Frame", nil, row)
+    well:SetSize(bw, 22)
+    well:SetPoint("TOPRIGHT", 0, 0)
+    Well(well, 0.7)
+    local box = CreateFrame("EditBox", nil, well)
+    box:SetPoint("TOPLEFT", 8, 0)
+    box:SetPoint("BOTTOMRIGHT", -8, 0)
+    box:SetFontObject("GameFontHighlightSmall")
+    box:SetAutoFocus(false)
+    box:SetTextInsets(0, 0, 0, 0)
+    local hint = box:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    hint:SetPoint("LEFT", 0, 0)
+    hint:SetPoint("RIGHT", 0, 0)
+    hint:SetJustifyH("LEFT")
+    hint:SetText(item.hint or "")
+    local function Hint() hint:SetShown(box:GetText() == "" and not box:HasFocus()) end
+    local function Save()
+        local v = (box:GetText() or ""):match("^%s*(.-)%s*$")
+        box:SetText(v)
+        if v ~= (Value(item) or "") then kit:OptionChanged(item, v) end
+        Hint()
+    end
+    function row.Paint()
+        if not box:HasFocus() then box:SetText(tostring(Value(item) or "")) end
+        Hint()
+    end
+    box:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+    box:SetScript("OnEscapePressed", function(self)
+        self:SetText(tostring(Value(item) or ""))
+        self:ClearFocus()
+    end)
+    box:SetScript("OnEditFocusGained", Hint)
+    box:SetScript("OnEditFocusLost", function()
+        Save()
+        if kit.optionsUI then kit:PaintOptions() end
+    end)
+    well:EnableMouse(true)
+    well:SetScript("OnMouseDown", function() box:SetFocus() end)
     row:SetHeight(math.max(h, 22) + 4)
     return row
 end
