@@ -6,6 +6,8 @@ A kit hands Kit Core a description (its slots, what each one does, how it paints
 
 From v21 there's a reminder panel shared by every kit. Each kit has its own switch for it (Reminder panel in its settings), so some kits' reminders can be in the panel and others by their kit; drag it anywhere, and tick which of each kit's reminders go there. With a kit closed, those slots sit in the panel, full size, instead of beside the kit; open the kit and they're back in their places, glowing as usual. Closing a kit in combat puts them back in the panel too. Pinned buttons always stay by their kit. A kit can mark a slot `noPanel` (never in the panel) or set `panelDefault`.
 
+From v23 a kit can let its buttons be dragged off it (`bars = true` in its description). In the kit's edit mode every button can be dragged: dropped away from the kit it floats there, always shown, and dropping more on it builds a bar (a row or a column, any length, any number of bars). Dropped on the kit, a button goes back to its place. A button on a bar is the slot itself, moved, so its drawer, corner button, glow and key binding come with it, and the kit closes up round the gap. With `zones`, the kit's own ring and row can be rearranged in edit mode too; the kit hears about it through `OnZones`. Bars and zone order are saved per character. Buttons on bars don't fade when idle and pinning doesn't apply to them.
+
 Every kit ships its own copy of `KitCore.lua`; the newest copy loaded runs for every kit (see `VERSION` at the top of the file).
 
 Used by: First Aid Kit, Camping Kit, Fishing Kit, Warlock Kit and Shaman Kit.
@@ -25,7 +27,7 @@ externals:
 
 The kit's `.toc` loads `Libs\KitCore\Libs\Libs.xml` first (from v19: LibStub, CallbackHandler, LibDataBroker and LibDBIcon, for the minimap button), then `Libs\KitDock\KitDock.lua` (if it uses the dock), then `Libs\KitCore\KitCore.lua`, then its own file, which calls `KitCore.NewKit({ ... })` when it loads. The comment block above `C.NewKit` in `KitCore.lua` lists everything a kit can describe.
 
-The kit ships the art Kit Core uses in its own `media` folder: `circle_mask`, `glow_ring`, `pin_dot`, `slot_border`, `ring_slot_*` and `ring_prof_*`.
+The kit ships the art Kit Core uses in its own `media` folder: `circle_mask`, `glow_ring`, `pin_dot`, `slot_border`, `ring_slot_*` and `ring_prof_*`, plus `zone_ring` for a kit that uses `zones` (v23).
 
 ## ForeverImmersion
 
