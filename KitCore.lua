@@ -49,7 +49,9 @@ local addonName, ns = ...
 -- reminders you tick in its settings show there (as full-size copies that
 -- glow, count down and cast like the slot) instead of beside the closed kit,
 -- and stay there while it's open. A pinned slot stays by its kit, reminder
--- or not: pinning means "keep it here".
+-- or not: pinning means "keep it here". From v26 a kit can ask for its
+-- pinned reminders to show in the panel as well (cfg.panelPinned): the slot
+-- stays by the kit and a copy of it goes in the panel too.
 --
 -- From v23 a kit can let its buttons be dragged off it (cfg.bars). In its
 -- edit mode (the kit's right-click menu, its settings, or "layout" after its
@@ -60,7 +62,7 @@ local addonName, ns = ...
 -- all come with it; the kit's own layout closes up round the gap. See "Bars".
 ---------------------------------------------------------------------------
 
-local VERSION = 24
+local VERSION = 26
 -- Builds of the same VERSION (test builds while a version is in a pull
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
@@ -300,7 +302,7 @@ C.BASE_DEFAULTS = {
         grid = 16, snap = true, -- placing it (as SSBT's grid)
         stamp = 0,
     },
-    panelSlots = {},       -- [slotKey] = true: with this kit's panel on, it shows there while the kit is closed (unless pinned)
+    panelSlots = {},       -- [slotKey] = true: with this kit's panel on, it shows there while the kit is closed (unless pinned, without cfg.panelPinned)
 }
 
 C.BASE_CHAR = {
@@ -417,6 +419,9 @@ C.BASE_CHAR = {
 --                       the settings window shows the group only while it's true.
 --   FirstSettings(kit, S)  pages of the kit's own in the "Kit" group, right
 --                       after General (v24)
+--   panelPinned   true: a pinned slot's reminder shows in the reminder panel
+--                 too (ticked for the panel), while the slot stays by the kit
+--                 (v26). Otherwise pinned slots stay out of the panel.
 --   buttonTable   true: the kit sets its buttons' pinning in a table of its own
 --                 (S.Table, v24), so Kit Core leaves out its "Pinned buttons" page
 --   Menu(kit, root)    the kit's own lines in its right-click menu, between
@@ -2781,7 +2786,9 @@ end
 -- Also whether it's there at all, whether something pops it out, and
 -- whether its reminder shows in the reminder panel (popped, not pinned,
 -- ticked for the panel): then the slot itself only shows with the kit open,
--- and a copy of it in the panel stands in for it, open or closed.
+-- and a copy of it in the panel stands in for it, open or closed. With
+-- cfg.panelPinned a pinned slot's reminder goes in the panel too, and the
+-- slot stays out by the kit as pinned slots do.
 function Kit:SlotVisible(slot, btn)
     local pop = slot.Pop and not btn.hidden and slot.Pop(self, btn) or false
     local available = self.db.shown ~= false and not btn.hidden
@@ -2789,8 +2796,8 @@ function Kit:SlotVisible(slot, btn)
     local bar = btn.kcBar and true or false -- (on a bar: always out, there)
     local out = (pinned or pop or bar) and true or false
     -- (pinned: it stays by the kit, reminder or not; on a bar: it stays on the bar)
-    local panel = available and pop and not pinned and not bar and self:PanelAssigned(slot) or false
-    local visible = available and (self.open or (out and not panel and not self.tucked and not self.quiet)) and true or false
+    local panel = available and pop and (self.cfg.panelPinned or not pinned) and not bar and self:PanelAssigned(slot) or false
+    local visible = available and (self.open or (out and (pinned or not panel) and not self.tucked and not self.quiet)) and true or false
     return visible, available, pop, panel and true or false
 end
 
@@ -3879,7 +3886,7 @@ function Kit:SettingsList(S)
         local rp = db.reminderPanel
         local shared = function() C.SharePanel(rp) end
         S.Checkbox(rp, "on", "Put " .. self.name .. "'s reminders in the panel",
-            "One panel for all your kits that you can put anywhere. With this on and " .. self.name .. " closed, its reminders show there, full size, instead of beside the kit. They stay in the panel while the kit is open too (and in their places in the kit). Each kit has its own switch, so some kits' reminders can be in the panel and others by their kit. A pinned button always stays by its kit.",
+            "One panel for all your kits that you can put anywhere. With this on and " .. self.name .. " closed, its reminders show there, full size, instead of beside the kit. They stay in the panel while the kit is open too (and in their places in the kit). Each kit has its own switch, so some kits' reminders can be in the panel and others by their kit. " .. (cfg.panelPinned and "A pinned button stays by its kit, and its reminder shows in the panel too." or "A pinned button always stays by its kit."),
             false, shared, "panelOn")
         local panelOn = function() return rp.on and true or false end
         S.Subheader("The panel (every kit)", panelOn)
@@ -3915,7 +3922,7 @@ function Kit:SettingsList(S)
             if S.Grid then S.Grid(2) end
             for _, slot in ipairs(pops) do
                 S.Checkbox(db.panelSlots, slot.key, slot.label,
-                    "When it pops out with the kit closed (missing or wanted), it shows in the panel. Pinned, it stays by the kit.",
+                    "When it pops out with the kit closed (missing or wanted), it shows in the panel. " .. (cfg.panelPinned and "Pinned, it shows in the panel too, and stays by the kit." or "Pinned, it stays by the kit."),
                     self:PanelDefault(slot), refresh, "panel_" .. slot.key)
             end
             if S.Grid then S.Grid(1) end
