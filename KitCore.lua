@@ -3386,6 +3386,32 @@ function Kit:PlaceFree()
     self:KeepOnScreen()
 end
 
+-- Whether the mouse is over a piece of this kit away from its button: a
+-- pinned slot, a reminder beside it, its small buttons (anything under the
+-- kit's holder). Kit Dock slides a tucked kit out for these too (v27).
+-- Buttons on bars or in the reminder panel don't count: they sit away from
+-- the kit.
+local function MouseFoci()
+    if GetMouseFoci then
+        local t = GetMouseFoci()
+        return t and t[1]
+    end
+    return GetMouseFocus and GetMouseFocus()
+end
+function Kit:MouseOverParts()
+    local f = MouseFoci()
+    local holder = self.holder
+    if not f or not holder or f == holder then return false end
+    local n = 0
+    while f and n < 12 do
+        if f.kcBar or f.inPanel then return false end
+        local up = f.GetParent and f:GetParent()
+        if up == holder then return true end
+        f, n = up, n + 1
+    end
+    return false
+end
+
 -- Hide (or bring back) the kit and its pinned slots while another docked
 -- kit is open on the pin. Out of combat only (the dock makes sure).
 function Kit:Tuck(on)
@@ -3577,6 +3603,7 @@ function Kit:RegisterDock()
         name = self.name,
         edgesOnly = self.cfg.edgesOnly,
         NoTuck = function() return self.db.edgeTuck == false end,
+        OverParts = function() return self:MouseOverParts() end,
         IsOpen = function() return self.open and not self:QkbInPlace() end,
         Close = function() self:SetOpen(false) end,
         Tuck = function(on) self:Tuck(on) end,
