@@ -1220,6 +1220,7 @@ function Kit:OpenMenu()
         end
         if self.cfg.Menu then self.cfg.Menu(self, root) end
         root:CreateDivider()
+        root:CreateButton("Move everything", function() C.MoveAll(self) end)
         root:CreateButton("Settings", function() self:OpenSettings() end)
     end)
 end
@@ -4233,7 +4234,7 @@ function C.SharePanel(src)
             if kit.optionsUI and kit.optionsUI.frame:IsShown() then kit:PaintOptions() end
         end
     end
-    if C.panelUnlocked then C.PaintMoveBar() end
+    if C.placeUI then C.placeUI.paint() end
 end
 
 local function Cursor()
@@ -4274,26 +4275,21 @@ function C.Panel()
     edit:Hide()
     f.edit = edit
 
-    -- Dragged by hand (not StartMoving), so it can snap as it goes.
+    -- Dragged by hand (not StartMoving), so it can snap as it goes: on the
+    -- shared placing grid (v24), with every other piece being placed.
     f:SetScript("OnMouseDown", function(p, mouse)
         if mouse ~= "LeftButton" or InCombatLockdown() or not C.panelUnlocked then return end
-        local mx, my = Cursor()
-        local cx, cy = C.PanelCentre()
-        p.offX, p.offY = cx - mx, cy - my
-        p.downAt = { mx, my }
-        p.moved = false
-        p:SetScript("OnUpdate", function(pp)
-            local x, y = Cursor()
-            if not pp.moved and math.abs(x - pp.downAt[1]) + math.abs(y - pp.downAt[2]) < 3 then return end
-            pp.moved = true
-            C.DragPanel(x + pp.offX, y + pp.offY)
+        GameTooltip:Hide()
+        C.Place.Begin("panel", p, function(x, y)
+            local cfg, corner = PanelValues()
+            local c = CORNERS[corner]
+            cfg.x = math.floor(x + c[1] * p:GetWidth() / 2 + 0.5)
+            cfg.y = math.floor(y + c[2] * p:GetHeight() / 2 + 0.5)
+            C.PlacePanel()
         end)
     end)
-    f:SetScript("OnMouseUp", function(p, mouse)
-        p:SetScript("OnUpdate", nil)
-        C.Guide(nil, nil)
-        if p.moved then
-            p.moved = false
+    f:SetScript("OnMouseUp", function(_, mouse)
+        if C.Place.Stop() then
             C.SharePanel(C.PanelCfg())
         elseif mouse == "RightButton" then
             C.SetPanelUnlocked(false)
@@ -4353,13 +4349,70 @@ function C.PanelCentre()
 end
 
 ---------------------------------------------------------------------------
--- Placing it: the grid, guides and snapping (as SSBT's Move.lua)
+-- Placing things (v24): one grid and one bar for every piece that can be
+-- moved, as SSBT's Move.lua does it
+--
+-- Any kit can register a piece of its own (C.RegisterMover: a DoT stack, a
+-- proc timer, the target bar...); the reminder panel is one too. While any
+-- piece is being placed, the screen is shaded with gold grid lines every grid
+-- step out from the middle (the middle lines brighter), and a small bar at
+-- the top has the grid size, Snap and Done (Esc closes it too). Dragged, a
+-- piece snaps to the screen's middle lines, to the other pieces' and the kit
+-- buttons' edges and middles (a bright guide line shows what it lined up
+-- with), or else its left and top edges to the grid. Shift places it freely.
+--
+-- "Move everything" (C.MoveAll: the settings window, the kit's right-click
+-- menu, or "move" after its slash command) puts every piece that's in use
+-- into placing at once; Done ends them all. The grid size and Snap are the
+-- reminder panel's (shared by every kit).
 ---------------------------------------------------------------------------
+
+local movers, moverOrder = {}, {}
+C.movers = movers
+local placeUI, placeDrag
+
+-- A piece that can be placed. m = {
+--   label,                 its name
+--   frame = fn() -> frame, what's dragged (nil before it's made)
+--   test = fn(on),         shows it (a sample where it sits) to be placed, or stops
+--   can = fn() -> bool,    whether it's in use, for Move everything
+--   done = fn(),           Done or Esc: stop placing it (test(false) if not given)
+--   strata,                its usual strata (back to it when placing ends)
+-- }
+function C.RegisterMover(key, m)
+    if not movers[key] then moverOrder[#moverOrder + 1] = key end
+    local old = movers[key]
+    if old then m.placing = old.placing end
+    movers[key] = m
+end
+
+local function PlaceCfg()
+    local p = C.PanelCfg() or {}
+    return tonumber(p.grid) or 16, p.snap ~= false, p
+end
+
+-- The cursor, in UI units from the middle of the screen.
+local function Cursor()
+    local x, y = GetCursorPosition()
+    local s = UIParent:GetEffectiveScale()
+    return x / s - UIParent:GetWidth() / 2, y / s - UIParent:GetHeight() / 2
+end
+
+local function Round(v, step) return math.floor(v / step + 0.5) * step end
+
+-- A frame's middle and half-size, in UI units from the middle of the screen.
+local function Box(f)
+    local cx, cy = f:GetCenter()
+    if not cx then return nil end
+    local k = f:GetEffectiveScale() / UIParent:GetEffectiveScale()
+    local ux, uy = UIParent:GetWidth() / 2, UIParent:GetHeight() / 2
+    return cx * k - ux, cy * k - uy, f:GetWidth() * k / 2, f:GetHeight() * k / 2
+end
 
 local function BuildGrid()
     local g = CreateFrame("Frame", "KitCoreGrid", UIParent)
     g:SetAllPoints()
-    g:SetFrameStrata("BACKGROUND")
+    g:SetFrameStrata("HIGH")
     g:SetFrameLevel(1)
     g:EnableMouse(false)
     local shade = g:CreateTexture(nil, "BACKGROUND")
@@ -4372,7 +4425,7 @@ local function BuildGrid()
     g.guideH = g:CreateTexture(nil, "OVERLAY")
     g.guideH:SetHeight(2)
     g.guideH:SetColorTexture(1, 0.85, 0.45, 0.9)
-    g:SetScript("OnSizeChanged", function() C.DrawGrid() end)
+    g:SetScript("OnSizeChanged", function() if g:IsShown() then C.DrawGrid() end end)
     g:Hide()
     return g
 end
@@ -4380,8 +4433,7 @@ end
 function C.DrawGrid()
     local g = C.grid
     if not g then return end
-    local p = C.PanelCfg() or {}
-    local step = tonumber(p.grid) or 16
+    local step = PlaceCfg()
     local w, h = UIParent:GetWidth(), UIParent:GetHeight()
     local n = 0
     local function Add(vertical, at)
@@ -4451,57 +4503,57 @@ local function Nearest(values, targets)
     return best, bestAt
 end
 
--- Where the kit buttons' edges and centres are, along one axis (and the
--- screen's centre line), from the screen's centre.
-local function Targets(vertical)
+-- What a piece can line up with, along one axis: the screen's middle line,
+-- the other pieces being placed, and the kit buttons (edges and middles).
+local function Targets(skip, vertical)
     local list = { 0 }
-    local us = UIParent:GetEffectiveScale()
-    local ux, uy = UIParent:GetWidth() / 2, UIParent:GetHeight() / 2
+    local function Add(f)
+        if not (f and f:IsVisible()) then return end
+        local x, y, hw, hh = Box(f)
+        if not x then return end
+        local c, half = vertical and x or y, vertical and hw or hh
+        list[#list + 1] = c - half
+        list[#list + 1] = c
+        list[#list + 1] = c + half
+    end
+    for _, key in ipairs(moverOrder) do
+        local m = movers[key]
+        if key ~= skip and m.placing and m.frame then Add(m.frame()) end
+    end
     for _, kit in ipairs(C.kits or {}) do
-        local b = kit.built and kit.kit
-        if b and b:IsVisible() then
-            local x, y = b:GetCenter()
-            if x then
-                local k = b:GetEffectiveScale() / us
-                local half = b:GetWidth() * k / 2
-                local c = vertical and (x * k - ux) or (y * k - uy)
-                list[#list + 1] = c - half
-                list[#list + 1] = c
-                list[#list + 1] = c + half
-            end
-        end
+        if kit.built then Add(kit.kit) end
     end
     return list
 end
 
--- The box dragged so its centre is at (x, y): snapped, saved as its
--- starting corner, and moved there.
-function C.DragPanel(x, y)
-    local f = C.panel
-    local p, corner = PanelValues()
-    local c = CORNERS[corner]
-    local hw, hh = f:GetWidth() / 2, f:GetHeight() / 2
-    local gx, gy
-    if p.snap ~= false and not IsShiftKeyDown() then
-        local step = tonumber(p.grid) or 16
-        local dx, dy
-        dx, gx = Nearest({ x - hw, x, x + hw }, Targets(true))
-        dy, gy = Nearest({ y - hh, y, y + hh }, Targets(false))
-        -- (otherwise its starting corner on the grid)
-        if dx then x = x + dx else x = Round(x + c[1] * hw, step) - c[1] * hw end
-        if dy then y = y + dy else y = Round(y + c[2] * hh, step) - c[2] * hh end
-    end
-    -- Kept on screen.
-    local W, H = UIParent:GetWidth() / 2, UIParent:GetHeight() / 2
-    x = math.max(-W + hw, math.min(W - hw, x))
-    y = math.max(-H + hh, math.min(H - hh, y))
-    p.x, p.y = math.floor(x + c[1] * hw + 0.5), math.floor(y + c[2] * hh + 0.5)
-    C.PlacePanel()
-    C.Guide(gx, gy)
+-- A piece dragged so its middle would be at (x, y): where it goes, and the
+-- guide lines to show (or nil).
+local function Snap(key, x, y, hw, hh)
+    local step, snapping = PlaceCfg()
+    if not snapping or IsShiftKeyDown() then return x, y end
+    local dx, gx = Nearest({ x - hw, x, x + hw }, Targets(key, true))
+    local dy, gy = Nearest({ y - hh, y, y + hh }, Targets(key, false))
+    -- (otherwise its left and top edges on the grid)
+    if dx then x = x + dx else x = Round(x - hw, step) + hw end
+    if dy then y = y + dy else y = Round(y + hh, step) - hh end
+    return x, y, gx, gy
 end
 
--- The bar at the top while placing it.
-local GRID_SIZES = { 8, 16, 24, 32 }
+-- Every piece being placed, done (Done, Esc, or Move everything again).
+function C.EndPlacing()
+    for _, key in ipairs(moverOrder) do
+        local m = movers[key]
+        if m.placing then
+            local ok, err = pcall(m.done or function() m.test(false) end)
+            if not ok then geterrorhandler()(err) end
+            m.placing = nil
+        end
+    end
+    if placeUI then
+        C.grid:Hide()
+        if placeUI.bar:IsShown() then placeUI.bar:Hide() end
+    end
+end
 
 local function SmallButton(parent, text, w, fn)
     local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
@@ -4511,9 +4563,9 @@ local function SmallButton(parent, text, w, fn)
     return b
 end
 
-local function BuildMoveBar()
+local function BuildPlaceBar()
     local bar = OptPanel("Frame", "KitCoreMoveBar", UIParent)
-    bar:SetSize(420, 64)
+    bar:SetSize(360, 64)
     bar:SetPoint("TOP", 0, -20)
     bar:SetFrameStrata("FULLSCREEN_DIALOG")
     bar:EnableMouse(true)
@@ -4526,7 +4578,6 @@ local function BuildMoveBar()
 
     local title = bar:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     title:SetPoint("TOPLEFT", 12, -9)
-    title:SetText("Placing the reminder panel")
     local hint = bar:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     hint:SetPoint("LEFT", title, "RIGHT", 10, 0)
     hint:SetText("Drag to move, Shift for free")
@@ -4536,20 +4587,18 @@ local function BuildMoveBar()
         f:SetPoint("BOTTOMLEFT", x, 10)
         x = x + w + 8
     end
-
     -- Grid size: steps through the sizes.
+    local GRID_SIZES = { 8, 16, 24, 32 }
     local grid = SmallButton(bar, "", 80, nil)
     grid:SetScript("OnClick", function()
-        local p = C.PanelCfg()
+        local step, _, p = PlaceCfg()
         local i = 1
-        for n, g in ipairs(GRID_SIZES) do if g == tonumber(p.grid) then i = n end end
+        for n, g in ipairs(GRID_SIZES) do if g == step then i = n end end
         p.grid = GRID_SIZES[i % #GRID_SIZES + 1]
-        C.SharePanel(p)
+        if C.PanelCfg() == p then C.SharePanel(p) end
         C.DrawGrid()
     end)
     Place(grid, 80)
-    bar.grid = grid
-
     local snap = CreateFrame("Button", nil, bar)
     snap:SetSize(84, 22)
     local box = CreateFrame("Frame", nil, snap)
@@ -4565,34 +4614,133 @@ local function BuildMoveBar()
     label:SetPoint("LEFT", box, "RIGHT", 6, 0)
     label:SetText("Snap")
     snap:SetScript("OnClick", function()
-        local p = C.PanelCfg()
-        p.snap = p.snap == false
-        C.SharePanel(p)
+        local _, snapping, p = PlaceCfg()
+        p.snap = not snapping
+        if C.PanelCfg() == p then C.SharePanel(p) end
+        tick:SetShown(p.snap)
     end)
     Place(snap, 60)
-    bar.tick = tick
-
-    Place(SmallButton(bar, "Settings", 80, function()
-        local kit = C.kits and C.kits[1]
-        if kit then kit:OpenOptions("Reminder panel") end
-    end), 80)
     local done = SmallButton(bar, "Done", 70, function() bar:Hide() end)
     done:SetPoint("BOTTOMRIGHT", -12, 10)
     bar:Hide()
-    -- (Esc or Done: finished placing. Set only now: a new frame starts shown,
-    -- so the Hide above would otherwise end the placing it was built for.)
-    bar:SetScript("OnHide", function() if C.panelUnlocked then C.SetPanelUnlocked(false) end end)
-    return bar
+    -- (Esc or Done: every piece finished. Set only now: a new frame starts
+    -- shown, so the Hide above would otherwise end the placing it was built for.)
+    bar:SetScript("OnHide", function() C.EndPlacing() end)
+
+    placeUI = { bar = bar }
+    C.placeUI = placeUI
+    function placeUI.paint()
+        local step, snapping = PlaceCfg()
+        grid:SetText("Grid " .. step)
+        tick:SetShown(snapping)
+        -- The title says what's being placed: one piece by name, or several.
+        local names = {}
+        for _, key in ipairs(moverOrder) do
+            local m = movers[key]
+            if m.placing then names[#names + 1] = m.label or key end
+        end
+        if #names == 1 then
+            title:SetText("Placing " .. names[1])
+        else
+            title:SetText("Moving everything")
+        end
+    end
 end
 
-function C.PaintMoveBar()
-    local bar, p = C.moveBar, C.PanelCfg()
-    if not (bar and p) then return end
-    bar.grid:SetText("Grid " .. (tonumber(p.grid) or 16))
-    bar.tick:SetShown(p.snap ~= false)
+C.Place = {}
+C.Place.Box, C.Place.Cursor = Box, Cursor
+
+-- A piece starts or stops being placed: the grid and bar show while any is,
+-- and pieces being placed sit over the grid's shade.
+function C.Place.Update(key, on)
+    local m = movers[key]
+    if m then
+        m.placing = on and true or nil
+        local f = m.frame and m.frame()
+        if f and not InCombatLockdown() then f:SetFrameStrata(on and "DIALOG" or (m.strata or "MEDIUM")) end
+    end
+    local any = false
+    for _, k in ipairs(moverOrder) do if movers[k].placing then any = true end end
+    if any then
+        C.grid = C.grid or BuildGrid()
+        if not placeUI then BuildPlaceBar() end
+        C.DrawGrid()
+        C.Guide(nil, nil)
+        placeUI.paint()
+        C.grid:Show()
+        if not placeUI.bar:IsShown() then placeUI.bar:Show() end
+    elseif placeUI then
+        C.grid:Hide()
+        if placeUI.bar:IsShown() then placeUI.bar:Hide() end
+    end
 end
 
--- Placing it: the grid, the bar, its box; it takes the mouse until done.
+-- Dragging a piece: frame is what's dragged; move(x, y) puts its middle at
+-- (x, y) in UI units from the middle of the screen (and saves it).
+function C.Place.Begin(key, frame, move)
+    if InCombatLockdown() or not frame then return end
+    local x0, y0 = Box(frame)
+    if not x0 then return end
+    local mx, my = Cursor()
+    local d = { key = key, frame = frame, move = move, offX = x0 - mx, offY = y0 - my, downAt = { mx, my } }
+    placeDrag = d
+    frame:SetScript("OnUpdate", function()
+        local x, y = Cursor()
+        if not d.moved and math.abs(x - d.downAt[1]) + math.abs(y - d.downAt[2]) < 3 then return end
+        d.moved = true
+        local _, _, hw, hh = Box(frame)
+        local nx, ny, gx, gy = Snap(key, x + d.offX, y + d.offY, hw, hh)
+        local sw, sh = UIParent:GetWidth() / 2, UIParent:GetHeight() / 2
+        nx = math.max(-sw + hw, math.min(sw - hw, nx))
+        ny = math.max(-sh + hh, math.min(sh - hh, ny))
+        move(nx, ny)
+        C.Guide(gx, gy)
+    end)
+end
+
+-- The drag ends. Returns whether it moved (a plain click didn't).
+function C.Place.Stop()
+    local d = placeDrag
+    placeDrag = nil
+    if d and d.frame then d.frame:SetScript("OnUpdate", nil) end
+    C.Guide(nil, nil)
+    return d and d.moved or false
+end
+
+-- Move everything: every piece in use, placed at once (or, if anything is
+-- being placed, all of it done).
+function C.MoveAll(kit)
+    for _, key in ipairs(moverOrder) do
+        if movers[key].placing then C.EndPlacing() return end
+    end
+    if InCombatLockdown() then
+        kit:Print("Things can only be moved out of combat.", true)
+        return
+    end
+    local n = 0
+    C.movingAll = true
+    for _, key in ipairs(moverOrder) do
+        local m = movers[key]
+        local ok, can = pcall(m.can or function() return true end)
+        if ok and can and m.test then
+            local ok2, err = pcall(m.test, true)
+            if not ok2 then geterrorhandler()(err) end
+            n = n + 1
+        end
+    end
+    C.movingAll = nil
+    if n == 0 then
+        kit:Print("Nothing to move: turn on the reminder panel or a kit's timers first. The kits themselves move by dragging them.", true)
+    elseif placeUI then
+        placeUI.paint()
+    end
+    for _, k in ipairs(C.kits or {}) do
+        local ui = k.optionsUI
+        if ui and ui.frame and ui.frame:IsShown() then ui.frame:Hide() end
+    end
+end
+
+-- The reminder panel is a piece like any other.
 function C.SetPanelUnlocked(on)
     local f = C.panel
     if not f or InCombatLockdown() then return end
@@ -4600,21 +4748,17 @@ function C.SetPanelUnlocked(on)
     C.panelUnlocked = on
     f:EnableMouse(on)
     f.edit:SetShown(on)
-    if on then
-        C.grid = C.grid or BuildGrid()
-        C.moveBar = C.moveBar or BuildMoveBar()
-        C.DrawGrid()
-        C.Guide(nil, nil)
-        C.grid:Show()
-        C.PaintMoveBar()
-        C.moveBar:Show()
-    else
-        f:SetScript("OnUpdate", nil)
-        if C.grid then C.grid:Hide() end
-        if C.moveBar and C.moveBar:IsShown() then C.moveBar:Hide() end
-    end
+    if not on then f:SetScript("OnUpdate", nil) end
+    C.Place.Update("panel", on)
     C.PanelLayout()
 end
+
+C.RegisterMover("panel", {
+    label = "the reminder panel",
+    frame = function() return C.panel end,
+    can = function() return C.PanelOn() and C.panel ~= nil end,
+    test = function(on) C.SetPanelUnlocked(on) end,
+})
 
 function C.TogglePanelUnlocked(kit)
     if InCombatLockdown() then
@@ -4628,6 +4772,7 @@ function C.TogglePanelUnlocked(kit)
     C.SetPanelUnlocked(not C.panelUnlocked)
     if kit.optionsUI then kit:PaintOptions() end
 end
+
 
 ---------------------------------------------------------------------------
 -- What goes in it, and where
@@ -5720,7 +5865,7 @@ function Kit:SetEdit(on)
         if self.db.shown == false then self:Print("Show the kit first.", true) return end
         if self.qkbOpen then self:Print("Close Quick Keybind Mode first.", true) return end
         if C.editKit and C.editKit ~= self then C.editKit:SetEdit(false) end
-        if C.panelUnlocked then C.SetPanelUnlocked(false) end
+        C.EndPlacing() -- (the reminder panel and anything else being placed)
         self:CloseFlyouts()
         self.editing = true
         C.editKit = self
@@ -6833,7 +6978,17 @@ function Kit:BuildOptions()
         b:SetScript("OnClick", function() ShowPage(self, i) end)
         ui.nav[i] = b
     end
-    -- Key bindings, at the foot of the list.
+    -- Move everything and Key bindings, at the foot of the list.
+    local move = CreateFrame("Button", nil, f)
+    move:SetSize(OPT.nav - OPT.pad - 6, 20)
+    move.text = move:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    move.text:SetPoint("LEFT", 10, 0)
+    move.text:SetText("Move everything")
+    local mhl = move:CreateTexture(nil, "HIGHLIGHT")
+    mhl:SetAllPoints()
+    mhl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.06)
+    move:SetScript("OnClick", function() C.MoveAll(self) end)
+    Tip(move, { name = "Move everything", tip = "The reminder panel and every timer and bar in use, shown where they sit on a grid so you can drag them all at once. Done (or Esc) when you're finished. Also in the kit's right-click menu." }, self.optAnchor)
     local keys = CreateFrame("Button", nil, f)
     keys:SetSize(OPT.nav - OPT.pad - 6, 20)
     keys:SetPoint("BOTTOMLEFT", OPT.pad, OPT.pad)
@@ -6844,9 +6999,10 @@ function Kit:BuildOptions()
     khl:SetAllPoints()
     khl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.06)
     keys:SetScript("OnClick", function() self:OpenKeyBindings() end)
+    move:SetPoint("BOTTOMLEFT", keys, "TOPLEFT", 0, 2)
     local kline = f:CreateTexture(nil, "BORDER")
-    kline:SetPoint("BOTTOMLEFT", keys, "TOPLEFT", 0, 4)
-    kline:SetPoint("BOTTOMRIGHT", keys, "TOPRIGHT", 0, 4)
+    kline:SetPoint("BOTTOMLEFT", move, "TOPLEFT", 0, 4)
+    kline:SetPoint("BOTTOMRIGHT", move, "TOPRIGHT", 0, 4)
     kline:SetHeight(1)
     kline:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.18)
 
@@ -7043,6 +7199,7 @@ function Kit:RunSlash(msg)
         self:Print(slash .. " - settings   " .. slash .. " lock | unlock | show | hide | reset")
         self:Print(slash .. " minimap - show or hide the minimap button")
         self:Print(slash .. " face up | down | left | right - which way the layout points")
+        self:Print(slash .. " move - move everything: the reminder panel and the kits' timers and bars, all at once")
         self:Print(slash .. " panel - move the reminder panel (shared by every kit)")
         if cfg.bars then self:Print(slash .. " layout - drag buttons off the kit onto bars   " .. slash .. " layout reset") end
         if self.Dock and not cfg.edgesOnly then self:Print(slash .. " dock - dock every kit on the pin   " .. slash .. " flip") end
@@ -7071,6 +7228,8 @@ function Kit:RunSlash(msg)
         end
     elseif cmd == "panel" then
         C.TogglePanelUnlocked(self)
+    elseif cmd == "move" then
+        C.MoveAll(self)
     elseif (cmd == "layout" or cmd == "bars") and cfg.bars then
         if (rest or ""):lower():match("^reset") then self:ResetLayout() else self:ToggleEdit() end
     elseif cmd == "flip" and self.Dock and not cfg.edgesOnly then
