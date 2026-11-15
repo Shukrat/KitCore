@@ -6665,7 +6665,10 @@ local function MakePage(kit, ui)
 
     -- The page's settings (in order, sub-headings included).
     function page.SetItems(items)
-        for _, row in pairs(rowFor) do row:Hide() end
+        for _, row in pairs(rowFor) do
+            row:Hide()
+            row.atX, row.atY = nil, nil
+        end
         for _, card in pairs(cardFor) do card:Hide() end
         page.rows, page.blocks = {}, {}
         local b
@@ -6706,8 +6709,20 @@ local function MakePage(kit, ui)
     end
 
     -- Stack the cards and their rows, leaving out what's hidden or folded.
+    -- (Rows already in place stay shown and stay put: hiding or re-anchoring
+    -- one would drop a slider being dragged, since every change lays the page
+    -- out again.)
+    local function Put(row, x, y)
+        row.keep = true
+        if row.atX ~= x or row.atY ~= y or not row:IsShown() then
+            row.atX, row.atY = x, y
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", x, -y)
+            row:Show()
+        end
+    end
     function page.Relayout()
-        for _, row in ipairs(page.rows) do row:Hide() end
+        for _, row in ipairs(page.rows) do row.keep = nil end
         local y = 38
         for _, blk in ipairs(page.blocks) do
             if blk.card then blk.card:Hide() end
@@ -6723,23 +6738,17 @@ local function MakePage(kit, ui)
                 local top = y
                 local yy = y + (blk.sub and CARD_PAD or 0)
                 if blk.sub then
-                    blk.subRow:ClearAllPoints()
-                    blk.subRow:SetPoint("TOPLEFT", x0, -yy)
-                    blk.subRow:Show()
+                    Put(blk.subRow, x0, yy)
                     yy = yy + blk.subRow:GetHeight() + (folded and 0 or ROW_GAP)
                 end
                 if not folded then
                     local i = 1
                     while i <= #vis do
                         local row, nxt = vis[i], vis[i + 1]
-                        row:ClearAllPoints()
-                        row:SetPoint("TOPLEFT", x0, -yy)
-                        row:Show()
+                        Put(row, x0, yy)
                         local h = row:GetHeight()
                         if row.item.cols and nxt and nxt.item.cols then
-                            nxt:ClearAllPoints()
-                            nxt:SetPoint("TOPLEFT", x0 + row:GetWidth() + COL_GAP, -yy)
-                            nxt:Show()
+                            Put(nxt, x0 + row:GetWidth() + COL_GAP, yy)
                             h = math.max(h, nxt:GetHeight())
                             i = i + 2
                         else
@@ -6759,6 +6768,9 @@ local function MakePage(kit, ui)
                     y = yy + BLOCK_GAP
                 end
             end
+        end
+        for _, row in ipairs(page.rows) do
+            if not row.keep and row:IsShown() then row:Hide() end
         end
         page:SetHeight(y)
     end
