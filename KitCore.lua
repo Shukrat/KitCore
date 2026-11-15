@@ -6861,6 +6861,7 @@ end
 function Kit:PaintOptions()
     local ui = self.optionsUI
     if not (ui and ui.shown) then return end
+    if ui.headerArt then pcall(ui.headerArt) end -- (the center icon may have changed)
     Painted(self, ui.shown)
     self:RelayoutOptions()
 end
@@ -6889,8 +6890,29 @@ function Kit:BuildOptions()
     local art = f:CreateTexture(nil, "ARTWORK")
     art:SetSize(26, 26)
     art:SetPoint("TOPLEFT", OPT.pad - 2, -8)
-    local tex = self.cfg.minimapArt and (type(self.cfg.minimapArt) == "function" and self.cfg.minimapArt(self) or self.cfg.minimapArt)
-    if tex then art:SetTexture(tex, nil, nil, "LINEAR") else art:Hide() end
+    -- The kit's own look: its minimap art, or else the icon in the middle of
+    -- the kit as it is now (its center icon setting), or the minimap icon.
+    local function HeaderArt()
+        local tex = self.cfg.minimapArt and (type(self.cfg.minimapArt) == "function" and self.cfg.minimapArt(self) or self.cfg.minimapArt)
+        if tex then
+            art:SetTexture(tex, nil, nil, "LINEAR")
+            art:SetTexCoord(0, 1, 0, 1)
+        else
+            local icon = self.kit and self.kit.icon
+            tex = icon and icon:GetTexture()
+            if tex then
+                art:SetTexture(tex)
+                art:SetTexCoord(icon:GetTexCoord())
+            else
+                tex = self.cfg.minimapIcon and (type(self.cfg.minimapIcon) == "function" and self.cfg.minimapIcon(self) or self.cfg.minimapIcon)
+                art:SetTexture(tex or 134400)
+                art:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+            end
+        end
+        art:Show()
+    end
+    pcall(HeaderArt)
+    ui.headerArt = HeaderArt
     local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     title:SetPoint("LEFT", art, "RIGHT", 8, 0)
     title:SetText(self.name .. " settings")
@@ -7114,7 +7136,10 @@ function Kit:BuildOptions()
     end)
     ui.scroll, ui.child, ui.UpdateBar = scroll, child, UpdateBar
     ui.frame = f
-    f:SetScript("OnShow", function() self:PaintOptions() end)
+    f:SetScript("OnShow", function()
+        pcall(HeaderArt)
+        self:PaintOptions()
+    end)
     self.optionsUI = ui
     ShowPage(self, 1)
 end
