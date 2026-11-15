@@ -60,7 +60,7 @@ local addonName, ns = ...
 -- all come with it; the kit's own layout closes up round the gap. See "Bars".
 ---------------------------------------------------------------------------
 
-local VERSION = 23
+local VERSION = 24
 -- Builds of the same VERSION (test builds while a version is in a pull
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
@@ -415,7 +415,12 @@ C.BASE_CHAR = {
 --                       end of Look. S.Subheader("text", when)
 --                       starts a group inside a section; with when (a function),
 --                       the settings window shows the group only while it's true.
---   Menu(kit, root)     the kit's own lines in its right-click menu, between
+--   FirstSettings(kit, S)  pages of the kit's own at the top of the "Kit" group
+--                       in the settings window (v24)
+--   buttonTable   true: the kit sets its buttons' pinning (and which reminders go
+--                 in the reminder panel) in a table of its own (S.Table, v24), so
+--                 Kit Core leaves out its "Pinned buttons" page and the panel's list
+--   Menu(kit, root)    the kit's own lines in its right-click menu, between
 --                 "Pin in place" and "Settings" (root is the game's menu
 --                 description: root:CreateCheckbox, root:CreateButton, ...;
 --                 kit:MenuToggle(root, label, dbKey, after) adds an on/off line)
@@ -3715,92 +3720,140 @@ function Kit:OpenSettings()
     end
 end
 
--- Every setting, in order, through a builder S with Header, Checkbox,
--- Slider, Dropdown and Button. The game's options page (BuildSettings) and
+-- Every setting, in order, through a builder S with Header, Subheader,
+-- Checkbox, Slider, Dropdown and Button (and, in the kit's own window, Note,
+-- Choice, Grid and Table: v24). The game's options page (BuildSettings) and
 -- the kit's own window (OpenOptions) both draw from it.
+--
+-- The window (v24) shows each setting's description as its tooltip, not
+-- under it, so a description can say all it needs to without making the
+-- page long. Keep the names short and plain: they're what you read.
+--
+-- A kit can put pages of its own at the top of the "Kit" group
+-- (cfg.FirstSettings), and one with cfg.buttonTable sets its buttons' show,
+-- pin, glow, pop-out and reminder panel choices in one table there (S.Table)
+-- instead of on Kit Core's "Pinned buttons" page and its own lists.
 function Kit:SettingsList(S)
     local cfg, db, cdb = self.cfg, self.db, self.cdb
     local pct = function(v) return math.floor(v * 100 + 0.5) .. "%" end
     local refresh = function() self:Refresh(false) end
+    local window = S.window
+    local listed = cfg.slots
+    if cfg.menuOrder then
+        listed = {}
+        for _, key in ipairs(cfg.menuOrder) do listed[#listed + 1] = self.slotByKey[key] end
+    end
 
     S.Group("Kit")
+    if cfg.FirstSettings then cfg.FirstSettings(self, S) end
+
     S.Header("General")
+    if S.Grid then S.Grid(2) end
     S.Checkbox(db, "shown", "Show " .. self.name,
         "Turn off to hide the whole kit (its button and every slot) without uninstalling it.",
         true, function() self:SetShownKit(db.shown) end)
-    S.Checkbox(db, "locked", "Pin in place", "Stop the kit from being dragged. Also in the kit's right-click menu.", false)
-    S.Checkbox(db, "minimapButton", "Show minimap button",
+    S.Checkbox(db, "locked", "Lock it in place", "Stop the kit from being dragged. Also in the kit's right-click menu.", false)
+    S.Checkbox(db, "minimapButton", "Minimap button",
         "Left-click for these settings, right-click to open the kit, drag to move it.", true,
         function() self:ApplyMinimap() end)
     S.Checkbox(db, "chatNotices", "Chat messages",
         "Notices in chat when something changes (pinned in place, always shown, snoozed and the like). Slash commands still answer in chat.", true)
+    if S.Grid then S.Grid(1) end
     if cfg.GeneralSettings then cfg.GeneralSettings(self, S) end
-    S.Subheader("Combat")
+    S.Subheader("In combat")
     if not self.cfg.alwaysHideInCombat then
-        S.Checkbox(db, "hideInCombat", "Hide in combat", "Hide the kit while you're in combat.", false,
+        S.Checkbox(db, "hideInCombat", "Hide the kit in combat", "Hide the kit while you're in combat.", false,
             function() self:ApplyCombatHide() end)
     end
-    S.Slider(db, "flyoutHide", "Drawer close delay in combat",
+    S.Slider(db, "flyoutHide", "Drawers close after",
         "In combat a drawer can't close when you click elsewhere, so it closes by itself this long after the mouse leaves it and its slot.",
         0.5, 0.2, 2, 0.1, function(v) return ("%.1fs"):format(v) end)
     if cfg.CombatSettings then cfg.CombatSettings(self, S) end
 
+    S.Subheader("Fading")
+    local rearm = function() self:ArmOpenFade() self:ApplyFade() end
+    local function Fading() return (db.fadeIdle or db.fadeOpen) and true or false end
+    if window then
+        S.Choice("Fade the kit",
+            "When closed: the closed kit and its pinned slots fade until you mouse over them. When left open: the open kit fades once the mouse has been off it a while (it stays open). Mouse over to bring it back.",
+            {
+                { "never", "Never" },
+                { "idle", "When closed" },
+                { "open", "When left open" },
+                { "both", "Both" },
+            },
+            function()
+                if db.fadeIdle and db.fadeOpen then return "both" end
+                return (db.fadeIdle and "idle") or (db.fadeOpen and "open") or "never"
+            end,
+            function(v)
+                db.fadeIdle = (v == "idle" or v == "both")
+                db.fadeOpen = (v == "open" or v == "both")
+                refresh()
+                rearm()
+            end)
+    else
+        S.Checkbox(db, "fadeIdle", "Fade when idle",
+            "With the kit closed, it and its pinned slots fade until you mouse over them.", false, refresh)
+        S.Checkbox(db, "fadeOpen", "Fade when left open",
+            "With the kit open, it and its slots fade once the mouse has been off them for a while. They stay open, and come back when you mouse over them.",
+            false, rearm)
+    end
+    if S.Only then S.Only(function() return db.fadeOpen and true or false end) end
+    S.Slider(db, "fadeOpenAfter", "Fade an open kit after",
+        "How long the mouse has to be off the open kit before it fades.",
+        5, 1, 30, 1, function(v) return ("%ds"):format(v) end, rearm)
+    if S.Only then S.Only(Fading) end
+    S.Slider(db, "fadeAmount", "How faded",
+        "How see-through the kit's slots get when it fades: 0% is gone until you mouse over. The kit button fades half as much, so you can still find it.",
+        0.4, 0, 0.9, 0.05, function(v) return ("%d%%"):format(math.floor(v * 100 + 0.5)) end, function() self:ApplyFade() end)
+
     S.Header("Look")
-    S.Slider(db, "scale", "Overall size", "The whole kit: the center icon, the buttons round it and the space between them.", 1, 0.6, 1.6, 0.05, pct,
+    S.Subheader("Size")
+    S.Slider(db, "scale", "Whole kit", "The whole kit: the center icon, the buttons round it and the space between them.", 1, 0.6, 1.6, 0.05, pct,
         function() self:ApplyPosition() end)
-    S.Slider(db, "kitSize", "Center icon size", "Just the icon in the middle: the buttons round it stay where they are.",
+    S.Slider(db, "kitSize", "Center icon", "Just the icon in the middle: the buttons round it stay where they are.",
         1, 0.5, 1, 0.05, pct, function() self:ApplyPosition() end)
-    S.Slider(db, "buttonSize", "Button size", "Just the buttons round the center icon: each gets smaller in its place, so they spread out a little.",
+    S.Slider(db, "buttonSize", "Buttons", "Just the buttons round the center icon: each gets smaller in its place, so they spread out a little.",
         1, 0.6, 1, 0.05, pct, function() self:ApplyPosition() end)
-    S.Slider(db, "spread", "Distance from center", "How far the buttons sit from the center icon: lower brings them in close, higher spreads them out.",
+    S.Slider(db, "spread", "Spread", "How far the buttons sit from the center icon: lower brings them in close, higher spreads them out.",
         1, 0.8, 1.5, 0.05, pct, function() self:Refresh(false) self:ApplyPosition() end)
-    S.Dropdown(db, "facing", "Layout direction",
-        "Which way the slots lay out round the kit while it's floating (on a screen edge they always face the middle of the screen).",
+    S.Subheader("Layout")
+    S.Dropdown(db, "facing", "Buttons open toward",
+        "Which way the slots lay out round the kit while it's floating. On a screen edge they always face the middle of the screen.",
         "up", {
             { "up", "Up" },
             { "down", "Down" },
             { "left", "Left" },
             { "right", "Right" },
         }, function() self:SetFacing(db.facing) end)
-    S.Checkbox(db, "tooltipDefault", "Default tooltip position",
-        "Show slot tooltips where the game normally shows tooltips, instead of beside the slot.", false)
+    if window then
+        S.Choice("Tooltips", "Where a slot's tooltip shows: beside the slot, or where the game normally puts tooltips.",
+            { { "beside", "Beside the slot" }, { "default", "Game's spot" } },
+            function() return db.tooltipDefault and "default" or "beside" end,
+            function(v) db.tooltipDefault = (v == "default") end)
+    else
+        S.Checkbox(db, "tooltipDefault", "Default tooltip position",
+            "Show slot tooltips where the game normally shows tooltips, instead of beside the slot.", false)
+    end
     if cfg.LookSettings then cfg.LookSettings(self, S) end
 
-    S.Header("Fading")
-    S.Checkbox(db, "fadeIdle", "Fade when idle",
-        "With the kit closed, it and its pinned slots fade until you mouse over them.", false, refresh)
-    local rearm = function() self:ArmOpenFade() self:ApplyFade() end
-    S.Checkbox(db, "fadeOpen", "Fade when left open",
-        "With the kit open, it and its slots fade once the mouse has been off them for a while. They stay open, and come back when you mouse over them.",
-        false, rearm)
-    S.Slider(db, "fadeOpenAfter", "Fade open kit after",
-        "How long the mouse has to be off the open kit before it fades.",
-        5, 1, 30, 1, function(v) return ("%ds"):format(v) end, rearm)
-    S.Slider(db, "fadeAmount", "Faded opacity",
-        "How see-through the kit's slots get when it fades (when idle or left open): 0% is gone until you mouse over. The kit button fades half as much, so you can still find it.",
-        0.4, 0, 0.9, 0.05, function(v) return ("%d%%"):format(math.floor(v * 100 + 0.5)) end, function() self:ApplyFade() end)
-
-    S.Header("Pinned buttons")
-    local listed = cfg.slots
-    if cfg.menuOrder then
-        listed = {}
-        for _, key in ipairs(cfg.menuOrder) do listed[#listed + 1] = self.slotByKey[key] end
-    end
-    for _, slot in ipairs(listed) do
-        if not slot.noPin then
-            S.Checkbox(cdb.pinned, slot.key, slot.label,
-                "Keep it out when the kit is closed (this character only). You can also shift-right-click the slot.",
-                false, refresh, "pin_" .. slot.key)
+    if not (cfg.buttonTable and window) then
+        S.Header("Pinned buttons")
+        if S.Grid then S.Grid(2) end
+        for _, slot in ipairs(listed) do
+            if not slot.noPin then
+                S.Checkbox(cdb.pinned, slot.key, slot.label,
+                    "Keep it out when the kit is closed (this character only). You can also shift-right-click the slot.",
+                    false, refresh, "pin_" .. slot.key)
+            end
         end
+        if S.Grid then S.Grid(1) end
+        if cfg.PinSettings then cfg.PinSettings(self, S) end
+        S.Button("Slot choices", "Reset", "Put every slot back to its starting choice, and every list back in its starting order.", function()
+            self:ResetSlotChoices()
+        end)
     end
-    if cfg.PinSettings then cfg.PinSettings(self, S) end
-    S.Button("Slot choices", "Reset", "Put every slot back to its starting choice, and every list back in its starting order.", function()
-        if InCombatLockdown() then self:Print("That can only change out of combat.") return end
-        wipe(cdb.picks)
-        wipe(cdb.order)
-        self:Refresh(false)
-        self:Print("Slot choices reset.")
-    end)
 
     -- Bars (v23), for a kit that has them.
     if cfg.bars then
@@ -3812,23 +3865,21 @@ function Kit:SettingsList(S)
         S.Button("Layout", "Reset to defaults", "Put every button back where it started: off the bars, and the kit's own buttons in their usual places and order.", function() self:ResetLayout() end)
     end
 
-    -- The reminder panel (v21), as a section of its own in the kit's group,
-    -- right after the kit's "Reminders" (or at the end of the kit's own
-    -- settings if it has none): whether this kit uses it, and which of its
+    -- The reminder panel (v21): whether this kit uses it, and which of its
     -- reminders go there, are this kit's own; the panel's layout and spot are
-    -- shared by every kit.
+    -- shared by every kit. Its own page: in the "Kit" group for a kit with a
+    -- button table (which ticks the reminders that go there), otherwise right
+    -- after the kit's "Reminders" (or at the end of the kit's own settings if
+    -- it has none).
     local panelDone = false
     local function PanelSection()
         if panelDone then return end
         panelDone = true
-        -- The reminder panel (v21): whether this kit uses it, and which of its
-        -- reminders go there, are this kit's own; the panel's layout and spot
-        -- are shared by every kit.
         S.Header("Reminder panel")
         local rp = db.reminderPanel
         local shared = function() C.SharePanel(rp) end
         S.Checkbox(rp, "on", "Put " .. self.name .. "'s reminders in the panel",
-            "One panel for all your kits that you can put anywhere. With this on and " .. self.name .. " closed, the reminders ticked below show there, full size, instead of beside the kit. They stay in the panel while the kit is open too (and in their places in the kit). Each kit has its own switch, so some kits' reminders can be in the panel and others by their kit. A pinned button always stays by its kit.",
+            "One panel for all your kits that you can put anywhere. With this on and " .. self.name .. " closed, its reminders show there, full size, instead of beside the kit. They stay in the panel while the kit is open too (and in their places in the kit). Each kit has its own switch, so some kits' reminders can be in the panel and others by their kit. A pinned button always stays by its kit.",
             false, shared, "panelOn")
         local panelOn = function() return rp.on and true or false end
         S.Subheader("The panel (every kit)", panelOn)
@@ -3852,31 +3903,34 @@ function Kit:SettingsList(S)
         S.Slider(rp, "gap", "Spacing", "Room between the buttons.",
             4, 0, 16, 1, function(v) return tostring(v) end, shared)
         S.Checkbox(rp, "snap", "Snap when placing", "Line the panel up with the grid, the middle of the screen and your kit buttons as you drag it.", true, shared, "panelSnap")
+        if S.Only then S.Only(function() return rp.snap ~= false end) end
         S.Slider(rp, "grid", "Grid size", "How far apart the grid's lines are while placing it.",
             16, 8, 32, 8, function(v) return tostring(v) end, shared)
+        -- (A kit with a button table ticks these in its table.)
+        if cfg.buttonTable and window then return end
         local pops = {}
         for _, slot in ipairs(listed) do
             if not slot.noPanel and slot.Pop then pops[#pops + 1] = slot end
         end
-        local function Ticks(group, tip)
-            for _, slot in ipairs(group) do
-                S.Checkbox(db.panelSlots, slot.key, slot.label, tip, self:PanelDefault(slot), refresh, "panel_" .. slot.key)
-            end
-        end
         if #pops > 0 then
             S.Subheader("Reminders in the panel", panelOn)
-            Ticks(pops, "When it pops out with the kit closed (missing or wanted), it shows in the panel. Pinned, it stays by the kit.")
+            if S.Grid then S.Grid(2) end
+            for _, slot in ipairs(pops) do
+                S.Checkbox(db.panelSlots, slot.key, slot.label,
+                    "When it pops out with the kit closed (missing or wanted), it shows in the panel. Pinned, it stays by the kit.",
+                    self:PanelDefault(slot), refresh, "panel_" .. slot.key)
+            end
+            if S.Grid then S.Grid(1) end
         end
     end
+    if cfg.buttonTable and window then PanelSection() end
 
-    S.Header("Key bindings")
-    S.Button("Key bindings", "Open", "Bind each slot, and opening the kit.", function()
-        if Settings.KEYBINDINGS_CATEGORY_ID then
-            Settings.OpenToCategory(Settings.KEYBINDINGS_CATEGORY_ID)
-        else
-            self:Print("Open Esc > Options > Keybindings and look for " .. self.name .. ".")
-        end
-    end)
+    -- (Key bindings: a link at the foot of the window's list, v24. The
+    -- game's options page keeps its button.)
+    if not window then
+        S.Header("Key bindings")
+        S.Button("Key bindings", "Open", "Bind each slot, and opening the kit.", function() self:OpenKeyBindings() end)
+    end
 
     -- The kit's own settings, under its name unless it opens with a header
     -- (and its own group in the window's list unless it names one).
@@ -3897,6 +3951,24 @@ function Kit:SettingsList(S)
     if cfg.Settings then cfg.Settings(self, KS) end
     S.Group(self.name) -- (a kit with no "Reminders": at the end of its own group)
     PanelSection()
+end
+
+-- Every slot back to its starting choice, and every list in its starting order.
+function Kit:ResetSlotChoices()
+    if InCombatLockdown() then self:Print("That can only change out of combat.") return end
+    wipe(self.cdb.picks)
+    wipe(self.cdb.order)
+    self:Refresh(false)
+    self:Print("Slot choices reset.")
+end
+
+function Kit:OpenKeyBindings()
+    if Settings and Settings.KEYBINDINGS_CATEGORY_ID then
+        if self.optionsUI and self.optionsUI.frame then self.optionsUI.frame:Hide() end
+        Settings.OpenToCategory(Settings.KEYBINDINGS_CATEGORY_ID)
+    else
+        self:Print("Open Esc > Options > Keybindings and look for " .. self.name .. ".")
+    end
 end
 
 function Kit:BuildSettings()
@@ -3925,6 +3997,12 @@ function Kit:BuildSettings()
     function S.Subheader(text) pendingSub = text end -- (its "when" is the window's only)
     function S.Group() end -- (the window's nav only)
     function S.Only() end -- (the window's only)
+    -- (the window's only, v24: a line of words, a choice read and stored by
+    -- functions, side-by-side checkboxes, and a kit's table of buttons)
+    function S.Note() end
+    function S.Choice() end
+    function S.Grid() end
+    function S.Table() end
     local function Flush()
         if CreateSettingsListSectionHeaderInitializer then
             if pending then layout:AddInitializer(CreateSettingsListSectionHeaderInitializer(pending)) end
@@ -5683,10 +5761,12 @@ function Kit:ToggleEdit()
     if self.optionsUI then self:PaintOptions() end
 end
 
--- The list, gathered into sections: { title, items = { item, ... } }.
+-- The list, gathered into sections: { title, group, items = { item, ... } }.
+-- Each sub-heading is an item of its own (kind "sub") that starts a group
+-- of the items after it; the window draws each group as a card.
 function Kit:CollectOptions()
     local sections, cur, pending, pendingSub, when, group = {}, nil, nil, nil, nil, nil
-    local itemWhen
+    local itemWhen, cols
     local function Add(item)
         if pending or not cur then
             cur = { title = pending or self.name, items = {}, group = group }
@@ -5694,7 +5774,9 @@ function Kit:CollectOptions()
             pending = nil
         end
         if pendingSub then
-            cur.items[#cur.items + 1] = { kind = "sub", name = pendingSub, when = when }
+            pendingSub.when = when
+            pendingSub.section = cur
+            cur.items[#cur.items + 1] = pendingSub
             pendingSub = nil
         end
         -- (S.Only: this item alone, inside its group's own "when")
@@ -5705,17 +5787,26 @@ function Kit:CollectOptions()
         else
             item.when = only or grp
         end
+        if cols and cols > 1 and item.kind == "check" then item.cols = 2 end
+        item.section = cur
         cur.items[#cur.items + 1] = item
     end
-    local S = {}
-    -- The next setting only shows while fn says true (the window only).
+    local S = { window = true }
+    -- The next setting only shows while fn says true.
     function S.Only(fn) itemWhen = fn end
-    function S.Header(text) pending, pendingSub, when = text, nil, nil end
-    -- A group inside a section. when (optional): a function; the window shows
-    -- the group only while it says true (settings for one style, say).
-    function S.Subheader(text, w) pendingSub, when = text, w end
+    function S.Header(text) pending, pendingSub, when, cols = text, nil, nil, nil end
+    -- A group inside a section, drawn as a card under its title. when
+    -- (optional): a function; the group only shows while it says true
+    -- (settings for one style, say). opts.fold: the group starts folded away
+    -- under its title, for settings few people need (click the title).
+    function S.Subheader(text, w, opts)
+        pendingSub, when, cols = { kind = "sub", name = text, fold = opts and opts.fold or nil }, w, nil
+    end
     -- A label over the next sections in the window's list down the left.
     function S.Group(text) group = text end
+    -- Grid(2): the checkboxes that follow sit two to a line (until Grid(1)
+    -- or the next heading).
+    function S.Grid(n) cols = n end
     function S.Checkbox(tbl, key, name, tip, default, fn)
         Add({ kind = "check", tbl = tbl, key = key, name = name, tip = tip, default = default, fn = fn })
     end
@@ -5723,17 +5814,44 @@ function Kit:CollectOptions()
         Add({ kind = "slider", tbl = tbl, key = key, name = name, tip = tip, default = default,
             min = min, max = max, step = step, fmt = fmt, fn = fn })
     end
+    -- (Up to four short choices show as a row of buttons, more as a menu.)
     function S.Dropdown(tbl, key, name, tip, default, list, fn)
         Add({ kind = "dropdown", tbl = tbl, key = key, name = name, tip = tip, default = default, list = list, fn = fn })
     end
+    -- A choice whose value is read and stored by functions (one choice over
+    -- two switches, say).
+    function S.Choice(name, tip, list, get, set, fn)
+        Add({ kind = "dropdown", name = name, tip = tip, list = list, get = get, set = set, fn = fn })
+    end
     function S.Button(name, text, tip, fn)
         Add({ kind = "button", name = name, text = text, tip = tip, fn = fn })
+    end
+    -- A line of small grey words, for the little that has to be read.
+    function S.Note(text)
+        Add({ kind = "note", name = "", tip = text })
+    end
+    -- A table of the kit's buttons, a row each, with a tick box per column
+    -- (show, pinned, glow...). spec = {
+    --   cols = { { key, label, tip }, ... },
+    --   rows = {
+    --     { group = "Round the orb" },       -- a heading between rows
+    --     { label, icon = function, sub = true (indented),
+    --       hint = "a line shown when the row is opened",
+    --       dim = "show" (the column whose tick, off, greys the row),
+    --       cells = { [colKey] = { tbl, key, default, fn, off = function } },
+    --       more = { { kind = "check", tbl, key, name, tip, default, fn, when },
+    --                { kind = "chips", name, items = { { tbl, key, name, default, fn }, ... } } } },
+    --   } }
+    -- A cell's off() saying true greys it out and it can't be clicked.
+    function S.Table(spec)
+        Add({ kind = "table", spec = spec, name = spec.name or "", tip = "" })
     end
     self:SettingsList(S)
     return sections
 end
 
 local function Value(item)
+    if item.get then return item.get() end
     local v = item.tbl[item.key]
     if v == nil then v = item.default end
     return v
@@ -5742,65 +5860,115 @@ end
 -- A change from the window: store it, run its follow-up, and keep the
 -- game's options page in step.
 function Kit:OptionChanged(item, v)
-    item.tbl[item.key] = v
+    if item.set then
+        local ok, err = pcall(item.set, v)
+        if not ok then geterrorhandler()(err) end
+    else
+        item.tbl[item.key] = v
+    end
     if item.fn then
         local ok, err = pcall(item.fn, v)
         if not ok then geterrorhandler()(err) end
     end
     if self.OnSettingsChanged then pcall(self.OnSettingsChanged) end
-    -- Groups shown only for some choices: lay the page out again.
-    local ui = self.optionsUI
-    local page = ui and ui.current and ui.pages[ui.current]
-    if page and page.dynamic then
-        page.Relayout()
-        ui.child:SetHeight(page:GetHeight())
-        ui.UpdateBar()
-    end
+    -- Settings shown only for some choices, and ones that follow others:
+    -- paint the page and lay it out again.
+    self:PaintOptions()
 end
 
--- Label and description down the left of a row; returns the bottom offset.
--- (Widths are set outright so the wrapped heights can be measured now.)
-local function Words(row, item, left, right, top, w)
-    local tw = math.max(60, w - left - right)
-    row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    row.label:SetPoint("TOPLEFT", left, -top)
-    row.label:SetWidth(tw)
-    row.label:SetJustifyH("LEFT")
-    row.label:SetText(item.name)
-    local h = top + row.label:GetStringHeight()
-    if item.tip and item.tip ~= "" then
-        row.desc = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-        row.desc:SetPoint("TOPLEFT", row.label, "BOTTOMLEFT", 0, -3)
-        row.desc:SetWidth(tw)
-        row.desc:SetJustifyH("LEFT")
-        row.desc:SetSpacing(2)
-        row.desc:SetText(item.tip)
-        h = h + 3 + row.desc:GetStringHeight()
-    end
-    return h
+-- The page in view, laid out again (something came or went, or grew).
+function Kit:RelayoutOptions()
+    local ui = self.optionsUI
+    local page = ui and ui.shown
+    if not page then return end
+    page.Relayout()
+    ui.child:SetHeight(page:GetHeight())
+    ui.UpdateBar()
+end
+
+-- A setting's description, as its tooltip: beside the window, level with
+-- the row (v24; it used to sit under every setting).
+local function Tip(f, item, anchor)
+    f:HookScript("OnEnter", function(self)
+        if not (item.tip and item.tip ~= "") then return end
+        GameTooltip:SetOwner(self, "ANCHOR_NONE")
+        GameTooltip:ClearAllPoints()
+        local win = anchor and anchor()
+        if win then
+            GameTooltip:SetPoint("TOP", self, "TOP", 0, 4)
+            GameTooltip:SetPoint("LEFT", win, "RIGHT", 4, 0)
+        else
+            GameTooltip:SetPoint("BOTTOMLEFT", self, "TOPRIGHT", 0, 0)
+        end
+        local name = item.name
+        if name and name ~= "" then
+            GameTooltip:SetText(name, 1, 0.82, 0)
+            GameTooltip:AddLine(item.tip, 0.9, 0.9, 0.9, true)
+        else
+            GameTooltip:SetText(item.tip, 0.9, 0.9, 0.9, 1, true)
+        end
+        GameTooltip:Show()
+    end)
+    f:HookScript("OnLeave", function() GameTooltip:Hide() end)
 end
 
 local ROW = {}
+local ROW_H = 22      -- a one-line row
+local SLIDER_W = 150  -- a slider's track
+local CARD_PAD = 12   -- inside a card
+local ROW_GAP = 8     -- between rows
+local BLOCK_GAP = 12  -- between cards
+local COL_GAP = 16    -- between two side-by-side checkboxes
+
+-- A small dark button with a gold edge and gold words.
+local function GoldButton(parent, text, h)
+    local b = CreateFrame("Button", nil, parent)
+    Well(b, 0.55)
+    b.text = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    b.text:SetPoint("CENTER")
+    b.text:SetText(text)
+    b:SetSize(math.max(64, math.floor(b.text:GetStringWidth() + 24)), h or 22)
+    local hl = b:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetAllPoints()
+    hl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.15)
+    return b
+end
+
+-- A label down the left of a row, `room` wide; returns the row's height.
+local function Label(row, item, room, x)
+    row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    row.label:SetPoint("LEFT", x or 0, 0)
+    row.label:SetWidth(math.max(60, room))
+    row.label:SetJustifyH("LEFT")
+    row.label:SetText(item.name)
+    return math.max(ROW_H, math.ceil(row.label:GetStringHeight()) + 6)
+end
+
+-- A tick box (16 square, a dark well with the gold edge).
+local function TickBox(parent)
+    local box = CreateFrame("Frame", nil, parent)
+    box:SetSize(16, 16)
+    Well(box, 0.7)
+    box.tick = box:CreateTexture(nil, "OVERLAY")
+    box.tick:SetPoint("CENTER", 1, 0)
+    box.tick:SetSize(22, 22)
+    box.tick:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
+    box.tick:SetVertexColor(1, 0.85, 0.4)
+    return box
+end
 
 function ROW.check(kit, parent, item, w)
     local row = CreateFrame("Button", nil, parent)
     row:SetWidth(w)
-    local box = CreateFrame("Frame", nil, row)
-    box:SetSize(16, 16)
-    box:SetPoint("TOPLEFT", 2, -3)
-    Well(box, 0.7)
-    local tick = box:CreateTexture(nil, "OVERLAY")
-    tick:SetPoint("CENTER", 1, 0)
-    tick:SetSize(22, 22)
-    tick:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
-    tick:SetVertexColor(1, 0.85, 0.4)
-    local h = Words(row, item, 28, 4, 3, w)
-    row:SetHeight(h + 4)
+    local box = TickBox(row)
+    box:SetPoint("LEFT", 2, 0)
+    row:SetHeight(Label(row, item, w - 30, 26))
     local hl = row:CreateTexture(nil, "HIGHLIGHT")
-    hl:SetPoint("TOPLEFT", -6, 2)
-    hl:SetPoint("BOTTOMRIGHT", 6, -2)
+    hl:SetPoint("TOPLEFT", -4, 1)
+    hl:SetPoint("BOTTOMRIGHT", 4, -1)
     hl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.07)
-    function row.Paint() tick:SetShown(Value(item) and true or false) end
+    Tip(row, item, kit.optAnchor)
+    function row.Paint() box.tick:SetShown(Value(item) and true or false) end
     row:SetScript("OnClick", function()
         kit:OptionChanged(item, not Value(item))
         row.Paint()
@@ -5811,15 +5979,16 @@ end
 function ROW.slider(kit, parent, item, w)
     local row = CreateFrame("Frame", nil, parent)
     row:SetWidth(w)
-    local h = Words(row, item, 0, 64, 0, w)
+    row:EnableMouse(true)
+    row:SetHeight(Label(row, item, w - SLIDER_W - 60))
     local val = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    val:SetPoint("TOPRIGHT", 0, 0)
+    val:SetPoint("RIGHT", 0, 0)
+    val:SetWidth(44)
     val:SetJustifyH("RIGHT")
     local s = CreateFrame("Slider", nil, row)
     s:SetOrientation("HORIZONTAL")
-    s:SetPoint("TOPLEFT", 6, -(h + 10))
-    s:SetPoint("TOPRIGHT", -6, -(h + 10))
-    s:SetHeight(16)
+    s:SetPoint("RIGHT", val, "LEFT", -8, 0)
+    s:SetSize(SLIDER_W, 16)
     s:SetMinMaxValues(item.min, item.max)
     if s.SetValueStep then s:SetValueStep(item.step) end
     if s.SetObeyStepOnDrag then s:SetObeyStepOnDrag(true) end
@@ -5833,13 +6002,13 @@ function ROW.slider(kit, parent, item, w)
     fill:SetHeight(4)
     fill:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.75)
     local thumb = s:CreateTexture(nil, "OVERLAY")
-    thumb:SetSize(10, 16)
+    thumb:SetSize(8, 14)
     thumb:SetColorTexture(1, 0.85, 0.45, 1)
     s:SetThumbTexture(thumb)
     local function Show(v)
         val:SetText(item.fmt and item.fmt(v) or tostring(v))
         local k = (item.max > item.min) and (v - item.min) / (item.max - item.min) or 0
-        fill:SetWidth(math.max(1, k * (s:GetWidth() or 1)))
+        fill:SetWidth(math.max(1, k * SLIDER_W))
     end
     local painting
     function row.Paint()
@@ -5855,12 +6024,12 @@ function ROW.slider(kit, parent, item, w)
             v = tonumber(("%.4f"):format(v))
         end
         Show(v)
-        if painting or v == item.tbl[item.key] then return end
+        if painting or v == Value(item) then return end
         kit:OptionChanged(item, v)
     end)
-    s:SetScript("OnSizeChanged", function() Show(Value(item)) end)
     s:EnableMouseWheel(false)
-    row:SetHeight(h + 30)
+    Tip(row, item, kit.optAnchor)
+    Tip(s, item, kit.optAnchor)
     return row
 end
 
@@ -5869,14 +6038,81 @@ local function OptionLabel(item, v)
     return tostring(v)
 end
 
+-- Up to four short choices: a row of buttons, the chosen one lit.
+local function Segments(kit, row, item, w)
+    if #item.list > 4 then return end
+    local probe = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    local widths, total = {}, 0
+    for i, o in ipairs(item.list) do
+        probe:SetText(o[2])
+        widths[i] = math.floor(probe:GetStringWidth() + 20)
+        total = total + widths[i]
+    end
+    probe:Hide()
+    if total > w - 110 then return end
+    local box = CreateFrame("Frame", nil, row)
+    box:SetSize(total, 22)
+    box:SetPoint("RIGHT", 0, 0)
+    GoldEdge(box, 0.45)
+    local bg = box:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(0, 0, 0, 0.5)
+    local buttons, x = {}, 0
+    for i, o in ipairs(item.list) do
+        local b = CreateFrame("Button", nil, box)
+        b:SetSize(widths[i], 22)
+        b:SetPoint("LEFT", x, 0)
+        x = x + widths[i]
+        b.sel = b:CreateTexture(nil, "ARTWORK")
+        b.sel:SetAllPoints()
+        b.sel:SetColorTexture(1, 0.82, 0, 0.15)
+        if i > 1 then
+            local div = b:CreateTexture(nil, "BORDER")
+            div:SetPoint("TOPLEFT")
+            div:SetPoint("BOTTOMLEFT")
+            div:SetWidth(1)
+            div:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.25)
+        end
+        local hl = b:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetAllPoints()
+        hl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.1)
+        b.text = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        b.text:SetPoint("CENTER")
+        b.text:SetText(o[2])
+        b.value = o[1]
+        b:SetScript("OnClick", function()
+            kit:OptionChanged(item, o[1])
+            row.Paint()
+        end)
+        Tip(b, item, kit.optAnchor)
+        buttons[i] = b
+    end
+    function row.Paint()
+        local v = Value(item)
+        for _, b in ipairs(buttons) do
+            local on = b.value == v
+            b.sel:SetShown(on)
+            if on then b.text:SetTextColor(1, 0.82, 0) else b.text:SetTextColor(0.75, 0.72, 0.63) end
+        end
+    end
+    return total
+end
+
 function ROW.dropdown(kit, parent, item, w)
     local row = CreateFrame("Frame", nil, parent)
     row:SetWidth(w)
-    local bw = 190
-    local h = Words(row, item, 0, bw + 14, 3, w)
+    row:EnableMouse(true)
+    Tip(row, item, kit.optAnchor)
+    local segW = Segments(kit, row, item, w)
+    if segW then
+        row:SetHeight(Label(row, item, w - segW - 12))
+        return row
+    end
+    local bw = 180
+    row:SetHeight(Label(row, item, w - bw - 12))
     local b = CreateFrame("Button", nil, row)
     b:SetSize(bw, 22)
-    b:SetPoint("TOPRIGHT", 0, 0)
+    b:SetPoint("RIGHT", 0, 0)
     Well(b, 0.7)
     local text = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     text:SetPoint("LEFT", 8, 0)
@@ -5890,6 +6126,7 @@ function ROW.dropdown(kit, parent, item, w)
     local hl = b:CreateTexture(nil, "HIGHLIGHT")
     hl:SetAllPoints()
     hl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.12)
+    Tip(b, item, kit.optAnchor)
     function row.Paint() text:SetText(OptionLabel(item, Value(item))) end
     b:SetScript("OnClick", function(self)
         if MenuUtil and MenuUtil.CreateContextMenu then
@@ -5910,106 +6147,492 @@ function ROW.dropdown(kit, parent, item, w)
             row.Paint()
         end
     end)
-    row:SetHeight(math.max(h, 22) + 4)
     return row
 end
 
--- A sub-heading inside a section: small gold words over a faint gold line.
+-- A card's title: gold words. A folding one is a button, with an arrow.
+local function FoldKey(item)
+    return (item.section and item.section.title or "") .. "/" .. item.name
+end
+
 function ROW.sub(kit, parent, item, w)
-    local row = CreateFrame("Frame", nil, parent)
+    local row = CreateFrame("Button", nil, parent)
     row:SetWidth(w)
+    row:SetHeight(18)
+    local x = 0
+    if item.fold then
+        row.arrow = row:CreateTexture(nil, "OVERLAY")
+        row.arrow:SetSize(12, 12)
+        row.arrow:SetPoint("LEFT", 0, 0)
+        row.arrow:SetTexture("Interface\\Buttons\\Arrow-Down-Up")
+        row.arrow:SetVertexColor(1, 0.85, 0.45)
+        x = 16
+        row:SetScript("OnClick", function()
+            local ui = kit.optionsUI
+            ui.unfolded[FoldKey(item)] = not ui.unfolded[FoldKey(item)]
+            row.Paint()
+            kit:RelayoutOptions()
+        end)
+        local hl = row:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetPoint("TOPLEFT", -4, 2)
+        hl:SetPoint("BOTTOMRIGHT", 4, -2)
+        hl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.07)
+    else
+        row:EnableMouse(false)
+    end
     local text = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    text:SetPoint("TOPLEFT", 0, -6)
+    text:SetPoint("LEFT", x, 0)
     text:SetText(item.name)
-    local line = row:CreateTexture(nil, "BORDER")
-    line:SetPoint("TOPLEFT", 0, -22)
-    line:SetPoint("TOPRIGHT", 0, -22)
-    line:SetHeight(1)
-    line:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.18)
-    function row.Paint() end
-    row:SetHeight(24)
+    function row.Paint()
+        if row.arrow then
+            local open = kit.optionsUI.unfolded[FoldKey(item)]
+            if row.arrow.SetRotation then row.arrow:SetRotation(open and 0 or math.pi / 2) end
+        end
+    end
     return row
 end
 
 function ROW.button(kit, parent, item, w)
     local row = CreateFrame("Frame", nil, parent)
     row:SetWidth(w)
-    local h = Words(row, item, 0, 124, 3, w)
-    local b = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-    b:SetSize(110, 22)
-    b:SetPoint("TOPRIGHT", 0, 0)
-    b:SetText(item.text)
+    row:EnableMouse(true)
+    Tip(row, item, kit.optAnchor)
+    local b = GoldButton(row, item.text)
+    b:SetPoint("RIGHT", 0, 0)
+    Tip(b, item, kit.optAnchor)
     b:SetScript("OnClick", function()
         local ok, err = pcall(item.fn)
         if not ok then geterrorhandler()(err) end
         if kit.optionsUI then kit:PaintOptions() end
     end)
+    row:SetHeight(Label(row, item, w - b:GetWidth() - 12))
     function row.Paint() end
-    row:SetHeight(math.max(h, 22) + 4)
     return row
 end
 
--- One section's page (built the first time it's shown).
-local function BuildPage(kit, ui, index)
-    local sec = ui.sections[index]
+function ROW.note(kit, parent, item, w)
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetWidth(w)
+    local fs = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    fs:SetPoint("TOPLEFT", 0, 0)
+    fs:SetWidth(w)
+    fs:SetJustifyH("LEFT")
+    fs:SetSpacing(2)
+    fs:SetText(item.tip)
+    row:SetHeight(math.ceil(fs:GetStringHeight()) + 2)
+    function row.Paint() end
+    return row
+end
+
+-- The table of a kit's buttons (S.Table): a row each, a tick box per column,
+-- and a name to click for the rest (a line about it, a few more choices).
+local TCOL = 54
+local TROW_H = 26
+
+local function Chips(kit, parent, item, w)
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetWidth(w)
+    local label = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    label:SetPoint("TOPLEFT", 0, -5)
+    label:SetText(item.name or "")
+    local x, y = math.floor(label:GetStringWidth()) + (item.name and 8 or 0), 0
+    local chips = {}
+    for _, c in ipairs(item.items) do
+        local b = CreateFrame("Button", nil, row)
+        b.text = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        b.text:SetPoint("CENTER")
+        b.text:SetText(c.name)
+        local cw = math.floor(b.text:GetStringWidth() + 20)
+        if x + cw > w and x > 0 then x, y = 0, y + 24 end
+        b:SetSize(cw, 20)
+        b:SetPoint("TOPLEFT", x, -y)
+        x = x + cw + 6
+        GoldEdge(b, 0.35)
+        b.sel = b:CreateTexture(nil, "BACKGROUND")
+        b.sel:SetAllPoints()
+        b.sel:SetColorTexture(1, 0.82, 0, 0.14)
+        local hl = b:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetAllPoints()
+        hl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.1)
+        b:SetScript("OnClick", function()
+            kit:OptionChanged(c, not Value(c))
+            row.Paint()
+        end)
+        Tip(b, c, kit.optAnchor)
+        b.item = c
+        chips[#chips + 1] = b
+    end
+    row:SetHeight(y + 20)
+    function row.Paint()
+        for _, b in ipairs(chips) do
+            local on = Value(b.item) and true or false
+            b.sel:SetShown(on)
+            if on then b.text:SetTextColor(1, 0.82, 0) else b.text:SetTextColor(0.6, 0.58, 0.5) end
+        end
+    end
+    return row
+end
+
+function ROW.table(kit, parent, item, w)
+    local spec = item.spec
+    local cols = spec.cols
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetWidth(w)
+    local labelW = w - #cols * TCOL
+    for i, c in ipairs(cols) do
+        local h = CreateFrame("Frame", nil, row)
+        h:SetSize(TCOL, 16)
+        h:SetPoint("TOPLEFT", labelW + (i - 1) * TCOL, 0)
+        h:EnableMouse(true)
+        local fs = h:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetPoint("CENTER")
+        fs:SetText(c.label)
+        Tip(h, { name = c.label, tip = c.tip }, kit.optAnchor)
+    end
+    local lines = {}
+    for _, r in ipairs(spec.rows) do
+        if r.group then
+            local g = CreateFrame("Frame", nil, row)
+            g:SetSize(w, 26)
+            local fs = g:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            fs:SetPoint("BOTTOMLEFT", 2, 6)
+            fs:SetText(r.group)
+            local line = g:CreateTexture(nil, "BORDER")
+            line:SetPoint("BOTTOMLEFT", 0, 1)
+            line:SetPoint("BOTTOMRIGHT", 0, 1)
+            line:SetHeight(1)
+            line:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.25)
+            g.isGroup = true
+            lines[#lines + 1] = g
+        else
+            local L = CreateFrame("Frame", nil, row)
+            L:SetWidth(w)
+            L.r = r
+            local under = L:CreateTexture(nil, "BORDER")
+            under:SetPoint("BOTTOMLEFT")
+            under:SetPoint("BOTTOMRIGHT")
+            under:SetHeight(1)
+            under:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.08)
+            L.openBg = L:CreateTexture(nil, "BACKGROUND")
+            L.openBg:SetAllPoints()
+            L.openBg:SetColorTexture(1, 0.82, 0, 0.035)
+            local more = (r.hint and r.hint ~= "") or (r.more and #r.more > 0)
+            local nb = CreateFrame("Button", nil, L)
+            nb:SetPoint("TOPLEFT", 0, 0)
+            nb:SetSize(labelW - 4, TROW_H)
+            local x = r.sub and 18 or 0
+            if more then
+                L.arrow = nb:CreateTexture(nil, "OVERLAY")
+                L.arrow:SetSize(10, 10)
+                L.arrow:SetPoint("LEFT", x + 1, 0)
+                L.arrow:SetTexture("Interface\\Buttons\\Arrow-Down-Up")
+                L.arrow:SetVertexColor(0.75, 0.65, 0.4)
+                local hl = nb:CreateTexture(nil, "HIGHLIGHT")
+                hl:SetAllPoints()
+                hl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.07)
+            end
+            L.icon = nb:CreateTexture(nil, "ARTWORK")
+            L.icon:SetSize(18, 18)
+            L.icon:SetPoint("LEFT", x + 14, 0)
+            if L.icon.SetMask then pcall(L.icon.SetMask, L.icon, "Interface\\CharacterFrame\\TempPortraitAlphaMask") end
+            L.label = nb:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+            L.label:SetPoint("LEFT", L.icon, "RIGHT", 7, 0)
+            L.label:SetPoint("RIGHT", nb, "RIGHT", -2, 0)
+            L.label:SetJustifyH("LEFT")
+            L.label:SetWordWrap(false)
+            L.label:SetText(r.label)
+            nb:SetScript("OnClick", function()
+                if not more then return end
+                L.open = not L.open
+                row.Paint()
+                kit:RelayoutOptions()
+            end)
+            L.cells = {}
+            for i, c in ipairs(cols) do
+                local cell = r.cells and r.cells[c.key]
+                local cx = labelW + (i - 0.5) * TCOL
+                if cell then
+                    cell.name = cell.name or (r.label .. ": " .. c.label)
+                    cell.tip = cell.tip or c.tip
+                    local b = CreateFrame("Button", nil, L)
+                    b:SetSize(TCOL - 8, TROW_H - 4)
+                    b:SetPoint("CENTER", L, "TOPLEFT", cx, -TROW_H / 2)
+                    b.box = TickBox(b)
+                    b.box:SetPoint("CENTER")
+                    local hl = b:CreateTexture(nil, "HIGHLIGHT")
+                    hl:SetAllPoints()
+                    hl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.08)
+                    b.cell = cell
+                    Tip(b, cell, kit.optAnchor)
+                    b:SetScript("OnClick", function()
+                        if b.off then return end
+                        kit:OptionChanged(cell, not Value(cell))
+                        row.Paint()
+                    end)
+                    L.cells[#L.cells + 1] = b
+                else
+                    local dash = L:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+                    dash:SetPoint("CENTER", L, "TOPLEFT", cx, -TROW_H / 2)
+                    dash:SetText("-")
+                    dash:SetAlpha(0.5)
+                end
+            end
+            -- What opens under the row.
+            local det = CreateFrame("Frame", nil, L)
+            det:SetPoint("TOPLEFT", 32, -(TROW_H + 2))
+            local dw = w - 40
+            det:SetWidth(dw)
+            det.parts = {}
+            if r.hint and r.hint ~= "" then
+                det.parts[#det.parts + 1] = ROW.note(kit, det, { tip = r.hint }, dw)
+            end
+            for _, m in ipairs(r.more or {}) do
+                local p
+                if m.kind == "chips" then
+                    p = Chips(kit, det, m, dw)
+                else
+                    p = ROW.check(kit, det, m, dw)
+                end
+                p.item = m
+                det.parts[#det.parts + 1] = p
+            end
+            function det.Layout()
+                local y = 0
+                for _, p in ipairs(det.parts) do
+                    local show = true
+                    if p.item and p.item.when then
+                        local ok, s = pcall(p.item.when)
+                        show = ok and s
+                    end
+                    if show then
+                        p:ClearAllPoints()
+                        p:SetPoint("TOPLEFT", 0, -y)
+                        p:Show()
+                        y = y + p:GetHeight() + 6
+                    else
+                        p:Hide()
+                    end
+                end
+                det:SetHeight(math.max(1, y))
+            end
+            L.det = det
+            lines[#lines + 1] = L
+        end
+    end
+    function row.Layout()
+        local y = 18
+        for _, L in ipairs(lines) do
+            L:ClearAllPoints()
+            L:SetPoint("TOPLEFT", 0, -y)
+            if L.isGroup then
+                y = y + L:GetHeight()
+            else
+                local h = TROW_H
+                if L.open then
+                    L.det.Layout()
+                    L.det:Show()
+                    h = TROW_H + 2 + L.det:GetHeight() + 6
+                else
+                    L.det:Hide()
+                end
+                L:SetHeight(h)
+                y = y + h
+            end
+        end
+        row:SetHeight(y)
+    end
+    function row.Paint()
+        for _, L in ipairs(lines) do
+            if not L.isGroup then
+                local r = L.r
+                local tex
+                if r.icon then
+                    local ok, t = pcall(r.icon)
+                    tex = ok and t or nil
+                end
+                L.icon:SetTexture(tex or 134400)
+                local dim = r.dim and r.cells and r.cells[r.dim] and not Value(r.cells[r.dim])
+                L.label:SetAlpha(dim and 0.45 or 1)
+                L.icon:SetAlpha(dim and 0.45 or 1)
+                for _, b in ipairs(L.cells) do
+                    b.box.tick:SetShown(Value(b.cell) and true or false)
+                    local off = false
+                    if b.cell.off then
+                        local ok, o = pcall(b.cell.off)
+                        off = ok and o and true or false
+                    end
+                    b.off = off
+                    b:SetAlpha(off and 0.3 or 1)
+                end
+                if L.arrow and L.arrow.SetRotation then L.arrow:SetRotation(L.open and 0 or math.pi / 2) end
+                L.openBg:SetShown(L.open and true or false)
+                for _, p in ipairs(L.det.parts) do p.Paint() end
+            end
+        end
+        row.Layout()
+    end
+    row.Layout()
+    return row
+end
+
+-- A page: a title, then its settings in cards (one per sub-heading; the
+-- settings before the first sub-heading sit on the page itself). Rows are
+-- made the first time they're needed and kept.
+local function MakePage(kit, ui)
     local page = CreateFrame("Frame", nil, ui.child)
     page:SetPoint("TOPLEFT")
     local w = ui.child:GetWidth()
     page:SetWidth(w)
-    local head = page:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    head:SetPoint("TOPLEFT", 0, 0)
-    head:SetText(sec.title)
+    page.head = page:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    page.head:SetPoint("TOPLEFT", 0, 0)
     local line = page:CreateTexture(nil, "BORDER")
     line:SetPoint("TOPLEFT", 0, -26)
     line:SetPoint("TOPRIGHT", 0, -26)
     line:SetHeight(1)
     line:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.25)
-    page.rows = {}
-    for _, item in ipairs(sec.items) do
-        local make = ROW[item.kind]
-        if make then
-            local row = make(kit, page, item, w)
+    local rowFor, cardFor = {}, {}
+    page.rows, page.blocks = {}, {}
+
+    local function RowFor(item, inner)
+        local row = rowFor[item]
+        if not row then
+            local make = ROW[item.kind]
+            if not make then return end
+            local rw = inner
+            if item.cols then rw = math.floor((inner - COL_GAP) / 2) end
+            row = make(kit, page, item, rw)
             row.item = item
-            if item.when then page.dynamic = true end
-            page.rows[#page.rows + 1] = row
+            rowFor[item] = row
+        end
+        return row
+    end
+    local function CardFor(sub)
+        local card = cardFor[sub]
+        if not card then
+            card = CreateFrame("Frame", nil, page)
+            card:SetFrameLevel(page:GetFrameLevel())
+            local bg = card:CreateTexture(nil, "BACKGROUND")
+            bg:SetAllPoints()
+            bg:SetColorTexture(1, 1, 1, 0.025)
+            GoldEdge(card, 0.2)
+            cardFor[sub] = card
+        end
+        return card
+    end
+
+    -- The page's settings (in order, sub-headings included).
+    function page.SetItems(items)
+        for _, row in pairs(rowFor) do row:Hide() end
+        for _, card in pairs(cardFor) do card:Hide() end
+        page.rows, page.blocks = {}, {}
+        local b
+        for _, item in ipairs(items) do
+            if item.kind == "sub" then
+                b = { sub = item, items = {} }
+                page.blocks[#page.blocks + 1] = b
+            else
+                if not b then
+                    b = { items = {} }
+                    page.blocks[#page.blocks + 1] = b
+                end
+                b.items[#b.items + 1] = item
+            end
+        end
+        for _, blk in ipairs(page.blocks) do
+            local inner = blk.sub and (w - 2 * CARD_PAD) or w
+            if blk.sub then
+                blk.subRow = RowFor(blk.sub, inner)
+                blk.card = CardFor(blk.sub)
+                page.rows[#page.rows + 1] = blk.subRow
+            end
+            blk.rows = {}
+            for _, item in ipairs(blk.items) do
+                local row = RowFor(item, inner)
+                if row then
+                    blk.rows[#blk.rows + 1] = row
+                    page.rows[#page.rows + 1] = row
+                end
+            end
         end
     end
-    -- Stack the rows, leaving out groups whose "when" says no.
+
+    local function Shown(item)
+        if not item.when then return true end
+        local ok, show = pcall(item.when)
+        return ok and show and true or false
+    end
+
+    -- Stack the cards and their rows, leaving out what's hidden or folded.
     function page.Relayout()
+        for _, row in ipairs(page.rows) do row:Hide() end
         local y = 38
-        for _, row in ipairs(page.rows) do
-            local ok, show = true, true
-            if row.item.when then ok, show = pcall(row.item.when) end
-            if ok and show then
-                row:ClearAllPoints()
-                row:SetPoint("TOPLEFT", 0, -y)
-                row:Show()
-                y = y + row:GetHeight() + OPT.gap
-            else
-                row:Hide()
+        for _, blk in ipairs(page.blocks) do
+            if blk.card then blk.card:Hide() end
+            local vis = {}
+            if not blk.sub or Shown(blk.sub) then
+                for _, row in ipairs(blk.rows) do
+                    if Shown(row.item) then vis[#vis + 1] = row end
+                end
+            end
+            if #vis > 0 then
+                local folded = blk.sub and blk.sub.fold and not ui.unfolded[FoldKey(blk.sub)]
+                local x0 = blk.sub and CARD_PAD or 0
+                local top = y
+                local yy = y + (blk.sub and CARD_PAD or 0)
+                if blk.sub then
+                    blk.subRow:ClearAllPoints()
+                    blk.subRow:SetPoint("TOPLEFT", x0, -yy)
+                    blk.subRow:Show()
+                    yy = yy + blk.subRow:GetHeight() + (folded and 0 or ROW_GAP)
+                end
+                if not folded then
+                    local i = 1
+                    while i <= #vis do
+                        local row, nxt = vis[i], vis[i + 1]
+                        row:ClearAllPoints()
+                        row:SetPoint("TOPLEFT", x0, -yy)
+                        row:Show()
+                        local h = row:GetHeight()
+                        if row.item.cols and nxt and nxt.item.cols then
+                            nxt:ClearAllPoints()
+                            nxt:SetPoint("TOPLEFT", x0 + row:GetWidth() + COL_GAP, -yy)
+                            nxt:Show()
+                            h = math.max(h, nxt:GetHeight())
+                            i = i + 2
+                        else
+                            i = i + 1
+                        end
+                        yy = yy + h + ROW_GAP
+                    end
+                    yy = yy - ROW_GAP
+                end
+                if blk.sub then
+                    blk.card:ClearAllPoints()
+                    blk.card:SetPoint("TOPLEFT", 0, -top)
+                    blk.card:SetSize(w, yy - top + CARD_PAD)
+                    blk.card:Show()
+                    y = yy + CARD_PAD + BLOCK_GAP
+                else
+                    y = yy + BLOCK_GAP
+                end
             end
         end
         page:SetHeight(y)
     end
-    page.Relayout()
+
     page:Hide()
     return page
 end
 
-local function ShowPage(kit, index)
+local function Painted(kit, page)
+    for _, row in ipairs(page.rows) do if row.Paint then row.Paint() end end
+end
+
+local function Present(kit, page)
     local ui = kit.optionsUI
-    index = math.max(1, math.min(index or 1, #ui.sections))
-    ui.current = index
-    for i, nav in ipairs(ui.nav) do
-        local on = i == index
-        nav.text:SetFontObject(on and "GameFontNormal" or "GameFontHighlightSmall")
-        nav.bar:SetShown(on)
-        nav.sel:SetShown(on)
-    end
-    for _, page in pairs(ui.pages) do page:Hide() end
-    ui.pages[index] = ui.pages[index] or BuildPage(kit, ui, index)
-    local page = ui.pages[index]
-    for _, row in ipairs(page.rows) do row.Paint() end
+    if ui.shown and ui.shown ~= page then ui.shown:Hide() end
+    ui.shown = page
+    Painted(kit, page)
     page.Relayout()
     page:Show()
     ui.child:SetHeight(page:GetHeight())
@@ -6017,14 +6640,90 @@ local function ShowPage(kit, index)
     ui.UpdateBar()
 end
 
+local function LightNav(ui, index)
+    for i, nav in ipairs(ui.nav) do
+        local on = i == index
+        nav.text:SetFontObject(on and "GameFontNormal" or "GameFontHighlightSmall")
+        nav.bar:SetShown(on)
+        nav.sel:SetShown(on)
+    end
+end
+
+local function ShowPage(kit, index)
+    local ui = kit.optionsUI
+    index = math.max(1, math.min(index or 1, #ui.sections))
+    ui.current = index
+    if ui.search and ui.search:GetText() ~= "" then
+        ui.quiet = true
+        ui.search:SetText("")
+        ui.quiet = nil
+    end
+    LightNav(ui, index)
+    local page = ui.pages[index]
+    if not page then
+        local sec = ui.sections[index]
+        page = MakePage(kit, ui)
+        page.head:SetText(sec.title)
+        page.SetItems(sec.items)
+        ui.pages[index] = page
+    end
+    Present(kit, page)
+end
+
+-- Typing in the search box: every setting whose name or description has
+-- the words in it, under the name of the page it's on.
+local function Matches(item, q)
+    if item.kind == "sub" or item.kind == "note" then return false end
+    local text = ((item.name or "") .. " " .. (item.tip or "")):lower()
+    if text:find(q, 1, true) then return true end
+    if item.kind == "table" then
+        for _, c in ipairs(item.spec.cols) do
+            if ((c.label or "") .. " " .. (c.tip or "")):lower():find(q, 1, true) then return true end
+        end
+        for _, r in ipairs(item.spec.rows) do
+            if ((r.label or "") .. " " .. (r.hint or "")):lower():find(q, 1, true) then return true end
+        end
+    end
+    return false
+end
+
+local function ShowSearch(kit, q)
+    local ui = kit.optionsUI
+    ui.secSub = ui.secSub or {}
+    local list = {}
+    for _, sec in ipairs(ui.sections) do
+        local first = true
+        for _, item in ipairs(sec.items) do
+            if Matches(item, q) then
+                if first then
+                    first = false
+                    ui.secSub[sec] = ui.secSub[sec] or { kind = "sub", name = sec.title, section = { title = "?search" } }
+                    list[#list + 1] = ui.secSub[sec]
+                end
+                list[#list + 1] = item
+            end
+        end
+    end
+    if #list == 0 then
+        ui.noMatch = ui.noMatch or { kind = "note", name = "", tip = "No setting matches that. Try another word." }
+        list[1] = ui.noMatch
+    end
+    ui.results = ui.results or MakePage(kit, ui)
+    ui.results.head:SetText(("Settings with \"%s\""):format(q))
+    ui.results.SetItems(list)
+    LightNav(ui, 0)
+    Present(kit, ui.results)
+end
+
 function Kit:PaintOptions()
     local ui = self.optionsUI
-    if not (ui and ui.current and ui.pages[ui.current]) then return end
-    for _, row in ipairs(ui.pages[ui.current].rows) do row.Paint() end
+    if not (ui and ui.shown) then return end
+    Painted(self, ui.shown)
+    self:RelayoutOptions()
 end
 
 function Kit:BuildOptions()
-    local ui = { sections = self:CollectOptions(), pages = {}, nav = {} }
+    local ui = { sections = self:CollectOptions(), pages = {}, nav = {}, unfolded = {} }
     local name = self.prefix .. "Options"
     local f = OptPanel("Frame", name, UIParent)
     f:SetSize(OPT.w, OPT.h)
@@ -6039,8 +6738,11 @@ function Kit:BuildOptions()
     f:SetScript("OnDragStop", f.StopMovingOrSizing)
     f:Hide()
     if UISpecialFrames then table.insert(UISpecialFrames, name) end -- Esc closes it
+    -- (descriptions show beside the window, level with their setting)
+    self.optAnchor = function() return f end
 
-    -- Header: the kit's art, its name, and a close button, over a faint gold line.
+    -- Header: the kit's art, its name, a search box and a close button, over
+    -- a faint gold line.
     local art = f:CreateTexture(nil, "ARTWORK")
     art:SetSize(26, 26)
     art:SetPoint("TOPLEFT", OPT.pad - 2, -8)
@@ -6058,6 +6760,42 @@ function Kit:BuildOptions()
     sep:SetPoint("TOPRIGHT", -OPT.pad, -OPT.head)
     sep:SetHeight(1)
     sep:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.35)
+
+    local sb = CreateFrame("EditBox", nil, f)
+    sb:SetSize(160, 20)
+    sb:SetPoint("RIGHT", close, "LEFT", -6, 0)
+    sb:SetAutoFocus(false)
+    sb:SetFontObject("GameFontHighlightSmall")
+    sb:SetTextInsets(20, 6, 0, 0)
+    sb:SetMaxLetters(40)
+    Well(sb, 0.6)
+    local glass = sb:CreateTexture(nil, "OVERLAY")
+    glass:SetSize(12, 12)
+    glass:SetPoint("LEFT", 5, 0)
+    glass:SetTexture("Interface\\Common\\UI-Searchbox-Icon")
+    glass:SetVertexColor(0.75, 0.7, 0.55)
+    local hint = sb:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    hint:SetPoint("LEFT", 20, 0)
+    hint:SetText("Find a setting")
+    local function Hint() hint:SetShown(sb:GetText() == "" and not sb:HasFocus()) end
+    sb:SetScript("OnEditFocusGained", Hint)
+    sb:SetScript("OnEditFocusLost", Hint)
+    sb:SetScript("OnEscapePressed", function(e)
+        e:SetText("")
+        e:ClearFocus()
+    end)
+    sb:SetScript("OnEnterPressed", function(e) e:ClearFocus() end)
+    sb:SetScript("OnTextChanged", function(e)
+        Hint()
+        if ui.quiet then return end
+        local q = (e:GetText() or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+        if #q >= 2 then
+            ShowSearch(self, q)
+        elseif ui.shown == ui.results then
+            ShowPage(self, ui.current)
+        end
+    end)
+    ui.search = sb
 
     -- Sections down the left, with a faint gold line beside them.
     -- Grouped under small grey labels (Kit, the kit's name, and any groups
@@ -6095,6 +6833,23 @@ function Kit:BuildOptions()
         b:SetScript("OnClick", function() ShowPage(self, i) end)
         ui.nav[i] = b
     end
+    -- Key bindings, at the foot of the list.
+    local keys = CreateFrame("Button", nil, f)
+    keys:SetSize(OPT.nav - OPT.pad - 6, 20)
+    keys:SetPoint("BOTTOMLEFT", OPT.pad, OPT.pad)
+    keys.text = keys:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    keys.text:SetPoint("LEFT", 10, 0)
+    keys.text:SetText("Key bindings")
+    local khl = keys:CreateTexture(nil, "HIGHLIGHT")
+    khl:SetAllPoints()
+    khl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.06)
+    keys:SetScript("OnClick", function() self:OpenKeyBindings() end)
+    local kline = f:CreateTexture(nil, "BORDER")
+    kline:SetPoint("BOTTOMLEFT", keys, "TOPLEFT", 0, 4)
+    kline:SetPoint("BOTTOMRIGHT", keys, "TOPRIGHT", 0, 4)
+    kline:SetHeight(1)
+    kline:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.18)
+
     local vline = f:CreateTexture(nil, "BORDER")
     vline:SetPoint("TOPLEFT", OPT.nav, -(OPT.head + 8))
     vline:SetPoint("BOTTOMLEFT", OPT.nav, OPT.pad)
