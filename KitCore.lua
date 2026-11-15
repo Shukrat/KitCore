@@ -415,11 +415,10 @@ C.BASE_CHAR = {
 --                       end of Look. S.Subheader("text", when)
 --                       starts a group inside a section; with when (a function),
 --                       the settings window shows the group only while it's true.
---   FirstSettings(kit, S)  pages of the kit's own at the top of the "Kit" group
---                       in the settings window (v24)
---   buttonTable   true: the kit sets its buttons' pinning (and which reminders go
---                 in the reminder panel) in a table of its own (S.Table, v24), so
---                 Kit Core leaves out its "Pinned buttons" page and the panel's list
+--   FirstSettings(kit, S)  pages of the kit's own in the "Kit" group, right
+--                       after General (v24)
+--   buttonTable   true: the kit sets its buttons' pinning in a table of its own
+--                 (S.Table, v24), so Kit Core leaves out its "Pinned buttons" page
 --   Menu(kit, root)    the kit's own lines in its right-click menu, between
 --                 "Pin in place" and "Settings" (root is the game's menu
 --                 description: root:CreateCheckbox, root:CreateButton, ...;
@@ -3730,10 +3729,10 @@ end
 -- under it, so a description can say all it needs to without making the
 -- page long. Keep the names short and plain: they're what you read.
 --
--- A kit can put pages of its own at the top of the "Kit" group
+-- A kit can put pages of its own in the "Kit" group, right after General
 -- (cfg.FirstSettings), and one with cfg.buttonTable sets its buttons' show,
--- pin, glow, pop-out and reminder panel choices in one table there (S.Table)
--- instead of on Kit Core's "Pinned buttons" page and its own lists.
+-- pin and reminder choices in one table there (S.Table) instead of on Kit
+-- Core's "Pinned buttons" page and its own lists.
 function Kit:SettingsList(S)
     local cfg, db, cdb = self.cfg, self.db, self.cdb
     local pct = function(v) return math.floor(v * 100 + 0.5) .. "%" end
@@ -3746,8 +3745,6 @@ function Kit:SettingsList(S)
     end
 
     S.Group("Kit")
-    if cfg.FirstSettings then cfg.FirstSettings(self, S) end
-
     S.Header("General")
     if S.Grid then S.Grid(2) end
     S.Checkbox(db, "shown", "Show " .. self.name,
@@ -3809,6 +3806,9 @@ function Kit:SettingsList(S)
         "How see-through the kit's slots get when it fades: 0% is gone until you mouse over. The kit button fades half as much, so you can still find it.",
         0.4, 0, 0.9, 0.05, function(v) return ("%d%%"):format(math.floor(v * 100 + 0.5)) end, function() self:ApplyFade() end)
 
+    -- The kit's own pages, right after General (v24).
+    if cfg.FirstSettings then cfg.FirstSettings(self, S) end
+
     S.Header("Look")
     S.Subheader("Size")
     S.Slider(db, "scale", "Whole kit", "The whole kit: the center icon, the buttons round it and the space between them.", 1, 0.6, 1.6, 0.05, pct,
@@ -3869,7 +3869,7 @@ function Kit:SettingsList(S)
     -- The reminder panel (v21): whether this kit uses it, and which of its
     -- reminders go there, are this kit's own; the panel's layout and spot are
     -- shared by every kit. Its own page: in the "Kit" group for a kit with a
-    -- button table (which ticks the reminders that go there), otherwise right
+    -- button table, otherwise right
     -- after the kit's "Reminders" (or at the end of the kit's own settings if
     -- it has none).
     local panelDone = false
@@ -3907,8 +3907,6 @@ function Kit:SettingsList(S)
         if S.Only then S.Only(function() return rp.snap ~= false end) end
         S.Slider(rp, "grid", "Grid size", "How far apart the grid's lines are while placing it.",
             16, 8, 32, 8, function(v) return tostring(v) end, shared)
-        -- (A kit with a button table ticks these in its table.)
-        if cfg.buttonTable and window then return end
         local pops = {}
         for _, slot in ipairs(listed) do
             if not slot.noPanel and slot.Pop then pops[#pops + 1] = slot end
@@ -6479,7 +6477,7 @@ function ROW.table(kit, parent, item, w)
             L.icon = nb:CreateTexture(nil, "ARTWORK")
             L.icon:SetSize(18, 18)
             L.icon:SetPoint("LEFT", x + 14, 0)
-            if L.icon.SetMask then pcall(L.icon.SetMask, L.icon, "Interface\\CharacterFrame\\TempPortraitAlphaMask") end
+            L.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92) -- (square, the icon's own border trimmed)
             L.label = nb:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
             L.label:SetPoint("LEFT", L.icon, "RIGHT", 7, 0)
             L.label:SetPoint("RIGHT", nb, "RIGHT", -2, 0)
