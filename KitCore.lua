@@ -60,7 +60,7 @@ local addonName, ns = ...
 -- all come with it; the kit's own layout closes up round the gap. See "Bars".
 ---------------------------------------------------------------------------
 
-local VERSION = 24
+local VERSION = 25
 -- Builds of the same VERSION (test builds while a version is in a pull
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
@@ -273,6 +273,7 @@ C.BASE_DEFAULTS = {
     spread = 1,     -- the slots' distance from the center icon (1: as made)
     shown = true,          -- false: the whole kit is hidden (settings or the shared minimap menu)
     locked = false,
+    edgeTuck = true,       -- false: on a screen edge on its own the kit stays fully out (Kit Dock v27)
     fadeIdle = false,
     fadeOpen = false,      -- the open kit fades too, once the mouse has been off it a while
     fadeOpenAfter = 5,     -- how long, in seconds
@@ -3575,6 +3576,7 @@ function Kit:RegisterDock()
         kit = self.kit,
         name = self.name,
         edgesOnly = self.cfg.edgesOnly,
+        NoTuck = function() return self.db.edgeTuck == false end,
         IsOpen = function() return self.open and not self:QkbInPlace() end,
         Close = function() self:SetOpen(false) end,
         Tuck = function(on) self:Tuck(on) end,
@@ -3750,6 +3752,11 @@ function Kit:SettingsList(S)
         "Turn off to hide the whole kit (its button and every slot) without uninstalling it.",
         true, function() self:SetShownKit(db.shown) end)
     S.Checkbox(db, "locked", "Lock it in place", "Stop the kit from being dragged. Also in the kit's right-click menu.", false)
+    if self.Dock then
+        S.Checkbox(db, "edgeTuck", "Tuck at screen edge",
+            "On a screen edge on its own, the kit slides half off the screen until you mouse over it. Turn off to keep it fully on the screen. In a tuck box it still tucks with the box.",
+            true, refresh)
+    end
     S.Checkbox(db, "minimapButton", "Minimap button",
         "Left-click for these settings, right-click to open the kit, drag to move it.", true,
         function() self:ApplyMinimap() end)
