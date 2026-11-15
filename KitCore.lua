@@ -3388,7 +3388,7 @@ end
 
 -- Whether the mouse is over a piece of this kit away from its button: a
 -- pinned slot, a reminder beside it, its small buttons (anything under the
--- kit's holder). Kit Dock slides a tucked kit out for these too (v27).
+-- kit's holder). Kit Dock keeps a tucked kit tucked over these (v27).
 -- Buttons on bars or in the reminder panel don't count: they sit away from
 -- the kit.
 local function MouseFoci()
