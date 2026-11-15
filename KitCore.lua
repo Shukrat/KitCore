@@ -1219,7 +1219,6 @@ function Kit:OpenMenu()
         end
         if self.cfg.Menu then self.cfg.Menu(self, root) end
         root:CreateDivider()
-        root:CreateButton("Move everything", function() C.MoveAll(self) end)
         root:CreateButton("Settings", function() self:OpenSettings() end)
     end)
 end
@@ -4359,8 +4358,8 @@ end
 -- buttons' edges and middles (a bright guide line shows what it lined up
 -- with), or else its left and top edges to the grid. Shift places it freely.
 --
--- "Move everything" (C.MoveAll: the settings window, the kit's right-click
--- menu, or "move" after its slash command) puts every piece that's in use
+-- "Move everything" (C.MoveAll: the foot of the settings window's list, or
+-- "move" after the kit's slash command) puts every piece that's in use
 -- into placing at once; Done ends them all. The grid size and Snap are the
 -- reminder panel's (shared by every kit).
 ---------------------------------------------------------------------------
@@ -7020,7 +7019,7 @@ function Kit:BuildOptions()
     mhl:SetAllPoints()
     mhl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.06)
     move:SetScript("OnClick", function() C.MoveAll(self) end)
-    Tip(move, { name = "Move everything", tip = "The reminder panel and every timer and bar in use, shown where they sit on a grid so you can drag them all at once. Done (or Esc) when you're finished. Also in the kit's right-click menu." }, self.optAnchor)
+    Tip(move, { name = "Move everything", tip = "The reminder panel and every timer and bar in use, shown where they sit on a grid so you can drag them all at once. Done (or Esc) when you're finished." .. (self.cfg.slash and (" Also " .. self.cfg.slash[1] .. " move.") or "") }, self.optAnchor)
     local keys = CreateFrame("Button", nil, f)
     keys:SetSize(OPT.nav - OPT.pad - 6, 20)
     keys:SetPoint("BOTTOMLEFT", OPT.pad, OPT.pad)
