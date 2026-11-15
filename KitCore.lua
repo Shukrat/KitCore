@@ -65,7 +65,7 @@ local VERSION = 24
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
 -- each change while VERSION stays put; back to 0 with a new VERSION.
-local BUILD = 0
+local BUILD = 1
 local C = _G.KitCore
 if C and ((C.version or 0) > VERSION or ((C.version or 0) == VERSION and (C.build or 0) >= BUILD)) then
     ns.Core = C
@@ -4730,10 +4730,6 @@ function C.MoveAll(kit)
         kit:Print("Nothing to move: turn on the reminder panel or a kit's timers first. The kits themselves move by dragging them.", true)
     elseif placeUI then
         placeUI.paint()
-    end
-    for _, k in ipairs(C.kits or {}) do
-        local ui = k.optionsUI
-        if ui and ui.frame and ui.frame:IsShown() then ui.frame:Hide() end
     end
 end
 
