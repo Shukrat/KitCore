@@ -67,7 +67,7 @@ local VERSION = 27
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
 -- each change while VERSION stays put; back to 0 with a new VERSION.
-local BUILD = 0
+local BUILD = 1
 local C = _G.KitCore
 if C and ((C.version or 0) > VERSION or ((C.version or 0) == VERSION and (C.build or 0) >= BUILD)) then
     ns.Core = C
@@ -5998,7 +5998,9 @@ function Kit:CollectOptions()
         Add({ kind = "dropdown", tbl = tbl, key = key, name = name, tip = tip, default = default, list = list, fn = fn })
     end
     -- A choice whose value is read and stored by functions (one choice over
-    -- two switches, say). opts.heads (v27): small gold words over each
+    -- two switches, say). A list entry can carry its own tooltip, for its
+    -- button: { value, label, tip, title } (v27, title defaults to the
+    -- label). opts.heads (v27): small gold words over each
     -- choice when they show as a row of buttons, like a table's column
     -- heads; rows under it with the same choices line up beneath them.
     function S.Choice(name, tip, list, get, set, fn, opts)
@@ -6268,7 +6270,9 @@ local function Segments(kit, row, item, w)
             kit:OptionChanged(item, o[1])
             row.Paint()
         end)
-        Tip(b, item, kit.optAnchor)
+        -- (a choice with its own tooltip, list entry { value, label, tip,
+        -- title }, v27: that one over the button instead of the row's)
+        Tip(b, o[3] and { name = o[4] or o[2], tip = o[3] } or item, kit.optAnchor)
         buttons[i] = b
         -- (its column head, over it)
         local head = item.heads and item.heads[i]
