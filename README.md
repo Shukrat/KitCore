@@ -14,9 +14,11 @@ Also from v24, placing things is Kit Core's: one grid and one bar (grid size, Sn
 
 From v27 a row of choice buttons can carry column heads: `S.Choice(name, tip, list, get, set, fn, { heads = { "A", "B" } })` puts small gold words over each button, like a table's heads. Rows below it with the same choices line up under them, so only the first row needs heads. A choice can also have a tooltip of its own for its button: `{ value, label, tip, title }` in the list (title defaults to the label). And a kit can add lines under "Settings" at the foot of its right-click menu with `MenuAfterSettings(kit, root)`.
 
+From v28 a kit can be a single button (`single = true`, no slots): a left-click on it, in combat too, its key binding and the minimap button's right-click run `KitClick(kit)` instead of opening anything, and its tooltips and binding say `clickLabel`. Its settings window leaves out what only a kit with slots has (Spread, Buttons open toward, Pinned buttons, drawers, the reminder panel), Look is just a Size slider, and fading is one switch; the button fades the whole way. It still docks on the pin, sits on a screen edge or in the tuck box, and has the minimap button, slash command and Move everything. Shard Breaker is one.
+
 Every kit ships its own copy of `KitCore.lua`; the newest copy loaded runs for every kit (see `VERSION` at the top of the file).
 
-Used by: First Aid Kit, Camping Kit, Fishing Kit, Warlock Kit and Shaman Kit.
+Used by: First Aid Kit, Camping Kit, Fishing Kit, Warlock Kit, Shaman Kit and Shard Breaker.
 
 The minimap button is a LibDataBroker launcher shown by LibDBIcon (from v19), so square minimaps and minimap button-bag addons handle it like any other addon's button. The libraries are in `Libs/`, each under its own licence.
 

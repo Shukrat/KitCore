@@ -62,12 +62,12 @@ local addonName, ns = ...
 -- all come with it; the kit's own layout closes up round the gap. See "Bars".
 ---------------------------------------------------------------------------
 
-local VERSION = 27
+local VERSION = 28
 -- Builds of the same VERSION (test builds while a version is in a pull
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
 -- each change while VERSION stays put; back to 0 with a new VERSION.
-local BUILD = 2
+local BUILD = 0
 local C = _G.KitCore
 if C and ((C.version or 0) > VERSION or ((C.version or 0) == VERSION and (C.build or 0) >= BUILD)) then
     ns.Core = C
@@ -352,6 +352,13 @@ C.BASE_CHAR = {
 --                 lists[zoneKey] = { slotKey, ... }, slots on bars included.
 --                 The kit puts them in its own tables (the ring's keys, its
 --                 row, the divider's "below", its edge columns)
+--   single        (v28) the kit is just its button: no slots, nothing to open.
+--                 A left-click on it (in combat too), its key binding and the
+--                 minimap button's right-click run KitClick(kit) instead of
+--                 opening the kit, and the settings leave out what only a kit
+--                 with slots has (spread, facing, pinned buttons, drawers,
+--                 the reminder panel). Give clickLabel ("Delete extra
+--                 shards") for its tooltips and key binding. slots = {}.
 --   alwaysHideInCombat  the kit always hides in combat (nothing on it is any use
 --                 in a fight): no "Hide in combat" setting for it
 --   kitSize, slotSize  (60, 37)
@@ -500,7 +507,7 @@ function C.NewKit(cfg)
     local H = cfg.bindingHeader
     if H then
         _G["BINDING_HEADER_" .. H] = cfg.name
-        _G["BINDING_NAME_" .. H .. "_TOGGLE"] = "Open / close the kit"
+        _G["BINDING_NAME_" .. H .. "_TOGGLE"] = cfg.single and (cfg.clickLabel or cfg.name) or "Open / close the kit"
         for _, slot in ipairs(cfg.slots) do
             _G["BINDING_NAME_CLICK " .. cfg.prefix .. "Slot_" .. slot.key .. ":LeftButton"] =
                 slot.binding or ("Use " .. slot.label:lower())
@@ -1110,6 +1117,10 @@ function Kit:BuildKit()
             self:OpenMenu()
             return
         end
+        if cfg.single then -- (one-button kit: the click is its action)
+            if not self.editing and cfg.KitClick then cfg.KitClick(self) end
+            return
+        end
         -- In combat the secure snippet (KIT_PRE) has already switched the
         -- slots, if it could; this only catches the kit up.
         if InCombatLockdown() then
@@ -1123,7 +1134,7 @@ function Kit:BuildKit()
         DefaultAnchor(b)
         GameTooltip:AddLine(self.name)
         if cfg.KitTooltip then cfg.KitTooltip(self) end
-        GameTooltip:AddLine("Left-click: open / close", 1, 1, 1)
+        GameTooltip:AddLine("Left-click: " .. (cfg.single and (cfg.clickLabel or "use"):lower() or "open / close"), 1, 1, 1)
         if not self.db.locked then GameTooltip:AddLine("Drag: move", 1, 1, 1) end
         GameTooltip:AddLine("Right-click: menu   Shift-right-click: settings", 1, 1, 1)
         GameTooltip:Show()
@@ -2188,7 +2199,7 @@ end
 function Kit:PaintFade()
     for _, btn in pairs(self.slots) do self:FadeSlot(btn) end
     local a = self:FadeNow()
-    self.kit:SetAlpha((1 + a) / 2)
+    self.kit:SetAlpha(self.cfg.single and a or (1 + a) / 2) -- (a one-button kit is all button: it fades the whole way)
     local fly = self.flyOpen
     if fly and fly:IsShown() then self.kit:SetAlpha(0.4) end
     if self.cfg.OnFade then self.cfg.OnFade(self, (self.fadeT or 0) > 0, a) end
@@ -2985,11 +2996,14 @@ function Kit:GripClicked(mouse, down)
         -- combat ends puts it here.
         self:SavePositionAt(x, y)
     end
-    if toggled then self:CombatToggled() end -- (a click: GRIP_CLICK opened or closed it)
+    if toggled and not self.cfg.single then self:CombatToggled() end -- (a click: GRIP_CLICK opened or closed it)
     if dragged and not moved and self:CanSecureMove() and not self.moveFailSaid then
         self.moveFailSaid = true
         local step = self.kit:GetAttribute("kcmovestep") or ""
         self:Print("Couldn't move the kit in combat: " .. (MOVE_FAIL[step] or ("stopped at " .. step)) .. ".", true)
+    elseif self.cfg.single then
+        -- (one-button kit: a click that wasn't a drag is its action)
+        if not (dragged or moved) and self.cfg.KitClick then self.cfg.KitClick(self) end
     elseif not (dragged or moved or toggled) then
         self:CombatToggled() -- (a click that didn't open it: says why)
     end
@@ -3094,7 +3108,7 @@ end
 -- snippet to use in combat (KIT_PRE). Out of combat only.
 function Kit:PushSnapshot()
     local kit = self.kit
-    local ready = self:CanSecureToggle() and self.snap[true] and self.snap[false] and true or false
+    local ready = not self.cfg.single and self:CanSecureToggle() and self.snap[true] and self.snap[false] and true or false
     for _, slot in ipairs(self.cfg.slots) do
         local btn = self.slots[slot.key]
         btn:SetAttribute("kcbar", btn.kcBar and 1 or 0) -- (on a bar: the combat switch leaves it be)
@@ -3214,6 +3228,7 @@ end
 
 function Kit:SetOpen(want)
     if InCombatLockdown() then return end
+    if self.cfg.single then want = false end -- (a one-button kit has nothing to open)
     self.open = want and true or false
     self:CloseFlyouts()
     self:ArmOpenFade()
@@ -3233,6 +3248,11 @@ function Kit:SetOpen(want)
 end
 
 function Kit:Toggle()
+    -- (a one-button kit: its key binding and the minimap button run its action)
+    if self.cfg.single then
+        if self.cfg.KitClick then self.cfg.KitClick(self) end
+        return
+    end
     -- (a key binding or the minimap button: only a click on the kit button
     -- itself can run the secure snippet that opens it in combat)
     if InCombatLockdown() then
@@ -3734,7 +3754,7 @@ function Kit:SetupMinimap()
     obj.OnTooltipShow = function(tt)
         tt:AddLine(self.name)
         tt:AddLine("Left-click: settings", 1, 1, 1)
-        tt:AddLine("Right-click: open / close the kit", 1, 1, 1)
+        tt:AddLine("Right-click: " .. (self.cfg.single and (self.cfg.clickLabel or "use"):lower() or "open / close the kit"), 1, 1, 1)
         tt:AddLine("Drag: move around the minimap", 1, 1, 1)
     end
     if not dbi:IsRegistered(name) then dbi:Register(name, obj, db.minimapIcon) end
@@ -3777,6 +3797,7 @@ function Kit:SettingsList(S)
     local pct = function(v) return math.floor(v * 100 + 0.5) .. "%" end
     local refresh = function() self:Refresh(false) end
     local window = S.window
+    local single = cfg.single -- (a one-button kit: none of the slot settings)
     local listed = cfg.slots
     if cfg.menuOrder then
         listed = {}
@@ -3787,7 +3808,8 @@ function Kit:SettingsList(S)
     S.Header("General")
     if S.Grid then S.Grid(2) end
     S.Checkbox(db, "shown", "Show " .. self.name,
-        "Turn off to hide the whole kit (its button and every slot) without uninstalling it.",
+        single and "Turn off to hide its button without uninstalling it."
+            or "Turn off to hide the whole kit (its button and every slot) without uninstalling it.",
         true, function() self:SetShownKit(db.shown) end)
     S.Checkbox(db, "locked", "Lock it in place", "Stop the kit from being dragged. Also in the kit's right-click menu.", false)
     if self.Dock then
@@ -3796,7 +3818,7 @@ function Kit:SettingsList(S)
             true, refresh)
     end
     S.Checkbox(db, "minimapButton", "Minimap button",
-        "Left-click for these settings, right-click to open the kit, drag to move it.", true,
+        "Left-click for these settings, right-click to " .. (single and (cfg.clickLabel or "use it"):lower() or "open the kit") .. ", drag to move it.", true,
         function() self:ApplyMinimap() end)
     S.Checkbox(db, "chatNotices", "Chat messages",
         "Notices in chat when something changes (pinned in place, always shown, snoozed and the like). Slash commands still answer in chat.", true)
@@ -3807,15 +3829,21 @@ function Kit:SettingsList(S)
         S.Checkbox(db, "hideInCombat", "Hide the kit in combat", "Hide the kit while you're in combat.", false,
             function() self:ApplyCombatHide() end)
     end
-    S.Slider(db, "flyoutHide", "Drawers close after",
-        "In combat a drawer can't close when you click elsewhere, so it closes by itself this long after the mouse leaves it and its slot.",
-        0.5, 0.2, 2, 0.1, function(v) return ("%.1fs"):format(v) end)
+    if not single then
+        S.Slider(db, "flyoutHide", "Drawers close after",
+            "In combat a drawer can't close when you click elsewhere, so it closes by itself this long after the mouse leaves it and its slot.",
+            0.5, 0.2, 2, 0.1, function(v) return ("%.1fs"):format(v) end)
+    end
     if cfg.CombatSettings then cfg.CombatSettings(self, S) end
 
     S.Subheader("Fading")
     local rearm = function() self:ArmOpenFade() self:ApplyFade() end
     local function Fading() return (db.fadeIdle or db.fadeOpen) and true or false end
-    if window then
+    if single then
+        -- (nothing to open: it fades until you mouse over it, or never)
+        S.Checkbox(db, "fadeIdle", "Fade until moused over",
+            "The button fades until you mouse over it.", false, refresh)
+    elseif window then
         S.Choice("Fade the kit",
             "When closed: the closed kit and its pinned slots fade until you mouse over them. When left open: the open kit fades once the mouse has been off it a while (it stays open). Mouse over to bring it back.",
             {
@@ -3841,49 +3869,56 @@ function Kit:SettingsList(S)
             "With the kit open, it and its slots fade once the mouse has been off them for a while. They stay open, and come back when you mouse over them.",
             false, rearm)
     end
-    if S.Only then S.Only(function() return db.fadeOpen and true or false end) end
+    if S.Only then S.Only(function() return not single and db.fadeOpen and true or false end) end
     S.Slider(db, "fadeOpenAfter", "Fade an open kit after",
         "How long the mouse has to be off the open kit before it fades.",
         5, 1, 30, 1, function(v) return ("%ds"):format(v) end, rearm)
     if S.Only then S.Only(Fading) end
     S.Slider(db, "fadeAmount", "How faded",
-        "How see-through the kit's slots get when it fades: 0% is gone until you mouse over. The kit button fades half as much, so you can still find it.",
+        single and "How see-through the button gets when it fades: 0% is gone until you mouse over."
+            or "How see-through the kit's slots get when it fades: 0% is gone until you mouse over. The kit button fades half as much, so you can still find it.",
         0.4, 0, 0.9, 0.05, function(v) return ("%d%%"):format(math.floor(v * 100 + 0.5)) end, function() self:ApplyFade() end)
 
     -- The kit's own pages, right after General (v24).
     if cfg.FirstSettings then cfg.FirstSettings(self, S) end
 
     S.Header("Look")
-    S.Subheader("Size")
-    S.Slider(db, "scale", "Whole kit", "The whole kit: the center icon, the buttons round it and the space between them.", 1, 0.6, 1.6, 0.05, pct,
-        function() self:ApplyPosition() end)
-    S.Slider(db, "kitSize", "Center icon", "Just the icon in the middle: the buttons round it stay where they are.",
-        1, 0.5, 1, 0.05, pct, function() self:ApplyPosition() end)
-    S.Slider(db, "buttonSize", "Buttons", "Just the buttons round the center icon: each gets smaller in its place, so they spread out a little.",
-        1, 0.6, 1, 0.05, pct, function() self:ApplyPosition() end)
-    S.Slider(db, "spread", "Spread", "How far the buttons sit from the center icon: lower brings them in close, higher spreads them out.",
-        1, 0.8, 1.5, 0.05, pct, function() self:Refresh(false) self:ApplyPosition() end)
-    S.Subheader("Layout")
-    S.Dropdown(db, "facing", "Buttons open toward",
-        "Which way the slots lay out round the kit while it's floating. On a screen edge they always face the middle of the screen.",
-        "up", {
-            { "up", "Up" },
-            { "down", "Down" },
-            { "left", "Left" },
-            { "right", "Right" },
-        }, function() self:SetFacing(db.facing) end)
-    if window then
-        S.Choice("Tooltips", "Where a slot's tooltip shows: beside the slot, or where the game normally puts tooltips.",
-            { { "beside", "Beside the slot" }, { "default", "Game's spot" } },
-            function() return db.tooltipDefault and "default" or "beside" end,
-            function(v) db.tooltipDefault = (v == "default") end)
+    if single then
+        S.Slider(db, "scale", "Size", "How big the button is.", 1, 0.6, 1.6, 0.05, pct,
+            function() self:ApplyPosition() end)
+        if cfg.LookSettings then cfg.LookSettings(self, S) end
     else
-        S.Checkbox(db, "tooltipDefault", "Default tooltip position",
-            "Show slot tooltips where the game normally shows tooltips, instead of beside the slot.", false)
-    end
-    if cfg.LookSettings then cfg.LookSettings(self, S) end
+        S.Subheader("Size")
+        S.Slider(db, "scale", "Whole kit", "The whole kit: the center icon, the buttons round it and the space between them.", 1, 0.6, 1.6, 0.05, pct,
+            function() self:ApplyPosition() end)
+        S.Slider(db, "kitSize", "Center icon", "Just the icon in the middle: the buttons round it stay where they are.",
+            1, 0.5, 1, 0.05, pct, function() self:ApplyPosition() end)
+        S.Slider(db, "buttonSize", "Buttons", "Just the buttons round the center icon: each gets smaller in its place, so they spread out a little.",
+            1, 0.6, 1, 0.05, pct, function() self:ApplyPosition() end)
+        S.Slider(db, "spread", "Spread", "How far the buttons sit from the center icon: lower brings them in close, higher spreads them out.",
+            1, 0.8, 1.5, 0.05, pct, function() self:Refresh(false) self:ApplyPosition() end)
+        S.Subheader("Layout")
+        S.Dropdown(db, "facing", "Buttons open toward",
+            "Which way the slots lay out round the kit while it's floating. On a screen edge they always face the middle of the screen.",
+            "up", {
+                { "up", "Up" },
+                { "down", "Down" },
+                { "left", "Left" },
+                { "right", "Right" },
+            }, function() self:SetFacing(db.facing) end)
+        if window then
+            S.Choice("Tooltips", "Where a slot's tooltip shows: beside the slot, or where the game normally puts tooltips.",
+                { { "beside", "Beside the slot" }, { "default", "Game's spot" } },
+                function() return db.tooltipDefault and "default" or "beside" end,
+                function(v) db.tooltipDefault = (v == "default") end)
+        else
+            S.Checkbox(db, "tooltipDefault", "Default tooltip position",
+                "Show slot tooltips where the game normally shows tooltips, instead of beside the slot.", false)
+        end
+        if cfg.LookSettings then cfg.LookSettings(self, S) end
+    end -- (not single)
 
-    if not (cfg.buttonTable and window) then
+    if not (single or (cfg.buttonTable and window)) then
         S.Header("Pinned buttons")
         if S.Grid then S.Grid(2) end
         for _, slot in ipairs(listed) do
@@ -3966,6 +4001,7 @@ function Kit:SettingsList(S)
             if S.Grid then S.Grid(1) end
         end
     end
+    if single then panelDone = true end -- (no slots: no reminders for the panel)
     if cfg.buttonTable and window then PanelSection() end
 
     -- (Key bindings: a link at the foot of the window's list, v24. The
@@ -7300,9 +7336,9 @@ function Kit:RunSlash(msg)
     elseif cmd == "help" then
         self:Print(slash .. " - settings   " .. slash .. " lock | unlock | show | hide | reset")
         self:Print(slash .. " minimap - show or hide the minimap button")
-        self:Print(slash .. " face up | down | left | right - which way the layout points")
+        if not cfg.single then self:Print(slash .. " face up | down | left | right - which way the layout points") end
         self:Print(slash .. " move - move everything: the reminder panel and the kits' timers and bars, all at once")
-        self:Print(slash .. " panel - move the reminder panel (shared by every kit)")
+        if not cfg.single then self:Print(slash .. " panel - move the reminder panel (shared by every kit)") end
         if cfg.bars then self:Print(slash .. " layout - drag buttons off the kit onto bars   " .. slash .. " layout reset") end
         if self.Dock and not cfg.edgesOnly then self:Print(slash .. " dock - dock every kit on the pin   " .. slash .. " flip") end
         for _, line in ipairs(cfg.helpLines or {}) do self:Print(line) end
