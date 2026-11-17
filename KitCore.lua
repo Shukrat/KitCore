@@ -62,12 +62,12 @@ local addonName, ns = ...
 -- all come with it; the kit's own layout closes up round the gap. See "Bars".
 ---------------------------------------------------------------------------
 
-local VERSION = 26
+local VERSION = 27
 -- Builds of the same VERSION (test builds while a version is in a pull
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
 -- each change while VERSION stays put; back to 0 with a new VERSION.
-local BUILD = 0
+local BUILD = 2
 local C = _G.KitCore
 if C and ((C.version or 0) > VERSION or ((C.version or 0) == VERSION and (C.build or 0) >= BUILD)) then
     ns.Core = C
@@ -429,6 +429,9 @@ C.BASE_CHAR = {
 --                 "Pin in place" and "Settings" (root is the game's menu
 --                 description: root:CreateCheckbox, root:CreateButton, ...;
 --                 kit:MenuToggle(root, label, dbKey, after) adds an on/off line)
+--   MenuAfterSettings(kit, root)  lines under "Settings" at the menu's foot
+--                 (v27), e.g. a way straight to one settings page with
+--                 kit:OpenOptions("page title")
 --   Slash(kit, cmd, rest) true if it handled cmd;  helpLines { "..." }
 --   minimapIcon   texture for the minimap button
 --
@@ -1226,6 +1229,7 @@ function Kit:OpenMenu()
         if self.cfg.Menu then self.cfg.Menu(self, root) end
         root:CreateDivider()
         root:CreateButton("Settings", function() self:OpenSettings() end)
+        if self.cfg.MenuAfterSettings then self.cfg.MenuAfterSettings(self, root) end
     end)
 end
 
@@ -5998,9 +6002,14 @@ function Kit:CollectOptions()
         Add({ kind = "dropdown", tbl = tbl, key = key, name = name, tip = tip, default = default, list = list, fn = fn })
     end
     -- A choice whose value is read and stored by functions (one choice over
-    -- two switches, say).
-    function S.Choice(name, tip, list, get, set, fn)
-        Add({ kind = "dropdown", name = name, tip = tip, list = list, get = get, set = set, fn = fn })
+    -- two switches, say). A list entry can carry its own tooltip, for its
+    -- button: { value, label, tip, title } (v27, title defaults to the
+    -- label). opts.heads (v27): small gold words over each
+    -- choice when they show as a row of buttons, like a table's column
+    -- heads; rows under it with the same choices line up beneath them.
+    function S.Choice(name, tip, list, get, set, fn, opts)
+        Add({ kind = "dropdown", name = name, tip = tip, list = list, get = get, set = set, fn = fn,
+            heads = opts and opts.heads or nil })
     end
     function S.Button(name, text, tip, fn)
         Add({ kind = "button", name = name, text = text, tip = tip, fn = fn })
@@ -6093,6 +6102,7 @@ end
 
 local ROW = {}
 local ROW_H = 22      -- a one-line row
+local HEADS_H = 14    -- column heads over a row of buttons (S.Choice heads)
 local SLIDER_W = 150  -- a slider's track
 local CARD_PAD = 12   -- inside a card
 local ROW_GAP = 8     -- between rows
@@ -6232,6 +6242,7 @@ local function Segments(kit, row, item, w)
     local box = CreateFrame("Frame", nil, row)
     box:SetSize(total, 22)
     box:SetPoint("RIGHT", 0, 0)
+    row.segBox = box
     GoldEdge(box, 0.45)
     local bg = box:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()
@@ -6263,8 +6274,17 @@ local function Segments(kit, row, item, w)
             kit:OptionChanged(item, o[1])
             row.Paint()
         end)
-        Tip(b, item, kit.optAnchor)
+        -- (a choice with its own tooltip, list entry { value, label, tip,
+        -- title }, v27: that one over the button instead of the row's)
+        Tip(b, o[3] and { name = o[4] or o[2], tip = o[3] } or item, kit.optAnchor)
         buttons[i] = b
+        -- (its column head, over it)
+        local head = item.heads and item.heads[i]
+        if head and head ~= "" then
+            local fs = box:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            fs:SetPoint("BOTTOM", b, "TOP", 0, 3)
+            fs:SetText(head)
+        end
     end
     function row.Paint()
         local v = Value(item)
@@ -6284,7 +6304,18 @@ function ROW.dropdown(kit, parent, item, w)
     Tip(row, item, kit.optAnchor)
     local segW = Segments(kit, row, item, w)
     if segW then
-        row:SetHeight(Label(row, item, w - segW - 12))
+        local h = Label(row, item, w - segW - 12)
+        if item.heads then
+            -- Column heads over the buttons: the label and buttons drop
+            -- below them.
+            row.label:ClearAllPoints()
+            row.label:SetPoint("LEFT", row, "BOTTOMLEFT", 0, h / 2)
+            local box = row.segBox
+            box:ClearAllPoints()
+            box:SetPoint("RIGHT", row, "BOTTOMRIGHT", 0, h / 2)
+            h = h + HEADS_H
+        end
+        row:SetHeight(h)
         return row
     end
     local bw = 180
