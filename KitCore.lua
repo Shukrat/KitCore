@@ -67,7 +67,7 @@ local VERSION = 28
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
 -- each change while VERSION stays put; back to 0 with a new VERSION.
-local BUILD = 0
+local BUILD = 1
 local C = _G.KitCore
 if C and ((C.version or 0) > VERSION or ((C.version or 0) == VERSION and (C.build or 0) >= BUILD)) then
     ns.Core = C
@@ -7135,9 +7135,12 @@ function Kit:BuildOptions()
     khl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.06)
     keys:SetScript("OnClick", function() self:OpenKeyBindings() end)
     move:SetPoint("BOTTOMLEFT", keys, "TOPLEFT", 0, 2)
+    -- (a one-button kit has nothing of its own to move: no Move everything)
+    local footTop = self.cfg.single and keys or move
+    move:SetShown(not self.cfg.single)
     local kline = f:CreateTexture(nil, "BORDER")
-    kline:SetPoint("BOTTOMLEFT", move, "TOPLEFT", 0, 4)
-    kline:SetPoint("BOTTOMRIGHT", move, "TOPRIGHT", 0, 4)
+    kline:SetPoint("BOTTOMLEFT", footTop, "TOPLEFT", 0, 4)
+    kline:SetPoint("BOTTOMRIGHT", footTop, "TOPRIGHT", 0, 4)
     kline:SetHeight(1)
     kline:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.18)
 
@@ -7337,7 +7340,7 @@ function Kit:RunSlash(msg)
         self:Print(slash .. " - settings   " .. slash .. " lock | unlock | show | hide | reset")
         self:Print(slash .. " minimap - show or hide the minimap button")
         if not cfg.single then self:Print(slash .. " face up | down | left | right - which way the layout points") end
-        self:Print(slash .. " move - move everything: the reminder panel and the kits' timers and bars, all at once")
+        if not cfg.single then self:Print(slash .. " move - move everything: the reminder panel and the kits' timers and bars, all at once") end
         if not cfg.single then self:Print(slash .. " panel - move the reminder panel (shared by every kit)") end
         if cfg.bars then self:Print(slash .. " layout - drag buttons off the kit onto bars   " .. slash .. " layout reset") end
         if self.Dock and not cfg.edgesOnly then self:Print(slash .. " dock - dock every kit on the pin   " .. slash .. " flip") end
