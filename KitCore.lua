@@ -67,7 +67,7 @@ local VERSION = 27
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
 -- each change while VERSION stays put; back to 0 with a new VERSION.
-local BUILD = 1
+local BUILD = 2
 local C = _G.KitCore
 if C and ((C.version or 0) > VERSION or ((C.version or 0) == VERSION and (C.build or 0) >= BUILD)) then
     ns.Core = C
@@ -429,6 +429,9 @@ C.BASE_CHAR = {
 --                 "Pin in place" and "Settings" (root is the game's menu
 --                 description: root:CreateCheckbox, root:CreateButton, ...;
 --                 kit:MenuToggle(root, label, dbKey, after) adds an on/off line)
+--   MenuAfterSettings(kit, root)  lines under "Settings" at the menu's foot
+--                 (v27), e.g. a way straight to one settings page with
+--                 kit:OpenOptions("page title")
 --   Slash(kit, cmd, rest) true if it handled cmd;  helpLines { "..." }
 --   minimapIcon   texture for the minimap button
 --
@@ -1226,6 +1229,7 @@ function Kit:OpenMenu()
         if self.cfg.Menu then self.cfg.Menu(self, root) end
         root:CreateDivider()
         root:CreateButton("Settings", function() self:OpenSettings() end)
+        if self.cfg.MenuAfterSettings then self.cfg.MenuAfterSettings(self, root) end
     end)
 end
 
