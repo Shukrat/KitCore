@@ -12,6 +12,8 @@ From v24 the kit's settings window is easier to read and set. Each setting's des
 
 Also from v24, placing things is Kit Core's: one grid and one bar (grid size, Snap, Done) for the reminder panel and any piece a kit registers with `C.RegisterMover(key, { label, frame, test, can, done })`, dragged with `C.Place.Begin` / `C.Place.Stop` and switched with `C.Place.Update`. Pieces snap to the screen's middle lines, to each other and to the kit buttons, or else to the grid. **Move everything** (`C.MoveAll`: at the foot of the settings window's list, by Key bindings, or `move` after the slash command) puts every piece that's in use on the grid at once, and Done ends them all.
 
+From v27 a row of choice buttons can carry column heads: `S.Choice(name, tip, list, get, set, fn, { heads = { "A", "B" } })` puts small gold words over each button, like a table's heads. Rows below it with the same choices line up under them, so only the first row needs heads.
+
 Every kit ships its own copy of `KitCore.lua`; the newest copy loaded runs for every kit (see `VERSION` at the top of the file).
 
 Used by: First Aid Kit, Camping Kit, Fishing Kit, Warlock Kit and Shaman Kit.
