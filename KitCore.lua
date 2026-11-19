@@ -62,7 +62,7 @@ local addonName, ns = ...
 -- all come with it; the kit's own layout closes up round the gap. See "Bars".
 ---------------------------------------------------------------------------
 
-local VERSION = 29
+local VERSION = 30
 -- Builds of the same VERSION (test builds while a version is in a pull
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
@@ -4041,11 +4041,13 @@ function Kit:BuildSettings()
     function S.Group() end -- (the window's nav only)
     function S.Only() end -- (the window's only)
     -- (the window's only, v24: a line of words, a choice read and stored by
-    -- functions, side-by-side checkboxes, and a kit's table of buttons)
+    -- functions, side-by-side checkboxes, and a kit's table of buttons;
+    -- v30: a kit's own frame)
     function S.Note() end
     function S.Choice() end
     function S.Grid() end
     function S.Table() end
+    function S.Custom() end
     function S.Colors() end -- (the window's only, v29: a row of colour squares)
     local function Flush()
         if CreateSettingsListSectionHeaderInitializer then
@@ -6048,6 +6050,19 @@ function Kit:CollectOptions()
     function S.Table(spec)
         Add({ kind = "table", spec = spec, name = spec.name or "", tip = "" })
     end
+    -- A frame the kit draws itself (v30), for what the other rows can't
+    -- show: a preview, say. make(parent, w) builds it, w wide, and returns
+    -- it with its height set. Its Paint(), if it has one, runs each time the
+    -- page is painted (as a setting changes); it can change the frame's
+    -- height there, and the page is laid out again after. make runs once
+    -- for each page it's on (the search page makes its own), so it must
+    -- build a new frame each time. name and tip are what the search box
+    -- finds it by; the frame shows its own tooltips. The window's only: a
+    -- kit with the game's options page too can check S.window and give
+    -- that page plain settings instead.
+    function S.Custom(name, tip, make)
+        Add({ kind = "custom", name = name or "", tip = tip or "", make = make })
+    end
     self:SettingsList(S)
     return sections
 end
@@ -6623,6 +6638,26 @@ function ROW.note(kit, parent, item, w)
     fs:SetText(item.tip)
     row:SetHeight(math.ceil(fs:GetStringHeight()) + 2)
     function row.Paint() end
+    return row
+end
+
+-- A kit's own frame (S.Custom, v30). An error in the kit's make or Paint
+-- goes to the error handler and leaves the rest of the page working.
+function ROW.custom(kit, parent, item, w)
+    local ok, row = pcall(item.make, parent, w)
+    if not ok or type(row) ~= "table" or not row.SetPoint then
+        if not ok then geterrorhandler()(row) end
+        row = CreateFrame("Frame", nil, parent)
+        row:SetHeight(1)
+    end
+    row:SetParent(parent)
+    row:SetWidth(w)
+    local paint = row.Paint
+    function row.Paint()
+        if not paint then return end
+        local okP, err = pcall(paint)
+        if not okP then geterrorhandler()(err) end
+    end
     return row
 end
 

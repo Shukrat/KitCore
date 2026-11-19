@@ -16,6 +16,8 @@ From v27 a row of choice buttons can carry column heads: `S.Choice(name, tip, li
 
 From v29 a colour setting can be a row of coloured squares: `S.Colors(name, tip, list, get, set, fn, opts)` with `list = { { value, label, { r, g, b } }, ... }` draws a square per preset, the one in use marked with a gold edge and an x, and with `opts.custom` (the value that means your own colour), `opts.getRGB()` and `opts.setRGB(r, g, b)` a Custom... button after them that shows your own colour in its square and opens the game's colour picker (Cancel puts back what you had). So a kit needs no separate Pick button or picker code of its own. In the game's own options list it's left out, like `S.Choice`.
 
+From v30 a kit can put a frame of its own in the settings window, for what the other rows can't show (a preview, say): `S.Custom(name, tip, make)`. `make(parent, w)` builds the frame, `w` wide, and returns it with its height set; its `Paint()`, if it has one, runs each time the page is painted, and can change its height. The search box finds it by `name` and `tip`. It's the window's only: the game's options page skips it, so a kit can check `S.window` and give that page plain settings instead.
+
 Every kit ships its own copy of `KitCore.lua`; the newest copy loaded runs for every kit (see `VERSION` at the top of the file).
 
 Used by: First Aid Kit, Camping Kit, Fishing Kit, Warlock Kit and Shaman Kit.
