@@ -14,6 +14,8 @@ Also from v24, placing things is Kit Core's: one grid and one bar (grid size, Sn
 
 From v27 a row of choice buttons can carry column heads: `S.Choice(name, tip, list, get, set, fn, { heads = { "A", "B" } })` puts small gold words over each button, like a table's heads. Rows below it with the same choices line up under them, so only the first row needs heads. A choice can also have a tooltip of its own for its button: `{ value, label, tip, title }` in the list (title defaults to the label). And a kit can add lines under "Settings" at the foot of its right-click menu with `MenuAfterSettings(kit, root)`.
 
+From v28 a kit can put a frame of its own in the settings window, for what the other rows can't show (a preview, say): `S.Custom(name, tip, make)`. `make(parent, w)` builds the frame, `w` wide, and returns it with its height set; its `Paint()`, if it has one, runs each time the page is painted, and can change its height. The search box finds it by `name` and `tip`. It's the window's only: the game's options page skips it, so a kit can check `S.window` and give that page plain settings instead.
+
 Every kit ships its own copy of `KitCore.lua`; the newest copy loaded runs for every kit (see `VERSION` at the top of the file).
 
 Used by: First Aid Kit, Camping Kit, Fishing Kit, Warlock Kit and Shaman Kit.
