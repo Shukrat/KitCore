@@ -62,7 +62,7 @@ local addonName, ns = ...
 -- all come with it; the kit's own layout closes up round the gap. See "Bars".
 ---------------------------------------------------------------------------
 
-local VERSION = 28
+local VERSION = 30
 -- Builds of the same VERSION (test builds while a version is in a pull
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
@@ -4042,12 +4042,13 @@ function Kit:BuildSettings()
     function S.Only() end -- (the window's only)
     -- (the window's only, v24: a line of words, a choice read and stored by
     -- functions, side-by-side checkboxes, and a kit's table of buttons;
-    -- v28: a kit's own frame)
+    -- v30: a kit's own frame)
     function S.Note() end
     function S.Choice() end
     function S.Grid() end
     function S.Table() end
     function S.Custom() end
+    function S.Colors() end -- (the window's only, v29: a row of colour squares)
     local function Flush()
         if CreateSettingsListSectionHeaderInitializer then
             if pending then layout:AddInitializer(CreateSettingsListSectionHeaderInitializer(pending)) end
@@ -6013,6 +6014,19 @@ function Kit:CollectOptions()
         Add({ kind = "dropdown", name = name, tip = tip, list = list, get = get, set = set, fn = fn,
             heads = opts and opts.heads or nil })
     end
+    -- A colour, as a row of coloured squares (v29): one per preset, the one
+    -- in use marked, then a Custom... button with your own colour in its
+    -- square that opens the game's colour picker (Cancel puts back what you
+    -- had). list: { { value, label, { r, g, b } }, ... }; get/set read and
+    -- store the value, as S.Choice. opts.custom: the value that means your
+    -- own colour, with opts.getRGB() giving it ({ r, g, b }, or nil while
+    -- none is picked) and opts.setRGB(r, g, b) storing it (nil clears it).
+    -- Without opts.custom, just the presets.
+    function S.Colors(name, tip, list, get, set, fn, opts)
+        opts = opts or {}
+        Add({ kind = "colors", name = name, tip = tip, list = list, get = get, set = set, fn = fn,
+            custom = opts.custom, getRGB = opts.getRGB, setRGB = opts.setRGB })
+    end
     function S.Button(name, text, tip, fn)
         Add({ kind = "button", name = name, text = text, tip = tip, fn = fn })
     end
@@ -6036,7 +6050,7 @@ function Kit:CollectOptions()
     function S.Table(spec)
         Add({ kind = "table", spec = spec, name = spec.name or "", tip = "" })
     end
-    -- A frame the kit draws itself (v28), for what the other rows can't
+    -- A frame the kit draws itself (v30), for what the other rows can't
     -- show: a preview, say. make(parent, w) builds it, w wide, and returns
     -- it with its height set. Its Paint(), if it has one, runs each time the
     -- page is painted (as a setting changes); it can change the frame's
@@ -6375,6 +6389,184 @@ function ROW.dropdown(kit, parent, item, w)
     return row
 end
 
+-- A colour (S.Colors, v29): a square per preset, the one in use marked with
+-- a gold edge and an x, then Custom... with your own colour in its square.
+local SWATCH = 18     -- a colour square
+local SWATCH_GAP = 4  -- between squares
+
+-- A square of colour: a dark rim, the colour inside, and (when it's the one
+-- in use) a gold edge round it and an x on it.
+local function Swatch(parent, size)
+    local s = CreateFrame("Button", nil, parent)
+    s:SetSize(size, size)
+    s.edge = s:CreateTexture(nil, "BACKGROUND", nil, -8)
+    s.edge:SetPoint("TOPLEFT", -2, 2)
+    s.edge:SetPoint("BOTTOMRIGHT", 2, -2)
+    s.edge:SetColorTexture(1, 0.82, 0, 1)
+    s.edge:Hide()
+    local rim = s:CreateTexture(nil, "BACKGROUND")
+    rim:SetAllPoints()
+    rim:SetColorTexture(0, 0, 0, 0.9)
+    s.fill = s:CreateTexture(nil, "ARTWORK")
+    s.fill:SetPoint("TOPLEFT", 2, -2)
+    s.fill:SetPoint("BOTTOMRIGHT", -2, 2)
+    s.x = s:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    s.x:SetPoint("CENTER", 0, 1)
+    s.x:SetText("x")
+    s.x:Hide()
+    return s
+end
+
+-- Colour a square (nil: empty, a dark well).
+local function SwatchColor(s, rgb)
+    s.rgb = rgb
+    if rgb then
+        s.fill:SetColorTexture(rgb[1], rgb[2], rgb[3], 1)
+    else
+        s.fill:SetColorTexture(0.12, 0.1, 0.14, 1)
+    end
+end
+
+-- Mark a square as the one in use (or not). The x is dark on a light
+-- colour and white on a dark one.
+local function SwatchChosen(s, on)
+    s.edge:SetShown(on)
+    s.x:SetShown(on)
+    if on then
+        local c = s.rgb
+        local light = c and (0.299 * c[1] + 0.587 * c[2] + 0.114 * c[3]) > 0.55
+        if light then s.x:SetTextColor(0.05, 0.05, 0.05) else s.x:SetTextColor(1, 1, 1) end
+    end
+end
+
+-- Custom...: the game's colour picker on the item's own colour (or, with
+-- none picked yet, the colour in use). It's chosen as it opens; Cancel puts
+-- back your own colour and what was chosen before.
+local function PickCustom(kit, item)
+    if not ColorPickerFrame then return end
+    local before = Value(item)
+    local had = item.getRGB and item.getRGB()
+    local start = had
+    if not start then
+        for _, o in ipairs(item.list) do
+            if o[1] == before then start = o[3] end
+        end
+    end
+    start = start or { 1, 1, 1 }
+    local function SetRGB(r, g, b)
+        if not item.setRGB then return end
+        local ok, err = pcall(item.setRGB, r, g, b)
+        if not ok then geterrorhandler()(err) end
+    end
+    -- Your own colour changed: the kit redraws, and so does the window.
+    local function Changed()
+        if item.fn then
+            local ok, err = pcall(item.fn, Value(item))
+            if not ok then geterrorhandler()(err) end
+        end
+        if kit.OnSettingsChanged then pcall(kit.OnSettingsChanged) end
+        kit:PaintOptions()
+    end
+    local function Picked()
+        local r, g, b = ColorPickerFrame:GetColorRGB()
+        SetRGB(r, g, b)
+        if Value(item) ~= item.custom then kit:OptionChanged(item, item.custom) else Changed() end
+    end
+    local function Cancelled()
+        if had then SetRGB(had[1], had[2], had[3]) else SetRGB(nil) end
+        if Value(item) ~= before then kit:OptionChanged(item, before) else Changed() end
+    end
+    if not had then SetRGB(start[1], start[2], start[3]) end
+    if before ~= item.custom then kit:OptionChanged(item, item.custom) else Changed() end
+    local info = {
+        r = start[1], g = start[2], b = start[3], hasOpacity = false,
+        swatchFunc = Picked, cancelFunc = Cancelled,
+    }
+    if ColorPickerFrame.SetupColorPickerAndShow then
+        ColorPickerFrame:SetupColorPickerAndShow(info)
+    else
+        ColorPickerFrame.func, ColorPickerFrame.cancelFunc, ColorPickerFrame.hasOpacity = Picked, Cancelled, false
+        ColorPickerFrame:SetColorRGB(start[1], start[2], start[3])
+        ColorPickerFrame:Show()
+    end
+end
+
+function ROW.colors(kit, parent, item, w)
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetWidth(w)
+    row:EnableMouse(true)
+    Tip(row, item, kit.optAnchor)
+    local box = CreateFrame("Frame", nil, row)
+    local squares, x = {}, 2
+    for i, o in ipairs(item.list) do
+        local s = Swatch(box, SWATCH)
+        s:SetPoint("LEFT", x, 0)
+        x = x + SWATCH + SWATCH_GAP
+        SwatchColor(s, o[3])
+        s.value = o[1]
+        local hl = s:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetPoint("TOPLEFT", 2, -2)
+        hl:SetPoint("BOTTOMRIGHT", -2, 2)
+        hl:SetColorTexture(1, 1, 1, 0.25)
+        s:SetScript("OnClick", function()
+            kit:OptionChanged(item, o[1])
+            row.Paint()
+        end)
+        Tip(s, { name = o[2], tip = item.tip }, kit.optAnchor)
+        squares[i] = s
+    end
+    local custom
+    if item.custom then
+        custom = CreateFrame("Button", nil, box)
+        Well(custom, 0.55)
+        custom.sel = custom:CreateTexture(nil, "ARTWORK")
+        custom.sel:SetAllPoints()
+        custom.sel:SetColorTexture(1, 0.82, 0, 0.15)
+        local hl = custom:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetAllPoints()
+        hl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.12)
+        custom.chip = Swatch(custom, 14)
+        custom.chip:EnableMouse(false)
+        custom.chip:SetPoint("LEFT", 6, 0)
+        custom.text = custom:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        custom.text:SetPoint("LEFT", custom.chip, "RIGHT", 6, 0)
+        custom.text:SetText("Custom...")
+        custom:SetSize(math.floor(custom.text:GetStringWidth() + 14 + 6 + 6 + 10), 22)
+        custom:SetPoint("LEFT", x + 4, 0)
+        x = x + 4 + custom:GetWidth()
+        custom:SetScript("OnClick", function() PickCustom(kit, item) end)
+        Tip(custom, { name = "Custom", tip = "Pick any colour in the game's colour picker. Cancel puts back what you had." }, kit.optAnchor)
+    else
+        x = x - SWATCH_GAP + 2
+    end
+    box:SetSize(x, 22)
+    -- Beside the label, or under it when they don't both fit.
+    local h
+    if w - x - 12 >= 90 then
+        box:SetPoint("RIGHT", 0, 0)
+        h = Label(row, item, w - x - 12)
+    else
+        h = Label(row, item, w)
+        row.label:ClearAllPoints()
+        row.label:SetPoint("TOPLEFT", 0, -4)
+        box:SetPoint("BOTTOMRIGHT", 0, 0)
+        h = h + 26
+    end
+    row:SetHeight(h)
+    function row.Paint()
+        local v = Value(item)
+        for _, s in ipairs(squares) do SwatchChosen(s, s.value == v) end
+        if custom then
+            local on = v == item.custom
+            SwatchColor(custom.chip, item.getRGB and item.getRGB() or nil)
+            SwatchChosen(custom.chip, on)
+            custom.sel:SetShown(on)
+            if on then custom.text:SetTextColor(1, 0.82, 0) else custom.text:SetTextColor(0.75, 0.72, 0.63) end
+        end
+    end
+    return row
+end
+
 -- A card's title: gold words. A folding one is a button, with an arrow.
 local function FoldKey(item)
     return (item.section and item.section.title or "") .. "/" .. item.name
@@ -6449,7 +6641,7 @@ function ROW.note(kit, parent, item, w)
     return row
 end
 
--- A kit's own frame (S.Custom, v28). An error in the kit's make or Paint
+-- A kit's own frame (S.Custom, v30). An error in the kit's make or Paint
 -- goes to the error handler and leaves the rest of the page working.
 function ROW.custom(kit, parent, item, w)
     local ok, row = pcall(item.make, parent, w)
