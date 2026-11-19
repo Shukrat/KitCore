@@ -14,6 +14,8 @@ Also from v24, placing things is Kit Core's: one grid and one bar (grid size, Sn
 
 From v27 a row of choice buttons can carry column heads: `S.Choice(name, tip, list, get, set, fn, { heads = { "A", "B" } })` puts small gold words over each button, like a table's heads. Rows below it with the same choices line up under them, so only the first row needs heads. A choice can also have a tooltip of its own for its button: `{ value, label, tip, title }` in the list (title defaults to the label). And a kit can add lines under "Settings" at the foot of its right-click menu with `MenuAfterSettings(kit, root)`.
 
+From v29 a colour setting can be a row of coloured squares: `S.Colors(name, tip, list, get, set, fn, opts)` with `list = { { value, label, { r, g, b } }, ... }` draws a square per preset, the one in use marked with a gold edge and an x, and with `opts.custom` (the value that means your own colour), `opts.getRGB()` and `opts.setRGB(r, g, b)` a Custom... button after them that shows your own colour in its square and opens the game's colour picker (Cancel puts back what you had). So a kit needs no separate Pick button or picker code of its own. In the game's own options list it's left out, like `S.Choice`.
+
 Every kit ships its own copy of `KitCore.lua`; the newest copy loaded runs for every kit (see `VERSION` at the top of the file).
 
 Used by: First Aid Kit, Camping Kit, Fishing Kit, Warlock Kit and Shaman Kit.
