@@ -33,6 +33,7 @@ jobs:
           - FirstAidKit
           - CampingKit
           - ConsumablesManager
+          - ShardBreaker
     env:
       GH_TOKEN: ${{ secrets.KITS_TOKEN }}
       TAG: ${{ inputs.tag || github.ref_name }}
