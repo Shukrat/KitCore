@@ -60,9 +60,16 @@ local addonName, ns = ...
 -- order. Dropped on the kit it goes back to its place. A button on a bar is
 -- the slot itself, moved, so its drawer, corner button, glow and key binding
 -- all come with it; the kit's own layout closes up round the gap. See "Bars".
+--
+-- From v31 a zone can hold small buttons (zone small): each slot that can
+-- move between zones takes the size of the one it's in, small there and a
+-- full slot in the others (or on a bar), changing as it's dragged. A
+-- zone can take only some slots (zone only), and a ring of small buttons
+-- inside another ring can have its outline run through its buttons
+-- (zone track). See "Zones".
 ---------------------------------------------------------------------------
 
-local VERSION = 30
+local VERSION = 31
 -- Builds of the same VERSION (test builds while a version is in a pull
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
@@ -347,7 +354,20 @@ C.BASE_CHAR = {
 --                     a centred row at y, step apart, starting with keys
 --                 Each zone shows its outline in edit mode (a ring's uses the
 --                 kit's zone_ring art). Only slots that start in a zone can be
---                 moved between zones.
+--                 moved between zones. From v31 a zone can also have:
+--                   small = true   its slots are small round buttons (22),
+--                                  the other zones' full slots: a slot takes
+--                                  the size of the zone it's in, and changes
+--                                  as it moves (out of combat). On a bar
+--                                  it's a full slot. Used only when a zone
+--                                  has it
+--                   only = { slotKey, ... }  just these slots can be dropped
+--                                  in it (any other is offered the other
+--                                  zones); one saved there goes back to the
+--                                  zone it started in
+--                   track = true   (a ring) its outline runs through the
+--                                  middle of its buttons, for a ring inside
+--                                  another one, with its name beyond them
 --   OnZones(kit, lists)  the zones' slots changed (and once at login):
 --                 lists[zoneKey] = { slotKey, ... }, slots on bars included.
 --                 The kit puts them in its own tables (the ring's keys, its
@@ -722,7 +742,7 @@ function Kit:ApplyShape(b)
     hl:SetBlendMode("ADD")
     hl:SetPoint("CENTER")
     hl:SetSize(b:GetWidth() * 1.35, b:GetHeight() * 1.35)
-    b.roundParts = { mask = mask, slotMask = slotMask, ring = ring, hl = hl }
+    b.roundParts = { mask = mask, slotMask = slotMask, ring = ring, hl = hl, masked = true }
     b.icon:AddMaskTexture(mask)
     if b.slotBg then b.slotBg:AddMaskTexture(slotMask) end
     for _, t in ipairs({ b.border, b.IconBorder, b.GetNormalTexture and b:GetNormalTexture(),
@@ -750,8 +770,16 @@ function Kit:ApplyShape(b)
 end
 
 -- The small round look (22 across, gold ring), for small slots and the
--- buttons on a slot's corner.
+-- buttons on a slot's corner. From v31 it can be called again on a slot
+-- that has been full size since (SetSlotSmall): its small parts are made
+-- the first time and shown again after that, and where its icon sat as a
+-- full slot is kept, to go back to.
 function Kit:MakeSmallRound(b)
+    if b.icon and not b.iconFull then
+        local pts = {}
+        for i = 1, (b.icon.GetNumPoints and b.icon:GetNumPoints() or 0) do pts[i] = { b.icon:GetPoint(i) } end
+        b.iconFull = { pts = pts, tc = { b.icon:GetTexCoord() } }
+    end
     b:SetSize(22, 22)
     b.isSmall = true
     if b.slotBg then b.slotBg:Hide() end
@@ -765,22 +793,103 @@ function Kit:MakeSmallRound(b)
     b.icon:SetPoint("TOPLEFT", 3, -3)
     b.icon:SetPoint("BOTTOMRIGHT", -3, 3)
     b.icon:SetTexCoord(0, 1, 0, 1)
-    local mask = b:CreateMaskTexture()
-    mask:SetTexture(self.media .. "circle_mask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-    mask:SetAllPoints(b.icon)
-    b.icon:AddMaskTexture(mask)
-    b.roundMask = mask
-    b.ring = b:CreateTexture(nil, "OVERLAY", nil, 6)
+    if not b.roundMask then
+        local mask = b:CreateMaskTexture()
+        mask:SetTexture(self.media .. "circle_mask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+        mask:SetAllPoints(b.icon)
+        b.roundMask = mask
+    end
+    if not b.roundMasked then
+        b.icon:AddMaskTexture(b.roundMask)
+        b.roundMasked = true
+    end
+    if not b.ring then b.ring = b:CreateTexture(nil, "OVERLAY", nil, 6) end
     b.ring:SetAllPoints()
     b.ring:SetTexture(self:SmallRingArt(b), nil, nil, "LINEAR")
-    local hl = b:CreateTexture(nil, "HIGHLIGHT")
-    hl:SetTexture(self.media .. "glow_ring")
-    hl:SetBlendMode("ADD")
-    hl:SetPoint("CENTER")
-    hl:SetSize(30, 30)
-    b.roundHl = hl
+    b.ring:Show()
+    if not b.roundHl then
+        local hl = b:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetTexture(self.media .. "glow_ring")
+        hl:SetBlendMode("ADD")
+        hl:SetPoint("CENTER")
+        hl:SetSize(30, 30)
+        b.roundHl = hl
+    end
+    b.roundHl:Show()
     if b.hotkey then b.hotkey:Hide() end
     if b.count then b.count:Hide() end
+end
+
+-- A slot made small or full size after it was made (v31: it moved to a zone
+-- of the other size). The look it isn't using is hidden, kept for when it
+-- changes back; the one it is using is made the first time it's needed
+-- (MakeSmallRound, ApplyShape). Its pin dot, glow and edit-mode highlight
+-- change size with it, all at the Button size setting. Out of combat only
+-- (the slots are secure); returns whether it changed.
+function Kit:SetSlotSmall(btn, small)
+    small = small and true or false
+    if (btn.isSmall and true or false) == small or InCombatLockdown() then return false end
+    local rp = btn.roundParts
+    if small then
+        if rp then
+            rp.ring:Hide()
+            rp.hl:Hide()
+            if rp.masked then btn.icon:RemoveMaskTexture(rp.mask) rp.masked = nil end
+        end
+        self:MakeSmallRound(btn)
+        btn.glowMul = 1.7
+        if btn.pin then
+            btn.pin:SetSize(8, 8)
+            btn.pin:ClearAllPoints()
+            btn.pin:SetPoint("CENTER", btn, "CENTER", -7, 7)
+        end
+    else
+        if btn.ring then btn.ring:Hide() end
+        if btn.roundHl then btn.roundHl:Hide() end
+        if btn.roundMasked then btn.icon:RemoveMaskTexture(btn.roundMask) btn.roundMasked = nil end
+        btn.isSmall = nil
+        -- (its icon back where it sat as a full slot)
+        local f = btn.iconFull
+        btn.icon:ClearAllPoints()
+        if f and #f.pts > 0 then
+            for _, pt in ipairs(f.pts) do btn.icon:SetPoint(pt[1], pt[2], pt[3], pt[4], pt[5]) end
+        else
+            btn.icon:SetAllPoints()
+        end
+        if f then btn.icon:SetTexCoord(unpack(f.tc)) end
+        if btn.slotBg then btn.slotBg:Show() end
+        if btn.hotkey then btn.hotkey:Show() end
+        if btn.count then btn.count:Show() end
+        btn:SetSize(self.BTN, self.BTN)
+        if btn.pin then btn.pin:SetSize(10, 10) end
+        if rp then
+            -- (full before: its round parts back, as ApplyShape first set them)
+            rp.ring:Show()
+            rp.hl:Show()
+            if not rp.masked then btn.icon:AddMaskTexture(rp.mask) rp.masked = true end
+            btn.glowMul = 1.6
+            if btn.hotkey then
+                btn.hotkey:ClearAllPoints()
+                btn.hotkey:SetPoint("TOPRIGHT", btn, "TOPRIGHT", -3, -4)
+            end
+            if btn.pin then
+                btn.pin:ClearAllPoints()
+                btn.pin:SetPoint("CENTER", btn, "CENTER", -11, 11)
+            end
+        end
+        self:ApplyShape(btn) -- (the first time: its round parts; after that, the ring's art for its size)
+    end
+    local w = (small and 22 or self.BTN) * (self.db.buttonSize or 1)
+    btn:SetSize(w, w)
+    if btn.glow then btn.glow:SetSize(w * (btn.glowMul or 1.6), w * (btn.glowMul or 1.6)) end
+    if btn.roundParts and btn.roundParts.hl then btn.roundParts.hl:SetSize(w * 1.35, w * 1.35) end
+    if small then btn.ring:SetTexture(self:SmallRingArt(btn), nil, nil, "LINEAR")
+    elseif btn.roundParts then btn.roundParts.ring:SetTexture(self:RingArt(btn), nil, nil, "LINEAR") end
+    if btn.kcEdit and btn.kcEdit.hl then
+        local hw = w * (small and 1.7 or 1.6)
+        btn.kcEdit.hl:SetSize(hw, hw)
+    end
+    return true
 end
 
 function Kit:ApplyShapes()
@@ -3121,6 +3230,7 @@ function Kit:Refresh(animate)
     end
     self.pending = false
     self:MarkBars()
+    self:SizeZoneSlots() -- (a slot that moved zones while it couldn't change size)
     if self.opening then animate = "open" end -- a refresh from the dock's layout while this kit is opening
     local cfg, db, cdb = self.cfg, self.db, self.cdb
 
@@ -5232,6 +5342,12 @@ Kit.ResetBars = Kit.ResetLayout
 -- layout, divider, edge columns and reminders all follow without knowing.
 -- A slot on a bar keeps its place in its zone's list: that's where it goes
 -- back to when it's dropped on the kit's icon.
+--
+-- From v31 a zone can be one of small buttons (zone.small: a ring of them
+-- under the kit, say). Then every zone's slots take its size, so a small
+-- button dragged out to a full-size zone or onto a bar becomes a full slot,
+-- and one dragged back becomes small again (SetSlotSmall), even while the
+-- drag is only being shown. zone.only keeps a zone to the slots it lists.
 ---------------------------------------------------------------------------
 
 local function CopyLists(lists)
@@ -5266,14 +5382,24 @@ function Kit:ZoneDefaults()
     return d
 end
 
+-- Can this slot go in this zone? (zone.only, v31: just the slots it lists)
+local function ZoneTakes(z, key)
+    if not z.only then return true end
+    for _, k in ipairs(z.only) do
+        if k == key then return true end
+    end
+    return false
+end
+
 -- The zones' lists as they are (or, while a button is being dragged, as they'd be).
 function Kit:Zones()
     return self.zonePreview or (self.cdb and self.cdb.zones) or self:ZoneDefaults()
 end
 
 -- The saved lists, tidied: every slot that belongs to a zone in exactly one
--- list (one that's missing goes back to the zone it started in). Nothing is
--- kept when they match the starting layout.
+-- list (one that's missing, or in a zone that doesn't take it, goes back to
+-- the zone it started in). Nothing is kept when they match the starting
+-- layout.
 function Kit:CleanZones()
     local cdb = self.cdb
     if not cdb then return end
@@ -5285,7 +5411,7 @@ function Kit:CleanZones()
     for _, z in ipairs(self.cfg.zones) do
         out[z.key] = {}
         for _, key in ipairs(type(saved[z.key]) == "table" and saved[z.key] or {}) do
-            if self.zoneHome[key] and not seen[key] then
+            if self.zoneHome[key] and not seen[key] and ZoneTakes(z, key) then
                 seen[key] = true
                 table.insert(out[z.key], key)
             end
@@ -5314,7 +5440,38 @@ function Kit:ApplyZones()
         for _, key in ipairs(lists[z.key] or {}) do now[key] = z end
     end
     self.zoneNow = now
+    self:SizeZoneSlots()
     if self.cfg.OnZones then self.cfg.OnZones(self, CopyLists(lists)) end
+end
+
+-- With a zone of small buttons (zone.small, v31), each zone's slots take its
+-- size: small there, full slots in the others. A slot on a bar is a full
+-- one wherever its zone is (the bars' cells are full size), and so is one
+-- that's only being dragged onto a bar (kit:Bars() is the preview then).
+-- Before the slots are made this only sets slot.small, which they're made
+-- from; after, the buttons change (SetSlotSmall), out of combat. The next
+-- refresh catches up after a fight.
+function Kit:SizeZoneSlots()
+    local zones, now = self.cfg.zones, self.zoneNow
+    if not (zones and now) then return end
+    local any = false
+    for _, z in ipairs(zones) do
+        if z.small then any = true end
+    end
+    if not any then return end
+    local onBar = {}
+    for _, bar in ipairs(self:Bars()) do
+        for _, key in ipairs(bar.keys or {}) do onBar[key] = true end
+    end
+    for key, z in pairs(now) do
+        local slot = self.slotByKey[key]
+        if slot then
+            local small = (z.small and not onBar[key]) and true or false
+            slot.small = small or nil
+            local btn = self.slots[key]
+            if btn and not InCombatLockdown() then self:SetSlotSmall(btn, small) end
+        end
+    end
 end
 
 -- Copies of some lists without one slot, and with it put in a zone.
@@ -5382,7 +5539,7 @@ function Kit:ZoneTarget(lists, key, mx, my)
     local BTN = self.BTN
     -- Rows first: a wide ring's ends can reach down beside one.
     for _, z in ipairs(self.cfg.zones) do
-        if z.y and lists[z.key] then
+        if z.y and lists[z.key] and ZoneTakes(z, key) then
             local shown = self:ZoneShown(lists[z.key])
             local n = #shown
             local step = z.step or (BTN + 8)
@@ -5394,7 +5551,7 @@ function Kit:ZoneTarget(lists, key, mx, my)
     end
     for _, z in ipairs(self.cfg.zones) do
         local ring = z.ring and self:Rings()[z.ring]
-        if ring and lists[z.key] then
+        if ring and lists[z.key] and ZoneTakes(z, key) then
             local shown = self:ZoneShown(lists[z.key])
             local n = #shown
             -- (as it would be with this one on it: right round, if that empties the row)
@@ -5453,6 +5610,7 @@ end
 
 -- Edit mode's outlines round the kit's zones; the one a dragged button
 -- would land in is lit.
+local ZONE_LINE = 0.965 -- (where zone_ring's line sits: this far from its middle to its edge)
 function Kit:PaintZones()
     local zones = self.cfg.zones
     if not zones then return end
@@ -5470,7 +5628,19 @@ function Kit:PaintZones()
             f:SetScale(self.db.scale or 1)
             f:ClearAllPoints()
             f.label:ClearAllPoints()
-            if ring then
+            if ring and z.track then
+                -- (a ring inside another: its outline through the middle of
+                -- its buttons, clear of the other ring's, and its name just
+                -- beyond them, out from the middle of its arc)
+                local radius = ring.radius * sp
+                local size = 2 * radius / ZONE_LINE
+                f:SetSize(size, size)
+                f:SetPoint("CENTER", self.kit, "CENTER", 0, 0)
+                local mid = math.rad((ring.from + ring.to) / 2)
+                local d = radius + (z.small and 11 or BTN / 2) + 8
+                local lx, ly = self:Face(d * math.cos(mid), d * math.sin(mid))
+                f.label:SetPoint("CENTER", f, "CENTER", lx, ly)
+            elseif ring then
                 local radius = ring.radius
                 local size = 2 * (radius * sp + BTN / 2 + 7)
                 f:SetSize(size, size)
