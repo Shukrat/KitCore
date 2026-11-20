@@ -63,7 +63,7 @@ local addonName, ns = ...
 --
 -- From v31 a zone can hold small buttons (zone small): each slot that can
 -- move between zones takes the size of the one it's in, small there and a
--- full slot in the others, changing as it's dragged from one to another. A
+-- full slot in the others (or on a bar), changing as it's dragged. A
 -- zone can take only some slots (zone only), and a ring of small buttons
 -- inside another ring can have its outline run through its buttons
 -- (zone track). See "Zones".
@@ -358,8 +358,9 @@ C.BASE_CHAR = {
 --                   small = true   its slots are small round buttons (22),
 --                                  the other zones' full slots: a slot takes
 --                                  the size of the zone it's in, and changes
---                                  as it moves (out of combat). Used only
---                                  when a zone has it
+--                                  as it moves (out of combat). On a bar
+--                                  it's a full slot. Used only when a zone
+--                                  has it
 --                   only = { slotKey, ... }  just these slots can be dropped
 --                                  in it (any other is offered the other
 --                                  zones); one saved there goes back to the
@@ -5344,9 +5345,9 @@ Kit.ResetBars = Kit.ResetLayout
 --
 -- From v31 a zone can be one of small buttons (zone.small: a ring of them
 -- under the kit, say). Then every zone's slots take its size, so a small
--- button dragged out to a full-size zone becomes a full slot, and one
--- dragged back becomes small again (SetSlotSmall), even while the drag is
--- only being shown. zone.only keeps a zone to the slots it lists.
+-- button dragged out to a full-size zone or onto a bar becomes a full slot,
+-- and one dragged back becomes small again (SetSlotSmall), even while the
+-- drag is only being shown. zone.only keeps a zone to the slots it lists.
 ---------------------------------------------------------------------------
 
 local function CopyLists(lists)
@@ -5444,10 +5445,12 @@ function Kit:ApplyZones()
 end
 
 -- With a zone of small buttons (zone.small, v31), each zone's slots take its
--- size: small there, full slots in the others. Before the slots are made
--- this only sets slot.small, which they're made from; after, the buttons
--- change (SetSlotSmall), out of combat. The next refresh catches up after a
--- fight.
+-- size: small there, full slots in the others. A slot on a bar is a full
+-- one wherever its zone is (the bars' cells are full size), and so is one
+-- that's only being dragged onto a bar (kit:Bars() is the preview then).
+-- Before the slots are made this only sets slot.small, which they're made
+-- from; after, the buttons change (SetSlotSmall), out of combat. The next
+-- refresh catches up after a fight.
 function Kit:SizeZoneSlots()
     local zones, now = self.cfg.zones, self.zoneNow
     if not (zones and now) then return end
@@ -5456,12 +5459,17 @@ function Kit:SizeZoneSlots()
         if z.small then any = true end
     end
     if not any then return end
+    local onBar = {}
+    for _, bar in ipairs(self:Bars()) do
+        for _, key in ipairs(bar.keys or {}) do onBar[key] = true end
+    end
     for key, z in pairs(now) do
         local slot = self.slotByKey[key]
         if slot then
-            slot.small = z.small and true or nil
+            local small = (z.small and not onBar[key]) and true or false
+            slot.small = small or nil
             local btn = self.slots[key]
-            if btn and not InCombatLockdown() then self:SetSlotSmall(btn, z.small) end
+            if btn and not InCombatLockdown() then self:SetSlotSmall(btn, small) end
         end
     end
 end
