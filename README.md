@@ -18,6 +18,8 @@ From v29 a colour setting can be a row of coloured squares: `S.Colors(name, tip,
 
 From v30 a kit can put a frame of its own in the settings window, for what the other rows can't show (a preview, say): `S.Custom(name, tip, make)`. `make(parent, w)` builds the frame, `w` wide, and returns it with its height set; its `Paint()`, if it has one, runs each time the page is painted, and can change its height. The search box finds it by `name` and `tip`. It's the window's only: the game's options page skips it, so a kit can check `S.window` and give that page plain settings instead.
 
+From v31 a zone can hold small buttons: `small = true` on a zone makes its slots small round buttons and the other zones' full slots, and a slot takes the size of whichever zone it's in, changing as it's dragged from one to another in edit mode (out of combat). `only = { slotKey, ... }` keeps a zone to the slots it lists (any other is offered the other zones, and one saved there goes back to the zone it started in). `track = true` on a ring zone runs its outline through the middle of its buttons, with its name just beyond them, for a ring inside another ring. Warlock Kit's Demonic Sacrifice, Soul Link and Fel Domination use all three: small in their inner ring under the orb, full slots on the ring or under the line.
+
 Every kit ships its own copy of `KitCore.lua`; the newest copy loaded runs for every kit (see `VERSION` at the top of the file).
 
 Used by: First Aid Kit, Camping Kit, Fishing Kit, Warlock Kit and Shaman Kit.
