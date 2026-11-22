@@ -67,9 +67,14 @@ local addonName, ns = ...
 -- zone can take only some slots (zone only), and a ring of small buttons
 -- inside another ring can have its outline run through its buttons
 -- (zone track). See "Zones".
+--
+-- From v32 a slot with a drawer can open it from its reminder too
+-- (slot.panelFlyout): right-click its copy in the reminder panel, or a
+-- kit's own reminder button for it (Kit:OpenFlyoutAt), and the drawer
+-- opens beside that, toward the middle of the screen. Out of combat.
 ---------------------------------------------------------------------------
 
-local VERSION = 31
+local VERSION = 32
 -- Builds of the same VERSION (test builds while a version is in a pull
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
@@ -484,6 +489,8 @@ C.BASE_CHAR = {
 --   Tooltip(kit, btn)  fill GameTooltip (already owned)
 --   Pop(kit, btn)      true to show it with the kit closed (like a pin)
 --   noPanel       never goes in the reminder panel (v21)
+--   panelFlyout   its copy in the reminder panel opens the slot's drawer on
+--                 right-click, out of combat (v32; see Kit:OpenFlyoutAt)
 --   panelDefault  in the reminder panel unless you untick it (default: true
 --                 for a slot with Pop, false for the rest)
 --   OnAttribute(kit, btn, name, value)  a flyout choice changed an attribute
@@ -1785,6 +1792,11 @@ function Kit:AddFlyout(btn)
     end)
     fly:SetScript("OnHide", function(f)
         if self.flyOpen == f then self.flyOpen = nil end
+        -- (opened from the slot's reminder: back beside the slot)
+        if f.anchorTo then
+            f.anchorTo = nil
+            if not InCombatLockdown() then self:LayoutFlyout(f.slotBtn) end
+        end
         self:ArmOpenFade()
         self:ApplyFade()
     end)
@@ -1940,7 +1952,7 @@ function Kit:DragTick(fly, dragged, dt)
             b.curX = (b.curX or p[1]) + (p[1] - (b.curX or p[1])) * k
             b.curY = (b.curY or p[2]) + (p[2] - (b.curY or p[2])) * k
             b:ClearAllPoints()
-            b:SetPoint("CENTER", fly.slotBtn, "CENTER", b.curX - (fly.sx or 0), b.curY - (fly.sy or 0))
+            b:SetPoint("CENTER", fly.anchorTo or fly.slotBtn, "CENTER", b.curX - (fly.sx or 0), b.curY - (fly.sy or 0))
         end
     end
 end
@@ -2053,6 +2065,28 @@ function Kit:LayoutFlyout(btn)
     if self.compactAngle then grid = FanDir(sx, sy) end
     if self.edgeSide then grid = TOWARD_MIDDLE[self.edgeSide] end
     if btn.kcBar and btn.barGrid then grid = btn.barGrid end -- (on a bar: away from the bar's line)
+    -- Opened from the slot's reminder (Kit:OpenFlyoutAt): beside that
+    -- instead, toward the middle of the screen. Gone (the reminder's done its
+    -- job, say a stone went on): the drawer closes and is the slot's again.
+    local anchor = fly.anchorTo
+    if anchor then
+        local ax, ay
+        if anchor:IsVisible() then ax, ay = self:FlyAnchorAt(anchor) end
+        if not ax then
+            fly.anchorTo, anchor = nil, nil
+            if fly:IsShown() then fly:Hide() end
+        end
+        if ax then
+            sx, sy = ax, ay
+            local cx = UIParent:GetWidth() * UIParent:GetEffectiveScale() / 2
+            local cy = UIParent:GetHeight() * UIParent:GetEffectiveScale() / 2
+            local x, y = anchor:GetCenter()
+            local es = anchor:GetEffectiveScale()
+            local dx, dy = cx - x * es, cy - y * es
+            if dx * dx + dy * dy > 1 then grid = FanDir(dx, dy) end
+        end
+    end
+    local at = anchor or btn
     local BTN = self.BTN
     local step = BTN + 4
     local per = slot.perRow or 8
@@ -2064,7 +2098,7 @@ function Kit:LayoutFlyout(btn)
         -- A sub under the slot (not on an edge, where it's on the corner)
         -- needs the flyout to clear it when it opens that way.
         local gap = BTN + 10
-        if slot.flyGap and not self.edgeSide and not btn.kcBar and grid == self:FaceDir("down") then gap = gap + slot.flyGap end
+        if slot.flyGap and not anchor and not self.edgeSide and not btn.kcBar and grid == self:FaceDir("down") then gap = gap + slot.flyGap end
         if grid == "left" or grid == "right" then
             local dir = grid == "left" and -1 or 1
             x = sx + dir * (gap + at * step)
@@ -2106,7 +2140,7 @@ function Kit:LayoutFlyout(btn)
         local x, y = pts[i][1], pts[i][2]
         local dx, dy = x - sx, y - sy
         b:ClearAllPoints()
-        b:SetPoint("CENTER", btn, "CENTER", dx, dy)
+        b:SetPoint("CENTER", at, "CENTER", dx, dy)
         b.flyBack:SetOffset(-dx, -dy)
         b.flyOut:SetOffset(dx, dy)
         b:Show()
@@ -2128,12 +2162,12 @@ function Kit:LayoutFlyout(btn)
         end
         local pad = BTN / 2 + 7
         fly:ClearAllPoints()
-        fly:SetPoint("TOPLEFT", btn, "CENTER", x0 - pad - sx, y1 + pad - sy)
-        fly:SetPoint("BOTTOMRIGHT", btn, "CENTER", x1 + pad - sx, y0 - pad - sy)
+        fly:SetPoint("TOPLEFT", at, "CENTER", x0 - pad - sx, y1 + pad - sy)
+        fly:SetPoint("BOTTOMRIGHT", at, "CENTER", x1 + pad - sx, y0 - pad - sy)
         fly.panel:Show()
     else
         fly:ClearAllPoints()
-        fly:SetAllPoints(btn)
+        fly:SetAllPoints(at)
         fly.panel:Hide()
     end
     if fly:IsShown() then self:PaintFlyout(fly) end
@@ -2162,6 +2196,33 @@ function Kit:ApplyAssigned(btn)
     btn:SetAttribute("kcvalue", c and c.value or nil)
     btn.updating = nil
     if not c and not Val(slot.keepEmpty, self, btn) then btn.hidden = true end
+end
+
+-- Where a frame other than the slot sits, as the drawer's points count it:
+-- from the kit's centre, in the drawer's units (see FitPoints).
+function Kit:FlyAnchorAt(f)
+    local x, y = f:GetCenter()
+    local kx, ky = self.kit:GetCenter()
+    if not (x and kx) then return nil end
+    local ps = (self.db.scale or 1) * UIParent:GetEffectiveScale()
+    local fe, ke = f:GetEffectiveScale(), self.kit:GetEffectiveScale()
+    return (x * fe - kx * ke) / ps, (y * fe - ky * ke) / ps
+end
+
+-- A slot's drawer opened from somewhere else, out of combat (v32): its copy
+-- in the reminder panel (slot.panelFlyout), or a kit's own reminder button
+-- for it. It opens beside that frame, toward the middle of the screen, and
+-- is the slot's own again once it closes. Again from the same frame: closes.
+function Kit:OpenFlyoutAt(btn, anchor)
+    local fly = btn and btn.fly
+    if not (fly and anchor) or InCombatLockdown() then return end
+    if fly:IsShown() and fly.anchorTo == anchor then fly:Hide() return end
+    for _, f in pairs(self.flyouts) do
+        if f:IsShown() then f:Hide() end
+    end
+    fly.anchorTo = anchor
+    self:LayoutFlyout(btn)
+    if fly.anchorTo == anchor then fly:Show() end
 end
 
 function Kit:LayoutFlyouts()
@@ -5061,12 +5122,24 @@ function Kit:PanelTwin(btn)
     t.note:SetPoint("TOP", t, "BOTTOM", 0, -1)
     self:AddGlow(t, "glow_ring", 1.6)
     self:ApplyShape(t)
+    local flyHere = btn.fly and btn.slot.panelFlyout
     self:HoverTip(t, function(b)
         local slot = btn.slot
         self:TipOwner(b)
         if slot.Tooltip then slot.Tooltip(self, btn) else GameTooltip:AddLine(slot.label) end
+        if flyHere then
+            GameTooltip:AddLine(" ")
+            GameTooltip:AddLine(slot.flyoutHint or "Right-click: choose", 0.3, 1, 0.4)
+        end
         GameTooltip:Show()
     end)
+    -- Right-click: the slot's drawer, beside the copy (v32, slot.panelFlyout).
+    if flyHere then
+        t:SetAttribute("type2", "kcflyat")
+        t:SetAttribute("_kcflyat", function()
+            if self:Debounced() then self:OpenFlyoutAt(btn, t) end
+        end)
+    end
     t:Hide()
     btn.twin = t
     btn:HookScript("OnAttributeChanged", function(b, name)
@@ -7816,7 +7889,7 @@ function Kit:OnEvent(event, ...)
             local focus = GetMouseFoci and GetMouseFoci()[1] or (GetMouseFocus and GetMouseFocus())
             local inside = false
             while focus do
-                if focus == fly or focus == fly.slotBtn then inside = true break end
+                if focus == fly or focus == fly.slotBtn or (fly.anchorTo and focus == fly.anchorTo) then inside = true break end
                 focus = focus.GetParent and focus:GetParent()
             end
             if not inside then fly:Hide() end
@@ -7829,6 +7902,11 @@ function Kit:OnEvent(event, ...)
         -- here on, and any open already, close themselves once the mouse
         -- leaves them, since a click elsewhere can't close them in combat.
         if not InCombatLockdown() then
+            -- A drawer opened from a reminder (v32) is out of combat only:
+            -- it closes, back beside its slot.
+            for _, f in pairs(self.flyouts or {}) do
+                if f.anchorTo and f:IsShown() then f:Hide() end
+            end
             -- Anything part-way through hiding hides now (see Fighting): a
             -- slot closing, or the kit fading out as another kit opens.
             self:FinishSlides()
