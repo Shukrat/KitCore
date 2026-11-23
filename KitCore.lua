@@ -74,9 +74,12 @@ local addonName, ns = ...
 -- opens beside that, toward the middle of the screen. Out of combat.
 -- Also from v32: a slot the kit has hidden (btn.hidden) but marked
 -- btn.panelWhenHidden still sends its reminder to the reminder panel.
+--
+-- From v33 the words Kit Core shows go through KitCore.L, in the player's
+-- language (Simplified Chinese so far; anything untranslated stays English).
 ---------------------------------------------------------------------------
 
-local VERSION = 32
+local VERSION = 33
 -- Builds of the same VERSION (test builds while a version is in a pull
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
@@ -92,6 +95,225 @@ _G.KitCore = C
 ns.Core = C
 C.version = VERSION
 C.build = BUILD
+
+-- The words on screen (KitCore.L), keyed by their English: Loc["Settings"]. A
+-- key with no translation comes back as itself, so English needs no entries
+-- and a string nobody has translated shows in English. The table is this
+-- copy's own, rebuilt whenever a newer copy takes over, so the text always
+-- matches the code that's running. It's Loc here, not L: this file already
+-- uses L for left edges and lengths. Kits keep their own text in their own
+-- tables (ns.L); this one is only for what Kit Core itself shows.
+local Loc = setmetatable({}, { __index = function(_, key) return key end })
+C.L = Loc
+do
+    local locale = GetLocale and GetLocale() or "enUS"
+    if locale == "zhCN" then
+        -- Simplified Chinese: Loc["English, exactly as in the code"] = "中文"
+        Loc["Open / close the kit"] = "打开/关闭套件"
+        Loc["Use %s"] = "使用%s"
+        Loc["Left-click: open / close"] = "左键点击：打开/关闭"
+        Loc["Drag: move"] = "拖动：移动"
+        Loc["Right-click: menu   Shift-right-click: settings"] = "右键点击：菜单   Shift+右键点击：设置"
+        Loc["That can only change out of combat."] = "只能在脱离战斗后更改。"
+        Loc["Pinned in place."] = "已固定位置。"
+        Loc["Unpinned. Drag the kit to move it."] = "已取消固定。拖动套件即可移动。"
+        Loc["Place"] = "放置"
+        Loc["On the pin"] = "停靠点上"
+        Loc["Tuck box"] = "收纳框"
+        Loc["Free"] = "自由"
+        Loc["Pin in place"] = "固定位置"
+        Loc["Done editing layout"] = "完成布局编辑"
+        Loc["Edit layout"] = "编辑布局"
+        Loc["Settings"] = "设置"
+        Loc["Click: open"] = "点击：打开"
+        Loc["Right-click: choose"] = "右键点击：选择"
+        Loc["On a bar: always shown"] = "在按钮条上：始终显示"
+        Loc["Shift-right-click: stop always showing"] = "Shift+右键点击：取消始终显示"
+        Loc["Shift-right-click: always show"] = "Shift+右键点击：始终显示"
+        Loc["Nothing to choose from."] = "没有可选项。"
+        Loc["Drag: move it in this list"] = "拖动：在此列表中移动"
+        Loc["the press didn't reach the kit's secure code"] = "按键没有传到套件的安全代码"
+        Loc["the game didn't give the kit the mouse position"] = "游戏没有把鼠标位置交给套件"
+        Loc["the game didn't give the kit the mouse position on release"] = "松开时游戏没有把鼠标位置交给套件"
+        Loc["the game didn't give the kit the button's position"] = "游戏没有把按钮位置交给套件"
+        Loc["the game didn't let the kit move the button"] = "游戏没有允许套件移动按钮"
+        Loc["Couldn't move the kit in combat: %s."] = "无法在战斗中移动套件：%s。"
+        Loc["stopped at %s"] = "停在了 %s"
+        Loc["Click the kit button to open or close it in combat."] = "战斗中请点击套件按钮来打开或关闭它。"
+        Loc["%s is on a bar, so it's always shown. Edit the layout to move it."] = "%s在按钮条上，所以始终显示。编辑布局可移动它。"
+        Loc["%s: always shown."] = "%s：始终显示。"
+        Loc["%s: hides when the kit closes."] = "%s：套件关闭时隐藏。"
+        Loc["Left-click: settings"] = "左键点击：设置"
+        Loc["Right-click: open / close the kit"] = "右键点击：打开/关闭套件"
+        Loc["Drag: move around the minimap"] = "拖动：沿小地图移动"
+        Loc["The settings panel isn't available on this build. %s help lists the slash commands."] = "此版本没有设置面板。%s help 可列出斜杠命令。"
+        Loc["Kit"] = "套件"
+        Loc["General"] = "常规"
+        Loc["Show %s"] = "显示 %s"
+        Loc["Turn off to hide the whole kit (its button and every slot) without uninstalling it."] = "关闭即可隐藏整个套件（它的按钮和所有栏位），无需卸载。"
+        Loc["Lock it in place"] = "锁定位置"
+        Loc["Stop the kit from being dragged. Also in the kit's right-click menu."] = "禁止拖动套件。也可在套件的右键菜单中设置。"
+        Loc["Tuck at screen edge"] = "在屏幕边缘收起"
+        Loc["On a screen edge on its own, the kit slides half off the screen until you mouse over it. Turn off to keep it fully on the screen. In a tuck box it still tucks with the box."] = "套件单独位于屏幕边缘时，会滑出屏幕一半，直到鼠标移上去。关闭则始终完整留在屏幕上。在收纳框中时它仍随收纳框一起收起。"
+        Loc["Minimap button"] = "小地图按钮"
+        Loc["Left-click for these settings, right-click to open the kit, drag to move it."] = "左键点击打开这些设置，右键点击打开套件，拖动可移动它。"
+        Loc["Chat messages"] = "聊天消息"
+        Loc["Notices in chat when something changes (pinned in place, always shown, snoozed and the like). Slash commands still answer in chat."] = "有变化时在聊天中提示（固定位置、始终显示、暂停提醒等）。斜杠命令仍会在聊天中回复。"
+        Loc["In combat"] = "战斗中"
+        Loc["Hide the kit in combat"] = "战斗中隐藏套件"
+        Loc["Hide the kit while you're in combat."] = "战斗中隐藏套件。"
+        Loc["Drawers close after"] = "弹出栏关闭延迟"
+        Loc["In combat a drawer can't close when you click elsewhere, so it closes by itself this long after the mouse leaves it and its slot."] = "战斗中点击别处无法关闭弹出栏，所以鼠标离开它和它的栏位这么久后会自动关闭。"
+        Loc["Fading"] = "淡出"
+        Loc["Fade the kit"] = "套件淡出"
+        Loc["When closed: the closed kit and its pinned slots fade until you mouse over them. When left open: the open kit fades once the mouse has been off it a while (it stays open). Mouse over to bring it back."] = "关闭时：关闭的套件及其固定栏位会淡出，直到鼠标移上去。保持打开时：鼠标离开一段时间后，打开的套件会淡出（仍保持打开）。鼠标移上去即恢复。"
+        Loc["Never"] = "从不"
+        Loc["When closed"] = "关闭时"
+        Loc["When left open"] = "保持打开时"
+        Loc["Both"] = "两者"
+        Loc["Fade when idle"] = "闲置时淡出"
+        Loc["With the kit closed, it and its pinned slots fade until you mouse over them."] = "套件关闭时，它和它的固定栏位会淡出，直到鼠标移上去。"
+        Loc["Fade when left open"] = "保持打开时淡出"
+        Loc["With the kit open, it and its slots fade once the mouse has been off them for a while. They stay open, and come back when you mouse over them."] = "套件打开时，鼠标离开一段时间后它和它的栏位会淡出。它们保持打开，鼠标移上去即恢复。"
+        Loc["Fade an open kit after"] = "打开的套件淡出延迟"
+        Loc["How long the mouse has to be off the open kit before it fades."] = "鼠标离开打开的套件多久后它才淡出。"
+        Loc["How faded"] = "淡出程度"
+        Loc["How see-through the kit's slots get when it fades: 0% is gone until you mouse over. The kit button fades half as much, so you can still find it."] = "淡出时套件栏位的透明程度：0% 表示完全消失，直到鼠标移上去。套件按钮只淡出一半，方便你找到它。"
+        Loc["Look"] = "外观"
+        Loc["Size"] = "大小"
+        Loc["Whole kit"] = "整个套件"
+        Loc["The whole kit: the center icon, the buttons round it and the space between them."] = "整个套件：中心图标、周围的按钮以及它们之间的间距。"
+        Loc["Center icon"] = "中心图标"
+        Loc["Just the icon in the middle: the buttons round it stay where they are."] = "只有中间的图标：周围的按钮位置不变。"
+        Loc["Buttons"] = "按钮"
+        Loc["Just the buttons round the center icon: each gets smaller in its place, so they spread out a little."] = "只有中心图标周围的按钮：每个按钮在原位变小，所以会稍微散开。"
+        Loc["Spread"] = "间距"
+        Loc["How far the buttons sit from the center icon: lower brings them in close, higher spreads them out."] = "按钮离中心图标多远：数值小则靠拢，数值大则散开。"
+        Loc["Layout"] = "布局"
+        Loc["Buttons open toward"] = "按钮展开方向"
+        Loc["Which way the slots lay out round the kit while it's floating. On a screen edge they always face the middle of the screen."] = "套件浮动时栏位围绕它排列的方向。在屏幕边缘时它们始终朝向屏幕中央。"
+        Loc["Up"] = "向上"
+        Loc["Down"] = "向下"
+        Loc["Left"] = "向左"
+        Loc["Right"] = "向右"
+        Loc["Reminders"] = "提醒"
+        Loc["Tooltips"] = "鼠标提示"
+        Loc["Where a slot's tooltip shows: beside the slot, or where the game normally puts tooltips."] = "栏位的鼠标提示显示在哪里：栏位旁边，或游戏通常显示鼠标提示的位置。"
+        Loc["Beside the slot"] = "栏位旁边"
+        Loc["Game's spot"] = "游戏默认位置"
+        Loc["Default tooltip position"] = "默认鼠标提示位置"
+        Loc["Show slot tooltips where the game normally shows tooltips, instead of beside the slot."] = "在游戏通常显示鼠标提示的位置显示栏位提示，而不是在栏位旁边。"
+        Loc["Pinned buttons"] = "固定按钮"
+        Loc["Keep it out when the kit is closed (this character only). You can also shift-right-click the slot."] = "套件关闭时保留在外（仅限此角色）。也可以 Shift+右键点击栏位。"
+        Loc["Slot choices"] = "栏位选择"
+        Loc["Reset"] = "重置"
+        Loc["Put every slot back to its starting choice, and every list back in its starting order."] = "把每个栏位恢复为初始选择，每个列表恢复初始顺序。"
+        Loc["Bars"] = "按钮条"
+        Loc["Edit"] = "编辑"
+        Loc["Opens the kit and lets you drag its buttons. The outlines show where a button can go on the kit: drop it there, between two buttons or at an end. Drop a button away from the kit and it floats there, always shown. Drop another on it to make a bar, or between two to put it there. Drop a button on the kit's icon to put it back. Drag a bar by its box to move it. This character only; out of combat. Also in the kit's right-click menu."] = "打开套件并允许你拖动它的按钮。轮廓显示按钮可以放在套件上的哪些位置：放到那里、两个按钮之间或末端。把按钮拖离套件，它就会浮动在那里并始终显示。再拖一个到它上面可组成一个按钮条，或拖到两个之间插入。把按钮拖到套件图标上可放回去。拖动按钮条的框可移动整个按钮条。仅限此角色；需脱离战斗。也可在套件的右键菜单中打开。"
+        Loc["Spacing"] = "间距"
+        Loc["Room between the buttons on a bar."] = "按钮条上按钮之间的间隔。"
+        Loc["Reset to defaults"] = "恢复默认"
+        Loc["Put every button back where it started: off the bars, and the kit's own buttons in their usual places and order."] = "把每个按钮放回原处：从按钮条上取下，套件自己的按钮回到原来的位置和顺序。"
+        Loc["Reminder panel"] = "提醒面板"
+        Loc["Put %s's reminders in the panel"] = "把 %s 的提醒放进面板"
+        Loc["One panel for all your kits that you can put anywhere. With this on and %s closed, its reminders show there, full size, instead of beside the kit. They stay in the panel while the kit is open too (and in their places in the kit). Each kit has its own switch, so some kits' reminders can be in the panel and others by their kit."] = "一个供所有套件共用、可随意放置的面板。开启后，%s 关闭时它的提醒会以完整大小显示在面板里，而不是在套件旁边。套件打开时它们也留在面板里（同时也在套件中各自的位置）。每个套件有自己的开关，所以可以让一些套件的提醒在面板里，另一些在各自套件旁。"
+        Loc["A pinned button stays by its kit, and its reminder shows in the panel too."] = "固定的按钮留在套件旁，它的提醒也会显示在面板里。"
+        Loc["A pinned button always stays by its kit."] = "固定的按钮始终留在套件旁。"
+        Loc["The panel (every kit)"] = "面板（所有套件）"
+        Loc["Place the panel"] = "放置面板"
+        Loc["Move"] = "移动"
+        Loc["Shows a grid and the panel's box of buttons: drag it where you want it. It snaps to the grid, the middle of the screen and your kit buttons; hold Shift to place it freely."] = "显示网格和面板的按钮框：把它拖到想要的位置。它会吸附到网格、屏幕中线和你的套件按钮；按住 Shift 可自由放置。"
+        Loc["Rows: buttons side by side, then a new row. Columns: one under another, then a new column."] = "行：按钮并排，排满后另起一行。列：按钮上下排列，排满后另起一列。"
+        Loc["Rows"] = "行"
+        Loc["Columns"] = "列"
+        Loc["Buttons per row"] = "每行按钮数"
+        Loc["How many across before a new row starts."] = "一行排多少个后另起一行。"
+        Loc["Buttons per column"] = "每列按钮数"
+        Loc["How many down before a new column starts."] = "一列排多少个后另起一列。"
+        Loc["Grow from the middle"] = "从中间展开"
+        Loc["The first button sits in the middle of the row (column), the next ones spread out evenly either side, and each new row (column) starts in the middle again. Off: they fill from the corner below."] = "第一个按钮位于行（列）的中间，之后的按钮向两侧均匀展开，每个新的行（列）再从中间开始。关闭：从下面选定的角落开始填充。"
+        Loc["Start from"] = "起始角落"
+        Loc["The corner the first button goes in (growing from the middle: the side new rows or columns are added toward). The panel grows away from it, and stays put there."] = "第一个按钮所在的角落（从中间展开时：新的行或列添加的方向）。面板从这里向外扩展，这个角落保持不动。"
+        Loc["Top left"] = "左上"
+        Loc["Top right"] = "右上"
+        Loc["Bottom left"] = "左下"
+        Loc["Bottom right"] = "右下"
+        Loc["Button size"] = "按钮大小"
+        Loc["The buttons in the panel, the same for every kit (100% is a full slot)."] = "面板中的按钮大小，所有套件相同（100% 为完整栏位大小）。"
+        Loc["Room between the buttons."] = "按钮之间的间隔。"
+        Loc["Snap when placing"] = "放置时吸附"
+        Loc["Line the panel up with the grid, the middle of the screen and your kit buttons as you drag it."] = "拖动面板时让它对齐网格、屏幕中线和你的套件按钮。"
+        Loc["Grid size"] = "网格大小"
+        Loc["How far apart the grid's lines are while placing it."] = "放置时网格线之间的距离。"
+        Loc["Reminders in the panel"] = "面板中的提醒"
+        Loc["When it pops out with the kit closed (missing or wanted), it shows in the panel."] = "套件关闭时它弹出（缺少或需要）会显示在面板里。"
+        Loc["Pinned, it shows in the panel too, and stays by the kit."] = "固定时，它也会显示在面板里，同时留在套件旁。"
+        Loc["Pinned, it stays by the kit."] = "固定时，它留在套件旁。"
+        Loc["Key bindings"] = "按键绑定"
+        Loc["Open"] = "打开"
+        Loc["Bind each slot, and opening the kit."] = "为每个栏位以及打开套件绑定按键。"
+        Loc["Slot choices reset."] = "栏位选择已重置。"
+        Loc["Open Esc > Options > Keybindings and look for %s."] = "打开 Esc > 选项 > 按键绑定，找到 %s。"
+        Loc["Kit reminders"] = "套件提醒"
+        Loc["Drag to move. Hold Shift to place it freely."] = "拖动以移动。按住 Shift 可自由放置。"
+        Loc["Right-click when you're done."] = "完成后右键点击。"
+        Loc["Drag to move, Shift for free"] = "拖动以移动，按住 Shift 自由放置"
+        Loc["Snap"] = "吸附"
+        Loc["Done"] = "完成"
+        Loc["Grid %s"] = "网格 %s"
+        Loc["Placing %s"] = "正在放置%s"
+        Loc["Moving everything"] = "全部移动中"
+        Loc["Things can only be moved out of combat."] = "只能在脱离战斗后移动。"
+        Loc["Nothing to move: turn on the reminder panel or a kit's timers first. The kits themselves move by dragging them."] = "没有可移动的：请先开启提醒面板或某个套件的计时器。套件本身直接拖动即可移动。"
+        Loc["the reminder panel"] = "提醒面板"
+        Loc["The reminder panel can only move out of combat."] = "提醒面板只能在脱离战斗后移动。"
+        Loc["Turn on the reminder panel for a kit first (its Settings > Reminder panel)."] = "请先为某个套件开启提醒面板（它的设置 > 提醒面板）。"
+        Loc["Layout reset: every button is back in its usual place."] = "布局已重置：每个按钮都回到了原来的位置。"
+        Loc["Drag to move it."] = "拖动以移动。"
+        Loc["Drop it on the kit to put it back."] = "拖到套件上可放回去。"
+        Loc["Drop it away from the kit to float it."] = "拖离套件可让它浮动。"
+        Loc["Bar"] = "按钮条"
+        Loc["Drag to move the whole bar."] = "拖动以移动整个按钮条。"
+        Loc["Drag a button onto one of the kit's outlines to move it there, between two buttons or at an end. Drop it away from the kit and it floats, always shown; drop another on it to make a bar. Drop a button on the kit's icon to put it back. Drag a bar's box to move it."] = "把按钮拖到套件的某个轮廓上即可移到那里、两个按钮之间或末端。拖离套件它就会浮动并始终显示；再拖一个到它上面可组成一个按钮条。把按钮拖到套件图标上可放回去。拖动按钮条的框可移动它。"
+        Loc["The layout can only be edited out of combat."] = "布局只能在脱离战斗后编辑。"
+        Loc["Show the kit first."] = "请先显示套件。"
+        Loc["Close Quick Keybind Mode first."] = "请先关闭快速按键绑定模式。"
+        Loc["Editing %s's layout"] = "正在编辑 %s 的布局"
+        Loc["Custom..."] = "自定义…"
+        Loc["Custom"] = "自定义"
+        Loc["Pick any colour in the game's colour picker. Cancel puts back what you had."] = "在游戏的颜色选择器中选择任意颜色。取消则恢复原来的颜色。"
+        Loc["No setting matches that. Try another word."] = "没有匹配的设置。换个词试试。"
+        Loc["Settings with \"%s\""] = "包含“%s”的设置"
+        Loc["%s settings"] = "%s 设置"
+        Loc["Find a setting"] = "查找设置"
+        Loc["Move everything"] = "全部移动"
+        Loc["The reminder panel and every timer and bar in use, shown where they sit on a grid so you can drag them all at once. Done (or Esc) when you're finished."] = "提醒面板以及所有使用中的计时器和条，在网格上显示在各自的位置，可以一次全部拖动。完成后点击“完成”（或按 Esc）。"
+        Loc["Also %s move."] = "也可用 %s move。"
+        Loc["The kit's settings are in its own window. Also from the minimap button, the kit's right-click menu or %s."] = "套件的设置在它自己的窗口中。也可从小地图按钮、套件的右键菜单或 %s 打开。"
+        Loc["its slash command"] = "它的斜杠命令"
+        Loc["Settings panel failed to load (%s). %s help lists the slash commands."] = "设置面板加载失败（%s）。%s help 可列出斜杠命令。"
+        Loc["%s - settings"] = "%s - 设置"
+        Loc["%s minimap - show or hide the minimap button"] = "%s minimap - 显示或隐藏小地图按钮"
+        Loc["%s face up | down | left | right - which way the layout points"] = "%s face up | down | left | right - 布局朝向"
+        Loc["%s move - move everything: the reminder panel and the kits' timers and bars, all at once"] = "%s move - 全部移动：提醒面板以及各套件的计时器和条，一次完成"
+        Loc["%s panel - move the reminder panel (shared by every kit)"] = "%s panel - 移动提醒面板（所有套件共用）"
+        Loc["%s layout - drag buttons off the kit onto bars"] = "%s layout - 把按钮从套件拖到按钮条上"
+        Loc["%s dock - dock every kit on the pin"] = "%s dock - 把所有套件停靠到停靠点"
+        Loc["Locked."] = "已锁定。"
+        Loc["Unlocked. Drag the kit to move it."] = "已解锁。拖动套件即可移动。"
+        Loc["Kits docked together on the pin."] = "套件已一起停靠到停靠点。"
+        Loc["Docking needs another kit installed."] = "停靠需要安装另一个套件。"
+        Loc["%s face up | down | left | right   (now %s)"] = "%s face up | down | left | right   （当前 %s）"
+        Loc["Kit moved back to its starting spot."] = "套件已回到初始位置。"
+        Loc["Minimap button shown."] = "小地图按钮已显示。"
+        Loc["Minimap button hidden. %s minimap brings it back."] = "小地图按钮已隐藏。%s minimap 可恢复。"
+        Loc["Unknown command. %s help lists them."] = "未知命令。%s help 可列出命令。"
+        Loc["Press Escape to unbind."] = "按 Esc 解除绑定。"
+        Loc["Not bound"] = "未绑定"
+        Loc["Press a key to bind."] = "按下一个键进行绑定。"
+    end
+end
 
 -- Kits are tables with this as their metatable. A newer copy loaded later
 -- replaces the methods in place, so kits made by an older copy pick them up.
@@ -529,10 +751,10 @@ function C.NewKit(cfg)
     local H = cfg.bindingHeader
     if H then
         _G["BINDING_HEADER_" .. H] = cfg.name
-        _G["BINDING_NAME_" .. H .. "_TOGGLE"] = "Open / close the kit"
+        _G["BINDING_NAME_" .. H .. "_TOGGLE"] = Loc["Open / close the kit"]
         for _, slot in ipairs(cfg.slots) do
             _G["BINDING_NAME_CLICK " .. cfg.prefix .. "Slot_" .. slot.key .. ":LeftButton"] =
-                slot.binding or ("Use " .. slot.label:lower())
+                slot.binding or (Loc["Use %s"]):format(slot.label:lower())
         end
     end
     _G[cfg.prefix .. "_Toggle"] = function() self:Toggle() end
@@ -710,6 +932,9 @@ local function ShortKey(key)
     t = t:gsub("Num Pad ", "N"):gsub("NUMPAD", "N")
     t = t:gsub("Mouse Wheel Up", "WU"):gsub("Mouse Wheel Down", "WD")
     t = t:gsub("MOUSEWHEELUP", "WU"):gsub("MOUSEWHEELDOWN", "WD")
+    -- Chinese clients spell them out too.
+    t = t:gsub("鼠标滚轮向上滚动", "WU"):gsub("鼠标滚轮向下滚动", "WD")
+    t = t:gsub("鼠标中键", "M3"):gsub("鼠标按键", "M"):gsub("数字键盘", "N")
     return t
 end
 
@@ -1241,9 +1466,9 @@ function Kit:BuildKit()
         DefaultAnchor(b)
         GameTooltip:AddLine(self.name)
         if cfg.KitTooltip then cfg.KitTooltip(self) end
-        GameTooltip:AddLine("Left-click: open / close", 1, 1, 1)
-        if not self.db.locked then GameTooltip:AddLine("Drag: move", 1, 1, 1) end
-        GameTooltip:AddLine("Right-click: menu   Shift-right-click: settings", 1, 1, 1)
+        GameTooltip:AddLine(Loc["Left-click: open / close"], 1, 1, 1)
+        if not self.db.locked then GameTooltip:AddLine(Loc["Drag: move"], 1, 1, 1) end
+        GameTooltip:AddLine(Loc["Right-click: menu   Shift-right-click: settings"], 1, 1, 1)
         GameTooltip:Show()
     end)
     if not self.noSecureToggle then
@@ -1288,10 +1513,10 @@ end
 ---------------------------------------------------------------------------
 
 function Kit:SetLocked(on)
-    if InCombatLockdown() then self:Print("That can only change out of combat.") return end
+    if InCombatLockdown() then self:Print(Loc["That can only change out of combat."]) return end
     self.db.locked = on and true or false
     self.kit:SetAttribute("kcmovable", self:CanSecureMove() and 1 or 0)
-    self:Print(self.db.locked and "Pinned in place." or "Unpinned. Drag the kit to move it.")
+    self:Print(self.db.locked and Loc["Pinned in place."] or Loc["Unpinned. Drag the kit to move it."])
     self:SettingsChanged()
 end
 
@@ -1318,15 +1543,15 @@ function Kit:PlacementMenu(root)
         return "free"
     end
     local function Go(to)
-        if InCombatLockdown() then self:Print("That can only change out of combat.") return end
+        if InCombatLockdown() then self:Print(Loc["That can only change out of combat."]) return end
         if to == "top" then D.Park(self.key)
         elseif to == "pin" then D.Pin(self.key)
         else D.Undock(self.key) end
     end
-    local sub = root:CreateButton("Place")
-    sub:CreateRadio("On the pin", function() return where() == "pin" end, function() Go("pin") end)
-    sub:CreateRadio("Tuck box", function() return where() == "top" end, function() Go("top") end)
-    sub:CreateRadio("Free", function() return where() == "free" end, function() Go("free") end)
+    local sub = root:CreateButton(Loc["Place"])
+    sub:CreateRadio(Loc["On the pin"], function() return where() == "pin" end, function() Go("pin") end)
+    sub:CreateRadio(Loc["Tuck box"], function() return where() == "top" end, function() Go("top") end)
+    sub:CreateRadio(Loc["Free"], function() return where() == "free" end, function() Go("free") end)
 end
 
 function Kit:OpenMenu()
@@ -1338,15 +1563,15 @@ function Kit:OpenMenu()
     MenuUtil.CreateContextMenu(self.kit, function(_, root)
         root:CreateTitle(self.name)
         self:PlacementMenu(root)
-        root:CreateCheckbox("Pin in place",
+        root:CreateCheckbox(Loc["Pin in place"],
             function() return self.db.locked and true or false end,
             function() self:SetLocked(not self.db.locked) end)
         if self.cfg.bars then
-            root:CreateButton(self.editing and "Done editing layout" or "Edit layout", function() self:ToggleEdit() end)
+            root:CreateButton(self.editing and Loc["Done editing layout"] or Loc["Edit layout"], function() self:ToggleEdit() end)
         end
         if self.cfg.Menu then self.cfg.Menu(self, root) end
         root:CreateDivider()
-        root:CreateButton("Settings", function() self:OpenSettings() end)
+        root:CreateButton(Loc["Settings"], function() self:OpenSettings() end)
         if self.cfg.MenuAfterSettings then self.cfg.MenuAfterSettings(self, root) end
     end)
 end
@@ -1529,15 +1754,15 @@ function Kit:SlotTooltip(btn)
     self:TipOwner(btn)
     if slot.Tooltip then slot.Tooltip(self, btn) else GameTooltip:AddLine(slot.label) end
     local hints = {}
-    if slot.flyout == "left" then hints[#hints + 1] = "Click: open" end
-    if slot.flyout == "right" then hints[#hints + 1] = slot.flyoutHint or "Right-click: choose" end
+    if slot.flyout == "left" then hints[#hints + 1] = Loc["Click: open"] end
+    if slot.flyout == "right" then hints[#hints + 1] = slot.flyoutHint or Loc["Right-click: choose"] end
     if #hints > 0 or not slot.noPin then GameTooltip:AddLine(" ") end
     for _, h in ipairs(hints) do GameTooltip:AddLine(h, 0.3, 1, 0.4) end
     if btn.kcBar then
-        GameTooltip:AddLine("On a bar: always shown", 1, 0.82, 0)
+        GameTooltip:AddLine(Loc["On a bar: always shown"], 1, 0.82, 0)
     elseif not slot.noPin then
-        GameTooltip:AddLine(self.cdb.pinned[slot.key] and "Shift-right-click: stop always showing"
-            or "Shift-right-click: always show", 1, 0.82, 0)
+        GameTooltip:AddLine(self.cdb.pinned[slot.key] and Loc["Shift-right-click: stop always showing"]
+            or Loc["Shift-right-click: always show"], 1, 0.82, 0)
     end
     GameTooltip:Show()
 end
@@ -1779,7 +2004,7 @@ function Kit:AddFlyout(btn)
         self:ApplyFade()
         if not InCombatLockdown() then
             if f.count == 0 then
-                self:Print(f.nothing or "Nothing to choose from.")
+                self:Print(f.nothing or Loc["Nothing to choose from."])
                 f:Hide()
                 return
             end
@@ -1864,7 +2089,7 @@ function Kit:FlyButton(fly, i)
             else GameTooltip:AddLine(c.label or "") end
             if c.hint then GameTooltip:AddLine(c.hint, 0.3, 1, 0.4, true) end
             if fly.slotBtn.slot.reorder and c.value ~= nil and not InCombatLockdown() then
-                GameTooltip:AddLine("Drag: move it in this list", 1, 0.82, 0)
+                GameTooltip:AddLine(Loc["Drag: move it in this list"], 1, 0.82, 0)
             end
         end
         GameTooltip:Show()
@@ -2634,7 +2859,7 @@ end
 
 function Kit:SetFacing(f)
     if not FACE[f] then return end
-    if InCombatLockdown() then self:Print("That can only change out of combat.") return end
+    if InCombatLockdown() then self:Print(Loc["That can only change out of combat."]) return end
     self.db.facing = f
     self:Refresh(false)
     self:KeepOnScreen()
@@ -3124,11 +3349,11 @@ function Kit:NoteCombatPress()
 end
 
 local MOVE_FAIL = {
-    [""] = "the press didn't reach the kit's secure code",
-    down = "the game didn't give the kit the mouse position",
-    ["down-ok"] = "the game didn't give the kit the mouse position on release",
-    ["up-pos"] = "the game didn't give the kit the button's position",
-    ["up-rect"] = "the game didn't let the kit move the button",
+    [""] = Loc["the press didn't reach the kit's secure code"],
+    down = Loc["the game didn't give the kit the mouse position"],
+    ["down-ok"] = Loc["the game didn't give the kit the mouse position on release"],
+    ["up-pos"] = Loc["the game didn't give the kit the button's position"],
+    ["up-rect"] = Loc["the game didn't let the kit move the button"],
 }
 
 function Kit:GripClicked(mouse, down)
@@ -3165,7 +3390,7 @@ function Kit:GripClicked(mouse, down)
     if dragged and not moved and self:CanSecureMove() and not self.moveFailSaid then
         self.moveFailSaid = true
         local step = self.kit:GetAttribute("kcmovestep") or ""
-        self:Print("Couldn't move the kit in combat: " .. (MOVE_FAIL[step] or ("stopped at " .. step)) .. ".", true)
+        self:Print((Loc["Couldn't move the kit in combat: %s."]):format(MOVE_FAIL[step] or (Loc["stopped at %s"]):format(step)), true)
     elseif not (dragged or moved or toggled) then
         self:CombatToggled() -- (a click that didn't open it: says why)
     end
@@ -3413,8 +3638,8 @@ function Kit:Toggle()
     -- (a key binding or the minimap button: only a click on the kit button
     -- itself can run the secure snippet that opens it in combat)
     if InCombatLockdown() then
-        self:Print(self:CanSecureToggle() and "Click the kit button to open or close it in combat."
-            or "That can only change out of combat.")
+        self:Print(self:CanSecureToggle() and Loc["Click the kit button to open or close it in combat."]
+            or Loc["That can only change out of combat."])
         return
     end
     self:SetOpen(not self.open)
@@ -3431,7 +3656,7 @@ function Kit:CombatToggled()
     local now = kit:GetAttribute("kcisopen") == 1
     local s = self.snap[now]
     if kit:GetAttribute("kcready") ~= 1 or now == self.open or not s then
-        self:Print("That can only change out of combat.")
+        self:Print(Loc["That can only change out of combat."])
         return
     end
     self.open = now
@@ -3464,11 +3689,11 @@ function Kit:TogglePin(key)
     local slot = self.slotByKey[key]
     if InCombatLockdown() or not slot or slot.noPin then return end
     if self.slots[key] and self.slots[key].kcBar then
-        self:Print(slot.label .. " is on a bar, so it's always shown. Edit the layout to move it.")
+        self:Print((Loc["%s is on a bar, so it's always shown. Edit the layout to move it."]):format(slot.label))
         return
     end
     self.cdb.pinned[key] = not self.cdb.pinned[key]
-    self:Print(slot.label .. (self.cdb.pinned[key] and ": always shown." or ": hides when the kit closes."))
+    self:Print((self.cdb.pinned[key] and Loc["%s: always shown."] or Loc["%s: hides when the kit closes."]):format(slot.label))
     self:Refresh(false)
     if self.Dock then self.Dock.Layout() end -- an edge strip grows or shrinks
     self:SettingsChanged()
@@ -3637,7 +3862,7 @@ end
 
 -- Show or hide the whole kit (settings, the shared minimap menu, slash).
 function Kit:SetShownKit(show)
-    if InCombatLockdown() then self:Print("That can only change out of combat.") return end
+    if InCombatLockdown() then self:Print(Loc["That can only change out of combat."]) return end
     self.db.shown = show and true or false
     if not show and self.open then self:SetOpen(false) end
     self.kit:SetShown(show and not self.tucked)
@@ -3910,9 +4135,9 @@ function Kit:SetupMinimap()
     end
     obj.OnTooltipShow = function(tt)
         tt:AddLine(self.name)
-        tt:AddLine("Left-click: settings", 1, 1, 1)
-        tt:AddLine("Right-click: open / close the kit", 1, 1, 1)
-        tt:AddLine("Drag: move around the minimap", 1, 1, 1)
+        tt:AddLine(Loc["Left-click: settings"], 1, 1, 1)
+        tt:AddLine(Loc["Right-click: open / close the kit"], 1, 1, 1)
+        tt:AddLine(Loc["Drag: move around the minimap"], 1, 1, 1)
     end
     if not dbi:IsRegistered(name) then dbi:Register(name, obj, db.minimapIcon) end
     self.minimap = dbi:GetMinimapButton(name)
@@ -3932,7 +4157,7 @@ function Kit:OpenSettings()
     if self.openSettings then
         self.openSettings()
     else
-        self:Print("The settings panel isn't available on this build. " .. (self.cfg.slash and self.cfg.slash[1] or "") .. " help lists the slash commands.", true)
+        self:Print((Loc["The settings panel isn't available on this build. %s help lists the slash commands."]):format(self.cfg.slash and self.cfg.slash[1] or ""), true)
     end
 end
 
@@ -3960,46 +4185,46 @@ function Kit:SettingsList(S)
         for _, key in ipairs(cfg.menuOrder) do listed[#listed + 1] = self.slotByKey[key] end
     end
 
-    S.Group("Kit")
-    S.Header("General")
+    S.Group(Loc["Kit"])
+    S.Header(Loc["General"])
     if S.Grid then S.Grid(2) end
-    S.Checkbox(db, "shown", "Show " .. self.name,
-        "Turn off to hide the whole kit (its button and every slot) without uninstalling it.",
+    S.Checkbox(db, "shown", (Loc["Show %s"]):format(self.name),
+        Loc["Turn off to hide the whole kit (its button and every slot) without uninstalling it."],
         true, function() self:SetShownKit(db.shown) end)
-    S.Checkbox(db, "locked", "Lock it in place", "Stop the kit from being dragged. Also in the kit's right-click menu.", false)
+    S.Checkbox(db, "locked", Loc["Lock it in place"], Loc["Stop the kit from being dragged. Also in the kit's right-click menu."], false)
     if self.Dock then
-        S.Checkbox(db, "edgeTuck", "Tuck at screen edge",
-            "On a screen edge on its own, the kit slides half off the screen until you mouse over it. Turn off to keep it fully on the screen. In a tuck box it still tucks with the box.",
+        S.Checkbox(db, "edgeTuck", Loc["Tuck at screen edge"],
+            Loc["On a screen edge on its own, the kit slides half off the screen until you mouse over it. Turn off to keep it fully on the screen. In a tuck box it still tucks with the box."],
             true, refresh)
     end
-    S.Checkbox(db, "minimapButton", "Minimap button",
-        "Left-click for these settings, right-click to open the kit, drag to move it.", true,
+    S.Checkbox(db, "minimapButton", Loc["Minimap button"],
+        Loc["Left-click for these settings, right-click to open the kit, drag to move it."], true,
         function() self:ApplyMinimap() end)
-    S.Checkbox(db, "chatNotices", "Chat messages",
-        "Notices in chat when something changes (pinned in place, always shown, snoozed and the like). Slash commands still answer in chat.", true)
+    S.Checkbox(db, "chatNotices", Loc["Chat messages"],
+        Loc["Notices in chat when something changes (pinned in place, always shown, snoozed and the like). Slash commands still answer in chat."], true)
     if S.Grid then S.Grid(1) end
     if cfg.GeneralSettings then cfg.GeneralSettings(self, S) end
-    S.Subheader("In combat")
+    S.Subheader(Loc["In combat"])
     if not self.cfg.alwaysHideInCombat then
-        S.Checkbox(db, "hideInCombat", "Hide the kit in combat", "Hide the kit while you're in combat.", false,
+        S.Checkbox(db, "hideInCombat", Loc["Hide the kit in combat"], Loc["Hide the kit while you're in combat."], false,
             function() self:ApplyCombatHide() end)
     end
-    S.Slider(db, "flyoutHide", "Drawers close after",
-        "In combat a drawer can't close when you click elsewhere, so it closes by itself this long after the mouse leaves it and its slot.",
+    S.Slider(db, "flyoutHide", Loc["Drawers close after"],
+        Loc["In combat a drawer can't close when you click elsewhere, so it closes by itself this long after the mouse leaves it and its slot."],
         0.5, 0.2, 2, 0.1, function(v) return ("%.1fs"):format(v) end)
     if cfg.CombatSettings then cfg.CombatSettings(self, S) end
 
-    S.Subheader("Fading")
+    S.Subheader(Loc["Fading"])
     local rearm = function() self:ArmOpenFade() self:ApplyFade() end
     local function Fading() return (db.fadeIdle or db.fadeOpen) and true or false end
     if window then
-        S.Choice("Fade the kit",
-            "When closed: the closed kit and its pinned slots fade until you mouse over them. When left open: the open kit fades once the mouse has been off it a while (it stays open). Mouse over to bring it back.",
+        S.Choice(Loc["Fade the kit"],
+            Loc["When closed: the closed kit and its pinned slots fade until you mouse over them. When left open: the open kit fades once the mouse has been off it a while (it stays open). Mouse over to bring it back."],
             {
-                { "never", "Never" },
-                { "idle", "When closed" },
-                { "open", "When left open" },
-                { "both", "Both" },
+                { "never", Loc["Never"] },
+                { "idle", Loc["When closed"] },
+                { "open", Loc["When left open"] },
+                { "both", Loc["Both"] },
             },
             function()
                 if db.fadeIdle and db.fadeOpen then return "both" end
@@ -4012,79 +4237,79 @@ function Kit:SettingsList(S)
                 rearm()
             end)
     else
-        S.Checkbox(db, "fadeIdle", "Fade when idle",
-            "With the kit closed, it and its pinned slots fade until you mouse over them.", false, refresh)
-        S.Checkbox(db, "fadeOpen", "Fade when left open",
-            "With the kit open, it and its slots fade once the mouse has been off them for a while. They stay open, and come back when you mouse over them.",
+        S.Checkbox(db, "fadeIdle", Loc["Fade when idle"],
+            Loc["With the kit closed, it and its pinned slots fade until you mouse over them."], false, refresh)
+        S.Checkbox(db, "fadeOpen", Loc["Fade when left open"],
+            Loc["With the kit open, it and its slots fade once the mouse has been off them for a while. They stay open, and come back when you mouse over them."],
             false, rearm)
     end
     if S.Only then S.Only(function() return db.fadeOpen and true or false end) end
-    S.Slider(db, "fadeOpenAfter", "Fade an open kit after",
-        "How long the mouse has to be off the open kit before it fades.",
+    S.Slider(db, "fadeOpenAfter", Loc["Fade an open kit after"],
+        Loc["How long the mouse has to be off the open kit before it fades."],
         5, 1, 30, 1, function(v) return ("%ds"):format(v) end, rearm)
     if S.Only then S.Only(Fading) end
-    S.Slider(db, "fadeAmount", "How faded",
-        "How see-through the kit's slots get when it fades: 0% is gone until you mouse over. The kit button fades half as much, so you can still find it.",
+    S.Slider(db, "fadeAmount", Loc["How faded"],
+        Loc["How see-through the kit's slots get when it fades: 0% is gone until you mouse over. The kit button fades half as much, so you can still find it."],
         0.4, 0, 0.9, 0.05, function(v) return ("%d%%"):format(math.floor(v * 100 + 0.5)) end, function() self:ApplyFade() end)
 
     -- The kit's own pages, right after General (v24).
     if cfg.FirstSettings then cfg.FirstSettings(self, S) end
 
-    S.Header("Look")
-    S.Subheader("Size")
-    S.Slider(db, "scale", "Whole kit", "The whole kit: the center icon, the buttons round it and the space between them.", 1, 0.6, 1.6, 0.05, pct,
+    S.Header(Loc["Look"])
+    S.Subheader(Loc["Size"])
+    S.Slider(db, "scale", Loc["Whole kit"], Loc["The whole kit: the center icon, the buttons round it and the space between them."], 1, 0.6, 1.6, 0.05, pct,
         function() self:ApplyPosition() end)
-    S.Slider(db, "kitSize", "Center icon", "Just the icon in the middle: the buttons round it stay where they are.",
+    S.Slider(db, "kitSize", Loc["Center icon"], Loc["Just the icon in the middle: the buttons round it stay where they are."],
         1, 0.5, 1, 0.05, pct, function() self:ApplyPosition() end)
-    S.Slider(db, "buttonSize", "Buttons", "Just the buttons round the center icon: each gets smaller in its place, so they spread out a little.",
+    S.Slider(db, "buttonSize", Loc["Buttons"], Loc["Just the buttons round the center icon: each gets smaller in its place, so they spread out a little."],
         1, 0.6, 1, 0.05, pct, function() self:ApplyPosition() end)
-    S.Slider(db, "spread", "Spread", "How far the buttons sit from the center icon: lower brings them in close, higher spreads them out.",
+    S.Slider(db, "spread", Loc["Spread"], Loc["How far the buttons sit from the center icon: lower brings them in close, higher spreads them out."],
         1, 0.8, 1.5, 0.05, pct, function() self:Refresh(false) self:ApplyPosition() end)
-    S.Subheader("Layout")
-    S.Dropdown(db, "facing", "Buttons open toward",
-        "Which way the slots lay out round the kit while it's floating. On a screen edge they always face the middle of the screen.",
+    S.Subheader(Loc["Layout"])
+    S.Dropdown(db, "facing", Loc["Buttons open toward"],
+        Loc["Which way the slots lay out round the kit while it's floating. On a screen edge they always face the middle of the screen."],
         "up", {
-            { "up", "Up" },
-            { "down", "Down" },
-            { "left", "Left" },
-            { "right", "Right" },
+            { "up", Loc["Up"] },
+            { "down", Loc["Down"] },
+            { "left", Loc["Left"] },
+            { "right", Loc["Right"] },
         }, function() self:SetFacing(db.facing) end)
     if window then
-        S.Choice("Tooltips", "Where a slot's tooltip shows: beside the slot, or where the game normally puts tooltips.",
-            { { "beside", "Beside the slot" }, { "default", "Game's spot" } },
+        S.Choice(Loc["Tooltips"], Loc["Where a slot's tooltip shows: beside the slot, or where the game normally puts tooltips."],
+            { { "beside", Loc["Beside the slot"] }, { "default", Loc["Game's spot"] } },
             function() return db.tooltipDefault and "default" or "beside" end,
             function(v) db.tooltipDefault = (v == "default") end)
     else
-        S.Checkbox(db, "tooltipDefault", "Default tooltip position",
-            "Show slot tooltips where the game normally shows tooltips, instead of beside the slot.", false)
+        S.Checkbox(db, "tooltipDefault", Loc["Default tooltip position"],
+            Loc["Show slot tooltips where the game normally shows tooltips, instead of beside the slot."], false)
     end
     if cfg.LookSettings then cfg.LookSettings(self, S) end
 
     if not (cfg.buttonTable and window) then
-        S.Header("Pinned buttons")
+        S.Header(Loc["Pinned buttons"])
         if S.Grid then S.Grid(2) end
         for _, slot in ipairs(listed) do
             if not slot.noPin then
                 S.Checkbox(cdb.pinned, slot.key, slot.label,
-                    "Keep it out when the kit is closed (this character only). You can also shift-right-click the slot.",
+                    Loc["Keep it out when the kit is closed (this character only). You can also shift-right-click the slot."],
                     false, refresh, "pin_" .. slot.key)
             end
         end
         if S.Grid then S.Grid(1) end
         if cfg.PinSettings then cfg.PinSettings(self, S) end
-        S.Button("Slot choices", "Reset", "Put every slot back to its starting choice, and every list back in its starting order.", function()
+        S.Button(Loc["Slot choices"], Loc["Reset"], Loc["Put every slot back to its starting choice, and every list back in its starting order."], function()
             self:ResetSlotChoices()
         end)
     end
 
     -- Bars (v23), for a kit that has them.
     if cfg.bars then
-        S.Header("Bars")
-        S.Button("Edit layout", "Edit", "Opens the kit and lets you drag its buttons. The outlines show where a button can go on the kit: drop it there, between two buttons or at an end. Drop a button away from the kit and it floats there, always shown. Drop another on it to make a bar, or between two to put it there. Drop a button on the kit's icon to put it back. Drag a bar by its box to move it. This character only; out of combat. Also in the kit's right-click menu.",
+        S.Header(Loc["Bars"])
+        S.Button(Loc["Edit layout"], Loc["Edit"], Loc["Opens the kit and lets you drag its buttons. The outlines show where a button can go on the kit: drop it there, between two buttons or at an end. Drop a button away from the kit and it floats there, always shown. Drop another on it to make a bar, or between two to put it there. Drop a button on the kit's icon to put it back. Drag a bar by its box to move it. This character only; out of combat. Also in the kit's right-click menu."],
             function() self:ToggleEdit() end)
-        S.Slider(db, "barGap", "Spacing", "Room between the buttons on a bar.",
+        S.Slider(db, "barGap", Loc["Spacing"], Loc["Room between the buttons on a bar."],
             4, 0, 16, 1, function(v) return tostring(v) end, refresh)
-        S.Button("Layout", "Reset to defaults", "Put every button back where it started: off the bars, and the kit's own buttons in their usual places and order.", function() self:ResetLayout() end)
+        S.Button(Loc["Layout"], Loc["Reset to defaults"], Loc["Put every button back where it started: off the bars, and the kit's own buttons in their usual places and order."], function() self:ResetLayout() end)
     end
 
     -- The reminder panel (v21): whether this kit uses it, and which of its
@@ -4097,47 +4322,48 @@ function Kit:SettingsList(S)
     local function PanelSection()
         if panelDone then return end
         panelDone = true
-        S.Header("Reminder panel")
+        S.Header(Loc["Reminder panel"])
         local rp = db.reminderPanel
         local shared = function() C.SharePanel(rp) end
-        S.Checkbox(rp, "on", "Put " .. self.name .. "'s reminders in the panel",
-            "One panel for all your kits that you can put anywhere. With this on and " .. self.name .. " closed, its reminders show there, full size, instead of beside the kit. They stay in the panel while the kit is open too (and in their places in the kit). Each kit has its own switch, so some kits' reminders can be in the panel and others by their kit. " .. (cfg.panelPinned and "A pinned button stays by its kit, and its reminder shows in the panel too." or "A pinned button always stays by its kit."),
+        S.Checkbox(rp, "on", (Loc["Put %s's reminders in the panel"]):format(self.name),
+            (Loc["One panel for all your kits that you can put anywhere. With this on and %s closed, its reminders show there, full size, instead of beside the kit. They stay in the panel while the kit is open too (and in their places in the kit). Each kit has its own switch, so some kits' reminders can be in the panel and others by their kit."]):format(self.name)
+                .. " " .. (cfg.panelPinned and Loc["A pinned button stays by its kit, and its reminder shows in the panel too."] or Loc["A pinned button always stays by its kit."]),
             false, shared, "panelOn")
         local panelOn = function() return rp.on and true or false end
-        S.Subheader("The panel (every kit)", panelOn)
-        S.Button("Place the panel", "Move", "Shows a grid and the panel's box of buttons: drag it where you want it. It snaps to the grid, the middle of the screen and your kit buttons; hold Shift to place it freely.",
+        S.Subheader(Loc["The panel (every kit)"], panelOn)
+        S.Button(Loc["Place the panel"], Loc["Move"], Loc["Shows a grid and the panel's box of buttons: drag it where you want it. It snaps to the grid, the middle of the screen and your kit buttons; hold Shift to place it freely."],
             function() C.TogglePanelUnlocked(self) end)
-        S.Dropdown(rp, "layout", "Layout", "Rows: buttons side by side, then a new row. Columns: one under another, then a new column.",
-            "row", { { "row", "Rows" }, { "column", "Columns" } }, shared)
+        S.Dropdown(rp, "layout", Loc["Layout"], Loc["Rows: buttons side by side, then a new row. Columns: one under another, then a new column."],
+            "row", { { "row", Loc["Rows"] }, { "column", Loc["Columns"] } }, shared)
         if S.Only then S.Only(function() return rp.layout ~= "column" end) end
-        S.Slider(rp, "perRow", "Buttons per row", "How many across before a new row starts.",
+        S.Slider(rp, "perRow", Loc["Buttons per row"], Loc["How many across before a new row starts."],
             8, 1, 20, 1, function(v) return tostring(v) end, shared)
         if S.Only then S.Only(function() return rp.layout == "column" end) end
-        S.Slider(rp, "perCol", "Buttons per column", "How many down before a new column starts.",
+        S.Slider(rp, "perCol", Loc["Buttons per column"], Loc["How many down before a new column starts."],
             8, 1, 20, 1, function(v) return tostring(v) end, shared)
-        S.Checkbox(rp, "middle", "Grow from the middle",
-            "The first button sits in the middle of the row (column), the next ones spread out evenly either side, and each new row (column) starts in the middle again. Off: they fill from the corner below.",
+        S.Checkbox(rp, "middle", Loc["Grow from the middle"],
+            Loc["The first button sits in the middle of the row (column), the next ones spread out evenly either side, and each new row (column) starts in the middle again. Off: they fill from the corner below."],
             true, shared, "panelMiddle")
-        S.Dropdown(rp, "corner", "Start from", "The corner the first button goes in (growing from the middle: the side new rows or columns are added toward). The panel grows away from it, and stays put there.",
-            "TOPLEFT", { { "TOPLEFT", "Top left" }, { "TOPRIGHT", "Top right" }, { "BOTTOMLEFT", "Bottom left" }, { "BOTTOMRIGHT", "Bottom right" } }, shared)
-        S.Slider(rp, "size", "Button size", "The buttons in the panel, the same for every kit (100% is a full slot).",
+        S.Dropdown(rp, "corner", Loc["Start from"], Loc["The corner the first button goes in (growing from the middle: the side new rows or columns are added toward). The panel grows away from it, and stays put there."],
+            "TOPLEFT", { { "TOPLEFT", Loc["Top left"] }, { "TOPRIGHT", Loc["Top right"] }, { "BOTTOMLEFT", Loc["Bottom left"] }, { "BOTTOMRIGHT", Loc["Bottom right"] } }, shared)
+        S.Slider(rp, "size", Loc["Button size"], Loc["The buttons in the panel, the same for every kit (100% is a full slot)."],
             1, 0.5, 1.5, 0.05, pct, shared)
-        S.Slider(rp, "gap", "Spacing", "Room between the buttons.",
+        S.Slider(rp, "gap", Loc["Spacing"], Loc["Room between the buttons."],
             4, 0, 16, 1, function(v) return tostring(v) end, shared)
-        S.Checkbox(rp, "snap", "Snap when placing", "Line the panel up with the grid, the middle of the screen and your kit buttons as you drag it.", true, shared, "panelSnap")
+        S.Checkbox(rp, "snap", Loc["Snap when placing"], Loc["Line the panel up with the grid, the middle of the screen and your kit buttons as you drag it."], true, shared, "panelSnap")
         if S.Only then S.Only(function() return rp.snap ~= false end) end
-        S.Slider(rp, "grid", "Grid size", "How far apart the grid's lines are while placing it.",
+        S.Slider(rp, "grid", Loc["Grid size"], Loc["How far apart the grid's lines are while placing it."],
             16, 8, 32, 8, function(v) return tostring(v) end, shared)
         local pops = {}
         for _, slot in ipairs(listed) do
             if not slot.noPanel and slot.Pop then pops[#pops + 1] = slot end
         end
         if #pops > 0 then
-            S.Subheader("Reminders in the panel", panelOn)
+            S.Subheader(Loc["Reminders in the panel"], panelOn)
             if S.Grid then S.Grid(2) end
             for _, slot in ipairs(pops) do
                 S.Checkbox(db.panelSlots, slot.key, slot.label,
-                    "When it pops out with the kit closed (missing or wanted), it shows in the panel. " .. (cfg.panelPinned and "Pinned, it shows in the panel too, and stays by the kit." or "Pinned, it stays by the kit."),
+                    Loc["When it pops out with the kit closed (missing or wanted), it shows in the panel."] .. " " .. (cfg.panelPinned and Loc["Pinned, it shows in the panel too, and stays by the kit."] or Loc["Pinned, it stays by the kit."]),
                     self:PanelDefault(slot), refresh, "panel_" .. slot.key)
             end
             if S.Grid then S.Grid(1) end
@@ -4148,8 +4374,8 @@ function Kit:SettingsList(S)
     -- (Key bindings: a link at the foot of the window's list, v24. The
     -- game's options page keeps its button.)
     if not window then
-        S.Header("Key bindings")
-        S.Button("Key bindings", "Open", "Bind each slot, and opening the kit.", function() self:OpenKeyBindings() end)
+        S.Header(Loc["Key bindings"])
+        S.Button(Loc["Key bindings"], Loc["Open"], Loc["Bind each slot, and opening the kit."], function() self:OpenKeyBindings() end)
     end
 
     -- The kit's own settings, under its name unless it opens with a header
@@ -4162,7 +4388,7 @@ function Kit:SettingsList(S)
     function KS.Header(text)
         if afterReminders then afterReminders = false PanelSection() end
         S.Header(text)
-        if text == "Reminders" then afterReminders = true end
+        if text == "Reminders" or text == Loc["Reminders"] then afterReminders = true end
     end
     function KS.Group(text)
         if afterReminders then afterReminders = false PanelSection() end
@@ -4175,11 +4401,11 @@ end
 
 -- Every slot back to its starting choice, and every list in its starting order.
 function Kit:ResetSlotChoices()
-    if InCombatLockdown() then self:Print("That can only change out of combat.") return end
+    if InCombatLockdown() then self:Print(Loc["That can only change out of combat."]) return end
     wipe(self.cdb.picks)
     wipe(self.cdb.order)
     self:Refresh(false)
-    self:Print("Slot choices reset.")
+    self:Print(Loc["Slot choices reset."])
 end
 
 function Kit:OpenKeyBindings()
@@ -4187,7 +4413,7 @@ function Kit:OpenKeyBindings()
         if self.optionsUI and self.optionsUI.frame then self.optionsUI.frame:Hide() end
         Settings.OpenToCategory(Settings.KEYBINDINGS_CATEGORY_ID)
     else
-        self:Print("Open Esc > Options > Keybindings and look for " .. self.name .. ".")
+        self:Print((Loc["Open Esc > Options > Keybindings and look for %s."]):format(self.name))
     end
 end
 
@@ -4490,7 +4716,7 @@ function C.Panel()
     if edit.SetBackdropColor then edit:SetBackdropColor(0.78, 0.64, 0.3, 0.12) end
     edit.title = edit:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     edit.title:SetPoint("BOTTOM", edit, "TOP", 0, 3)
-    edit.title:SetText("Kit reminders")
+    edit.title:SetText(Loc["Kit reminders"])
     edit.size = edit:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     edit.size:SetPoint("TOP", edit, "BOTTOM", 0, -3)
     edit.cells = {}
@@ -4520,9 +4746,9 @@ function C.Panel()
     f:SetScript("OnEnter", function(p)
         if not C.panelUnlocked then return end
         GameTooltip:SetOwner(p, "ANCHOR_TOP")
-        GameTooltip:AddLine("Kit reminders")
-        GameTooltip:AddLine("Drag to move. Hold Shift to place it freely.", 1, 1, 1)
-        GameTooltip:AddLine("Right-click when you're done.", 1, 1, 1)
+        GameTooltip:AddLine(Loc["Kit reminders"])
+        GameTooltip:AddLine(Loc["Drag to move. Hold Shift to place it freely."], 1, 1, 1)
+        GameTooltip:AddLine(Loc["Right-click when you're done."], 1, 1, 1)
         GameTooltip:Show()
     end)
     f:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -4802,7 +5028,7 @@ local function BuildPlaceBar()
     title:SetPoint("TOPLEFT", 12, -9)
     local hint = bar:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     hint:SetPoint("LEFT", title, "RIGHT", 10, 0)
-    hint:SetText("Drag to move, Shift for free")
+    hint:SetText(Loc["Drag to move, Shift for free"])
 
     local x = 12
     local function Place(f, w)
@@ -4834,7 +5060,7 @@ local function BuildPlaceBar()
     tick:SetVertexColor(1, 0.85, 0.4)
     local label = snap:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     label:SetPoint("LEFT", box, "RIGHT", 6, 0)
-    label:SetText("Snap")
+    label:SetText(Loc["Snap"])
     snap:SetScript("OnClick", function()
         local _, snapping, p = PlaceCfg()
         p.snap = not snapping
@@ -4842,7 +5068,7 @@ local function BuildPlaceBar()
         tick:SetShown(p.snap)
     end)
     Place(snap, 60)
-    local done = SmallButton(bar, "Done", 70, function() bar:Hide() end)
+    local done = SmallButton(bar, Loc["Done"], 70, function() bar:Hide() end)
     done:SetPoint("BOTTOMRIGHT", -12, 10)
     bar:Hide()
     -- (Esc or Done: every piece finished. Set only now: a new frame starts
@@ -4853,7 +5079,7 @@ local function BuildPlaceBar()
     C.placeUI = placeUI
     function placeUI.paint()
         local step, snapping = PlaceCfg()
-        grid:SetText("Grid " .. step)
+        grid:SetText((Loc["Grid %s"]):format(step))
         tick:SetShown(snapping)
         -- The title says what's being placed: one piece by name, or several.
         local names = {}
@@ -4862,9 +5088,9 @@ local function BuildPlaceBar()
             if m.placing then names[#names + 1] = m.label or key end
         end
         if #names == 1 then
-            title:SetText("Placing " .. names[1])
+            title:SetText((Loc["Placing %s"]):format(names[1]))
         else
-            title:SetText("Moving everything")
+            title:SetText(Loc["Moving everything"])
         end
     end
 end
@@ -4936,7 +5162,7 @@ function C.MoveAll(kit)
         if movers[key].placing then C.EndPlacing() return end
     end
     if InCombatLockdown() then
-        kit:Print("Things can only be moved out of combat.", true)
+        kit:Print(Loc["Things can only be moved out of combat."], true)
         return
     end
     local n = 0
@@ -4952,7 +5178,7 @@ function C.MoveAll(kit)
     end
     C.movingAll = nil
     if n == 0 then
-        kit:Print("Nothing to move: turn on the reminder panel or a kit's timers first. The kits themselves move by dragging them.", true)
+        kit:Print(Loc["Nothing to move: turn on the reminder panel or a kit's timers first. The kits themselves move by dragging them."], true)
     elseif placeUI then
         placeUI.paint()
     end
@@ -4972,7 +5198,7 @@ function C.SetPanelUnlocked(on)
 end
 
 C.RegisterMover("panel", {
-    label = "the reminder panel",
+    label = Loc["the reminder panel"],
     frame = function() return C.panel end,
     can = function() return C.PanelOn() and C.panel ~= nil end,
     test = function(on) C.SetPanelUnlocked(on) end,
@@ -4980,11 +5206,11 @@ C.RegisterMover("panel", {
 
 function C.TogglePanelUnlocked(kit)
     if InCombatLockdown() then
-        kit:Print("The reminder panel can only move out of combat.", true)
+        kit:Print(Loc["The reminder panel can only move out of combat."], true)
         return
     end
     if not C.PanelOn() then
-        kit:Print("Turn on the reminder panel for a kit first (its Settings > Reminder panel).", true)
+        kit:Print(Loc["Turn on the reminder panel for a kit first (its Settings > Reminder panel)."], true)
         return
     end
     C.SetPanelUnlocked(not C.panelUnlocked)
@@ -5135,7 +5361,7 @@ function Kit:PanelTwin(btn)
         if slot.Tooltip then slot.Tooltip(self, btn) else GameTooltip:AddLine(slot.label) end
         if flyHere then
             GameTooltip:AddLine(" ")
-            GameTooltip:AddLine(slot.flyoutHint or "Right-click: choose", 0.3, 1, 0.4)
+            GameTooltip:AddLine(slot.flyoutHint or Loc["Right-click: choose"], 0.3, 1, 0.4)
         end
         GameTooltip:Show()
     end)
@@ -5401,14 +5627,14 @@ end
 -- own zones in their usual order.
 function Kit:ResetLayout()
     if not self.cfg.bars then return end
-    if InCombatLockdown() then self:Print("That can only change out of combat.", true) return end
+    if InCombatLockdown() then self:Print(Loc["That can only change out of combat."], true) return end
     C.StopEditDrag(true)
     self.cdb.bars = {}
     self.cdb.zones = nil
     self:ApplyZones()
     self:Refresh(false)
     if self.Dock and self.Dock.Layout then self.Dock.Layout() end
-    self:Print("Layout reset: every button is back in its usual place.")
+    self:Print(Loc["Layout reset: every button is back in its usual place."])
     self:SettingsChanged()
 end
 Kit.ResetBars = Kit.ResetLayout
@@ -5855,8 +6081,8 @@ function Kit:EditCover(btn)
             if C.editDrag then return end
             GameTooltip:SetOwner(o, "ANCHOR_RIGHT")
             GameTooltip:AddLine(btn.slot.label)
-            GameTooltip:AddLine("Drag to move it.", 1, 1, 1)
-            GameTooltip:AddLine(btn.kcBar and "Drop it on the kit to put it back." or "Drop it away from the kit to float it.", 1, 0.82, 0)
+            GameTooltip:AddLine(Loc["Drag to move it."], 1, 1, 1)
+            GameTooltip:AddLine(btn.kcBar and Loc["Drop it on the kit to put it back."] or Loc["Drop it away from the kit to float it."], 1, 0.82, 0)
             GameTooltip:Show()
         end)
         ov:SetScript("OnLeave", function(o)
@@ -5901,8 +6127,8 @@ function Kit:MakeBarBox(i)
     local function Enter(f)
         if C.editDrag then return end
         GameTooltip:SetOwner(f, "ANCHOR_TOP")
-        GameTooltip:AddLine("Bar")
-        GameTooltip:AddLine("Drag to move the whole bar.", 1, 1, 1)
+        GameTooltip:AddLine(Loc["Bar"])
+        GameTooltip:AddLine(Loc["Drag to move the whole bar."], 1, 1, 1)
         GameTooltip:Show()
     end
     local function Leave() GameTooltip:Hide() end
@@ -6124,14 +6350,14 @@ local function BuildEditBar()
     hint:SetPoint("TOPLEFT", bar.title, "BOTTOMLEFT", 0, -5)
     hint:SetWidth(476)
     hint:SetJustifyH("LEFT")
-    hint:SetText("Drag a button onto one of the kit's outlines to move it there, between two buttons or at an end. Drop it away from the kit and it floats, always shown; drop another on it to make a bar. Drop a button on the kit's icon to put it back. Drag a bar's box to move it.")
+    hint:SetText(Loc["Drag a button onto one of the kit's outlines to move it there, between two buttons or at an end. Drop it away from the kit and it floats, always shown; drop another on it to make a bar. Drop a button on the kit's icon to put it back. Drag a bar's box to move it."])
 
-    local reset = SmallButton(bar, "Reset to defaults", 140, function()
+    local reset = SmallButton(bar, Loc["Reset to defaults"], 140, function()
         local kit = C.editKit
         if kit then kit:ResetLayout() end
     end)
     reset:SetPoint("BOTTOMLEFT", 12, 10)
-    local done = SmallButton(bar, "Done", 70, function() bar:Hide() end)
+    local done = SmallButton(bar, Loc["Done"], 70, function() bar:Hide() end)
     done:SetPoint("BOTTOMRIGHT", -12, 10)
     bar:Hide()
     -- (Esc or Done: finished editing. Set only now: a new frame starts shown,
@@ -6151,9 +6377,9 @@ function Kit:SetEdit(on)
     if (self.editing and true or false) == on then return end
     if on then
         if not self.cfg.bars or not self.built then return end
-        if InCombatLockdown() then self:Print("The layout can only be edited out of combat.", true) return end
-        if self.db.shown == false then self:Print("Show the kit first.", true) return end
-        if self.qkbOpen then self:Print("Close Quick Keybind Mode first.", true) return end
+        if InCombatLockdown() then self:Print(Loc["The layout can only be edited out of combat."], true) return end
+        if self.db.shown == false then self:Print(Loc["Show the kit first."], true) return end
+        if self.qkbOpen then self:Print(Loc["Close Quick Keybind Mode first."], true) return end
         if C.editKit and C.editKit ~= self then C.editKit:SetEdit(false) end
         C.EndPlacing() -- (the reminder panel and anything else being placed)
         self:CloseFlyouts()
@@ -6164,7 +6390,7 @@ function Kit:SetEdit(on)
         self:ApplyFade()
         self:EditCovers(true)
         C.editBar = C.editBar or BuildEditBar()
-        C.editBar.title:SetText("Editing " .. self.name .. "'s layout")
+        C.editBar.title:SetText((Loc["Editing %s's layout"]):format(self.name))
         C.editBar:Show()
         self:PaintEdit()
     else
@@ -6779,12 +7005,12 @@ function ROW.colors(kit, parent, item, w)
         custom.chip:SetPoint("LEFT", 6, 0)
         custom.text = custom:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         custom.text:SetPoint("LEFT", custom.chip, "RIGHT", 6, 0)
-        custom.text:SetText("Custom...")
+        custom.text:SetText(Loc["Custom..."])
         custom:SetSize(math.floor(custom.text:GetStringWidth() + 14 + 6 + 6 + 10), 22)
         custom:SetPoint("LEFT", x + 4, 0)
         x = x + 4 + custom:GetWidth()
         custom:SetScript("OnClick", function() PickCustom(kit, item) end)
-        Tip(custom, { name = "Custom", tip = "Pick any colour in the game's colour picker. Cancel puts back what you had." }, kit.optAnchor)
+        Tip(custom, { name = Loc["Custom"], tip = Loc["Pick any colour in the game's colour picker. Cancel puts back what you had."] }, kit.optAnchor)
     else
         x = x - SWATCH_GAP + 2
     end
@@ -7403,11 +7629,11 @@ local function ShowSearch(kit, q)
         end
     end
     if #list == 0 then
-        ui.noMatch = ui.noMatch or { kind = "note", name = "", tip = "No setting matches that. Try another word." }
+        ui.noMatch = ui.noMatch or { kind = "note", name = "", tip = Loc["No setting matches that. Try another word."] }
         list[1] = ui.noMatch
     end
     ui.results = ui.results or MakePage(kit, ui)
-    ui.results.head:SetText(("Settings with \"%s\""):format(q))
+    ui.results.head:SetText((Loc["Settings with \"%s\""]):format(q))
     ui.results.SetItems(list)
     LightNav(ui, 0)
     Present(kit, ui.results)
@@ -7470,7 +7696,7 @@ function Kit:BuildOptions()
     ui.headerArt = HeaderArt
     local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     title:SetPoint("LEFT", art, "RIGHT", 8, 0)
-    title:SetText(self.name .. " settings")
+    title:SetText((Loc["%s settings"]):format(self.name))
     local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     close:SetSize(24, 24)
     close:SetPoint("TOPRIGHT", -2, -2)
@@ -7496,7 +7722,7 @@ function Kit:BuildOptions()
     glass:SetVertexColor(0.75, 0.7, 0.55)
     local hint = sb:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     hint:SetPoint("LEFT", 20, 0)
-    hint:SetText("Find a setting")
+    hint:SetText(Loc["Find a setting"])
     local function Hint() hint:SetShown(sb:GetText() == "" and not sb:HasFocus()) end
     sb:SetScript("OnEditFocusGained", Hint)
     sb:SetScript("OnEditFocusLost", Hint)
@@ -7558,18 +7784,18 @@ function Kit:BuildOptions()
     move:SetSize(OPT.nav - OPT.pad - 6, 20)
     move.text = move:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     move.text:SetPoint("LEFT", 10, 0)
-    move.text:SetText("Move everything")
+    move.text:SetText(Loc["Move everything"])
     local mhl = move:CreateTexture(nil, "HIGHLIGHT")
     mhl:SetAllPoints()
     mhl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.06)
     move:SetScript("OnClick", function() C.MoveAll(self) end)
-    Tip(move, { name = "Move everything", tip = "The reminder panel and every timer and bar in use, shown where they sit on a grid so you can drag them all at once. Done (or Esc) when you're finished." .. (self.cfg.slash and (" Also " .. self.cfg.slash[1] .. " move.") or "") }, self.optAnchor)
+    Tip(move, { name = Loc["Move everything"], tip = Loc["The reminder panel and every timer and bar in use, shown where they sit on a grid so you can drag them all at once. Done (or Esc) when you're finished."] .. (self.cfg.slash and (" " .. (Loc["Also %s move."]):format(self.cfg.slash[1])) or "") }, self.optAnchor)
     local keys = CreateFrame("Button", nil, f)
     keys:SetSize(OPT.nav - OPT.pad - 6, 20)
     keys:SetPoint("BOTTOMLEFT", OPT.pad, OPT.pad)
     keys.text = keys:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     keys.text:SetPoint("LEFT", 10, 0)
-    keys.text:SetText("Key bindings")
+    keys.text:SetText(Loc["Key bindings"])
     local khl = keys:CreateTexture(nil, "HIGHLIGHT")
     khl:SetAllPoints()
     khl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.06)
@@ -7729,8 +7955,8 @@ function Kit:BuildSettingsLink()
         if not (ui and ui.frame and ui.frame:IsShown()) then self:OpenOptions() end
     end
     if CreateSettingsButtonInitializer then
-        layout:AddInitializer(CreateSettingsButtonInitializer(self.name .. " settings", "Open", Open,
-            "The kit's settings are in its own window. Also from the minimap button, the kit's right-click menu or " .. (self.cfg.slash and self.cfg.slash[1] or "its slash command") .. ".", true))
+        layout:AddInitializer(CreateSettingsButtonInitializer((Loc["%s settings"]):format(self.name), Loc["Open"], Open,
+            (Loc["The kit's settings are in its own window. Also from the minimap button, the kit's right-click menu or %s."]):format(self.cfg.slash and self.cfg.slash[1] or Loc["its slash command"]), true))
     end
     Settings.RegisterAddOnCategory(category)
 end
@@ -7748,7 +7974,7 @@ function Kit:SetupSettings()
     local ok, err = pcall(self.BuildSettings, self)
     if not ok then
         self.openSettings = nil
-        self:Print("Settings panel failed to load (" .. tostring(err) .. "). " .. (self.cfg.slash and self.cfg.slash[1] or "") .. " help lists the slash commands.", true)
+        self:Print((Loc["Settings panel failed to load (%s). %s help lists the slash commands."]):format(tostring(err), (self.cfg.slash and self.cfg.slash[1] or "")), true)
     end
 end
 
@@ -7774,35 +8000,35 @@ function Kit:RunSlash(msg)
     if cmd == "" or cmd == "options" or cmd == "settings" then
         self:OpenSettings()
     elseif cmd == "help" then
-        self:Print(slash .. " - settings   " .. slash .. " lock | unlock | show | hide | reset")
-        self:Print(slash .. " minimap - show or hide the minimap button")
-        self:Print(slash .. " face up | down | left | right - which way the layout points")
-        self:Print(slash .. " move - move everything: the reminder panel and the kits' timers and bars, all at once")
-        self:Print(slash .. " panel - move the reminder panel (shared by every kit)")
-        if cfg.bars then self:Print(slash .. " layout - drag buttons off the kit onto bars   " .. slash .. " layout reset") end
-        if self.Dock and not cfg.edgesOnly then self:Print(slash .. " dock - dock every kit on the pin   " .. slash .. " flip") end
+        self:Print((Loc["%s - settings"]):format(slash) .. "   " .. slash .. " lock | unlock | show | hide | reset")
+        self:Print((Loc["%s minimap - show or hide the minimap button"]):format(slash))
+        self:Print((Loc["%s face up | down | left | right - which way the layout points"]):format(slash))
+        self:Print((Loc["%s move - move everything: the reminder panel and the kits' timers and bars, all at once"]):format(slash))
+        self:Print((Loc["%s panel - move the reminder panel (shared by every kit)"]):format(slash))
+        if cfg.bars then self:Print((Loc["%s layout - drag buttons off the kit onto bars"]):format(slash) .. "   " .. slash .. " layout reset") end
+        if self.Dock and not cfg.edgesOnly then self:Print((Loc["%s dock - dock every kit on the pin"]):format(slash) .. "   " .. slash .. " flip") end
         for _, line in ipairs(cfg.helpLines or {}) do self:Print(line) end
     elseif InCombatLockdown() then
-        self:Print("That can only change out of combat.")
+        self:Print(Loc["That can only change out of combat."])
     elseif cmd == "lock" or cmd == "unlock" then
         self.db.locked = (cmd == "lock")
-        self:Print(self.db.locked and "Locked." or "Unlocked. Drag the kit to move it.")
+        self:Print(self.db.locked and Loc["Locked."] or Loc["Unlocked. Drag the kit to move it."])
         self:SettingsChanged()
     elseif cmd == "show" or cmd == "hide" then
         self:SetShownKit(cmd == "show")
     elseif cmd == "dock" and self.Dock and not cfg.edgesOnly then
         if self.Dock.Active() then
             self.Dock.DockAll(self.key)
-            self:Print("Kits docked together on the pin.")
+            self:Print(Loc["Kits docked together on the pin."])
         else
-            self:Print("Docking needs another kit installed.")
+            self:Print(Loc["Docking needs another kit installed."])
         end
     elseif cmd == "face" then
         local f = (rest or ""):lower():match("^(%a+)")
         if f and FACE[f] then
             self:SetFacing(f)
         else
-            self:Print(slash .. " face up | down | left | right   (now " .. (self.db.facing or "up") .. ")")
+            self:Print((Loc["%s face up | down | left | right   (now %s)"]):format(slash, self.db.facing or "up"))
         end
     elseif cmd == "panel" then
         C.TogglePanelUnlocked(self)
@@ -7817,14 +8043,14 @@ function Kit:RunSlash(msg)
         self.db.point = { d[1], d[2], d[3], d[4], "ui" } -- (starting spots are in screen units)
         if self.Dock and self.Dock.Undock then self.Dock.Undock(self.key) end
         self:ApplyPosition()
-        self:Print("Kit moved back to its starting spot.")
+        self:Print(Loc["Kit moved back to its starting spot."])
     elseif cmd == "minimap" then
         self.db.minimapButton = not self.db.minimapButton
         self:ApplyMinimap()
         self:SettingsChanged()
-        self:Print("Minimap button " .. (self.db.minimapButton and "shown." or ("hidden. " .. slash .. " minimap brings it back.")))
+        self:Print(self.db.minimapButton and Loc["Minimap button shown."] or (Loc["Minimap button hidden. %s minimap brings it back."]):format(slash))
     else
-        self:Print("Unknown command. " .. slash .. " help lists them.")
+        self:Print((Loc["Unknown command. %s help lists them."]):format(slash))
     end
 end
 
@@ -8033,10 +8259,10 @@ local function QkbTooltip(ov)
     local key = GetBindingKey(cmd)
     if key then
         tip:AddLine(GetBindingText and GetBindingText(key) or key, 0.1, 1, 0.1)
-        tip:AddLine(ESCAPE_TO_UNBIND or "Press Escape to unbind.", 1, 0.82, 0)
+        tip:AddLine(ESCAPE_TO_UNBIND or Loc["Press Escape to unbind."], 1, 0.82, 0)
     else
-        tip:AddLine(NOT_BOUND or "Not bound", 1, 0.1, 0.1)
-        tip:AddLine(PRESS_KEY_TO_BIND or "Press a key to bind.", 1, 0.82, 0)
+        tip:AddLine(NOT_BOUND or Loc["Not bound"], 1, 0.1, 0.1)
+        tip:AddLine(PRESS_KEY_TO_BIND or Loc["Press a key to bind."], 1, 0.82, 0)
     end
     tip:Show()
 end

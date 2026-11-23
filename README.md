@@ -20,6 +20,8 @@ From v30 a kit can put a frame of its own in the settings window, for what the o
 
 From v31 a zone can hold small buttons: `small = true` on a zone makes its slots small round buttons and the other zones' full slots, and a slot takes the size of whichever zone it's in, changing as it's dragged from one to another in edit mode (out of combat). Dragged off the kit onto a bar it's a full slot. `only = { slotKey, ... }` keeps a zone to the slots it lists (any other is offered the other zones, and one saved there goes back to the zone it started in). `track = true` on a ring zone runs its outline through the middle of its buttons, with its name just beyond them, for a ring inside another ring. Warlock Kit's Demonic Sacrifice, Soul Link and Fel Domination use all three: small in their inner ring under the orb, full slots on the ring, under the line or on a bar.
 
+From v33 the words Kit Core shows go through `KitCore.L`, keyed by their English, in the player's language: Simplified Chinese so far, with anything untranslated showing in English. A kit keeps its own words in its own table (Warlock Kit's `ns.L`, with `Locales\zhCN.lua`). Spell, item and zone names come from the game, not these tables.
+
 Every kit ships its own copy of `KitCore.lua`; the newest copy loaded runs for every kit (see `VERSION` at the top of the file).
 
 Used by: First Aid Kit, Camping Kit, Fishing Kit, Warlock Kit and Shaman Kit.
