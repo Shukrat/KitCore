@@ -66,7 +66,7 @@ local addonName, ns = ...
 -- full slot in the others (or on a bar), changing as it's dragged. A
 -- zone can take only some slots (zone only), and a ring of small buttons
 -- inside another ring can have its outline run through its buttons
--- (zone track). See "Zones".
+-- (zone track; from v35 every ring shows its whole band instead). See "Zones".
 --
 -- From v32 a slot with a drawer can open it from its reminder too
 -- (slot.panelFlyout): right-click its copy in the reminder panel, or a
@@ -77,9 +77,17 @@ local addonName, ns = ...
 --
 -- From v33 the words Kit Core shows go through KitCore.L, in the player's
 -- language (Simplified Chinese so far; anything untranslated stays English).
+--
+-- From v35 edit mode shows where a dragged button will go: each ring zone
+-- owns a band round the kit (Kit:ZoneBands; rings one inside another meet
+-- halfway between them, so they never overlap), shaded, and a drop anywhere
+-- in it, at any angle, goes on that ring. The band it would land in lights
+-- up; the button under the mouse takes the size it would be there and says
+-- where it'll go (the zone's name, a bar, on its own, back in its place),
+-- and a gold ring marks the spot it would take.
 ---------------------------------------------------------------------------
 
-local VERSION = 34
+local VERSION = 35
 -- Builds of the same VERSION (test builds while a version is in a pull
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
@@ -210,7 +218,7 @@ do
         Loc["Put every slot back to its starting choice, and every list back in its starting order."] = "把每个栏位恢复为初始选择，每个列表恢复初始顺序。"
         Loc["Bars"] = "按钮条"
         Loc["Edit"] = "编辑"
-        Loc["Opens the kit and lets you drag its buttons. The outlines show where a button can go on the kit: drop it there, between two buttons or at an end. Drop a button away from the kit and it floats there, always shown. Drop another on it to make a bar, or between two to put it there. Drop a button on the kit's icon to put it back. Drag a bar by its box to move it. This character only; out of combat. Also in the kit's right-click menu."] = "打开套件并允许你拖动它的按钮。轮廓显示按钮可以放在套件上的哪些位置：放到那里、两个按钮之间或末端。把按钮拖离套件，它就会浮动在那里并始终显示。再拖一个到它上面可组成一个按钮条，或拖到两个之间插入。把按钮拖到套件图标上可放回去。拖动按钮条的框可移动整个按钮条。仅限此角色；需脱离战斗。也可在套件的右键菜单中打开。"
+        Loc["Opens the kit and lets you drag its buttons. The shaded areas show where a button can go on the kit: drop it there, between two buttons or at an end. Drop a button away from the kit and it floats there, always shown. Drop another on it to make a bar, or between two to put it there. Drop a button on the kit's icon to put it back. Drag a bar by its box to move it. This character only; out of combat. Also in the kit's right-click menu."] = "打开套件并允许你拖动它的按钮。阴影区域显示按钮可以放在套件上的哪些位置：放到那里、两个按钮之间或末端。把按钮拖离套件，它就会浮动在那里并始终显示。再拖一个到它上面可组成一个按钮条，或拖到两个之间插入。把按钮拖到套件图标上可放回去。拖动按钮条的框可移动整个按钮条。仅限此角色；需脱离战斗。也可在套件的右键菜单中打开。"
         Loc["Spacing"] = "间距"
         Loc["Room between the buttons on a bar."] = "按钮条上按钮之间的间隔。"
         Loc["Reset to defaults"] = "恢复默认"
@@ -275,7 +283,10 @@ do
         Loc["Drop it away from the kit to float it."] = "拖离套件可让它浮动。"
         Loc["Bar"] = "按钮条"
         Loc["Drag to move the whole bar."] = "拖动以移动整个按钮条。"
-        Loc["Drag a button onto one of the kit's outlines to move it there, between two buttons or at an end. Drop it away from the kit and it floats, always shown; drop another on it to make a bar. Drop a button on the kit's icon to put it back. Drag a bar's box to move it."] = "把按钮拖到套件的某个轮廓上即可移到那里、两个按钮之间或末端。拖离套件它就会浮动并始终显示；再拖一个到它上面可组成一个按钮条。把按钮拖到套件图标上可放回去。拖动按钮条的框可移动它。"
+        Loc["On a bar"] = "放到按钮条上"
+        Loc["Floating on its own"] = "单独浮动"
+        Loc["Back in its place"] = "放回原位"
+        Loc["Drag a button into one of the kit's shaded areas to move it there: the one it would land in lights up, and the label under the button says where it'll go. Drop it away from the kit and it floats, always shown; drop another on it to make a bar. Drop it on the kit's icon to put it back. Drag a bar's box to move it."] = "把按钮拖进套件的某个阴影区域即可移到那里：它将落入的区域会亮起，按钮下方的标签会说明它的去向。拖离套件它就会浮动并始终显示；再拖一个到它上面可组成一个按钮条。拖到套件图标上可放回去。拖动按钮条的框可移动它。"
         Loc["The layout can only be edited out of combat."] = "布局只能在脱离战斗后编辑。"
         Loc["Show the kit first."] = "请先显示套件。"
         Loc["Close Quick Keybind Mode first."] = "请先关闭快速按键绑定模式。"
@@ -582,8 +593,9 @@ C.BASE_CHAR = {
 --                 { key = "row", label = "Under the line", y = -112, step = 45,
 --                   keys = { slotKey, ... } }
 --                     a centred row at y, step apart, starting with keys
---                 Each zone shows its outline in edit mode (a ring's uses the
---                 kit's zone_ring art). Only slots that start in a zone can be
+--                 Each zone shows its area in edit mode: a ring's whole drop
+--                 band shaded (v35, the kit's circle_mask and zone_ring art), a
+--                 row's box. Only slots that start in a zone can be
 --                 moved between zones. From v31 a zone can also have:
 --                   small = true   its slots are small round buttons (22),
 --                                  the other zones' full slots: a slot takes
@@ -595,9 +607,9 @@ C.BASE_CHAR = {
 --                                  in it (any other is offered the other
 --                                  zones); one saved there goes back to the
 --                                  zone it started in
---                   track = true   (a ring) its outline runs through the
---                                  middle of its buttons, for a ring inside
---                                  another one, with its name beyond them
+--                   track = true   (a ring inside another one) its name
+--                                  goes just beyond its buttons, out from the
+--                                  middle of its arc
 --   OnZones(kit, lists)  the zones' slots changed (and once at login):
 --                 lists[zoneKey] = { slotKey, ... }, slots on bars included.
 --                 The kit puts them in its own tables (the ring's keys, its
@@ -4312,7 +4324,7 @@ function Kit:SettingsList(S)
     -- Bars (v23), for a kit that has them.
     if cfg.bars then
         S.Header(Loc["Bars"])
-        S.Button(Loc["Edit layout"], Loc["Edit"], Loc["Opens the kit and lets you drag its buttons. The outlines show where a button can go on the kit: drop it there, between two buttons or at an end. Drop a button away from the kit and it floats there, always shown. Drop another on it to make a bar, or between two to put it there. Drop a button on the kit's icon to put it back. Drag a bar by its box to move it. This character only; out of combat. Also in the kit's right-click menu."],
+        S.Button(Loc["Edit layout"], Loc["Edit"], Loc["Opens the kit and lets you drag its buttons. The shaded areas show where a button can go on the kit: drop it there, between two buttons or at an end. Drop a button away from the kit and it floats there, always shown. Drop another on it to make a bar, or between two to put it there. Drop a button on the kit's icon to put it back. Drag a bar by its box to move it. This character only; out of combat. Also in the kit's right-click menu."],
             function() self:ToggleEdit() end)
         S.Slider(db, "barGap", Loc["Spacing"], Loc["Room between the buttons on a bar."],
             4, 0, 16, 1, function(v) return tostring(v) end, refresh)
@@ -5861,32 +5873,62 @@ function Kit:ZoneTarget(lists, key, mx, my)
             end
         end
     end
+    -- A ring: its band round the kit (ZoneBands), at any angle. Past either
+    -- end of the ring's buttons it goes on that end.
+    local bands = self:ZoneBands()
+    local d = math.sqrt(lx * lx + ly * ly)
     for _, z in ipairs(self.cfg.zones) do
         local ring = z.ring and self:Rings()[z.ring]
-        if ring and lists[z.key] and ZoneTakes(z, key) then
+        local band = bands[z.key]
+        if ring and band and lists[z.key] and ZoneTakes(z, key) and d >= band.lo and d <= band.hi then
             local shown = self:ZoneShown(lists[z.key])
             local n = #shown
             -- (as it would be with this one on it: right round, if that empties the row)
-            local step, radius, mid = self:RingGeo(ring, n + 1, self:BelowEmpty(lists))
-            local d = math.sqrt(lx * lx + ly * ly)
+            local step, _, mid = self:RingGeo(ring, n + 1, self:BelowEmpty(lists))
             local a = math.deg(math.atan2(ly, lx))
             while a < mid - 180 do a = a + 360 end
             while a > mid + 180 do a = a - 360 end
-            local reach = math.max(math.abs(ring.to - ring.from) / 2, math.abs(step) * n / 2) + 22
-            if d >= radius - BTN * 0.7 and d <= radius + BTN * 0.9 and math.abs(a - mid) <= reach then
-                local after = n
-                if step ~= 0 then after = math.floor((a - mid) / step + (n + 2) / 2 + 0.5) - 1 end
-                after = math.max(0, math.min(n, after))
-                return { zone = z.key, at = ListPlace(lists[z.key], shown, after) }
-            end
+            local after = n
+            if step ~= 0 then after = math.floor((a - mid) / step + (n + 2) / 2 + 0.5) - 1 end
+            after = math.max(0, math.min(n, after))
+            return { zone = z.key, at = ListPlace(lists[z.key], shown, after) }
         end
     end
     return nil
 end
 
--- A zone's outline in edit mode (made the first time): a dashed circle for a
--- ring, a box for a row, with its name. It hangs from the kit button, so it
--- follows the kit, and sits under the slots.
+-- Each ring zone's drop band (v35), in the kit's layout units (before its
+-- spread): [zoneKey] = { lo = , hi = }, how far out from the kit's middle it
+-- starts and ends. A drop anywhere in the band, at any angle, goes on that
+-- ring, and edit mode shades the band so you can see where that is. Rings
+-- one inside another meet halfway between their radii, so the bands never
+-- overlap; the innermost starts just outside the kit's own icon (a drop on
+-- the icon still puts a button back), the outermost ends most of a button
+-- past its ring.
+function Kit:ZoneBands()
+    local rings = {}
+    for _, z in ipairs(self.cfg.zones or {}) do
+        local ring = z.ring and self:Rings()[z.ring]
+        if ring then rings[#rings + 1] = { key = z.key, r = ring.radius } end
+    end
+    table.sort(rings, function(a, b) return a.r < b.r end)
+    local sp = (self.db and self.db.spread) or 1
+    local icon = (self.KIT or 60) / 2 * ((self.db and self.db.kitSize) or 1) / sp + 2
+    local BTN = self.BTN or 37
+    local bands = {}
+    for i, e in ipairs(rings) do
+        local lo = i > 1 and (rings[i - 1].r + e.r) / 2 or math.max(icon, e.r - BTN * 0.7)
+        local hi = rings[i + 1] and (e.r + rings[i + 1].r) / 2 or e.r + BTN * 0.9
+        bands[e.key] = { lo = lo, hi = math.max(lo + 1, hi), level = #rings - i + 1 }
+    end
+    return bands
+end
+
+-- A zone's area in edit mode (made the first time): for a ring, its band
+-- (ZoneBands) as a shaded disc out to the band's outer edge with a dashed
+-- circle round it, an inner ring's disc on top of the outer one's so each
+-- band shows as its own shade; for a row, a box. With its name. It hangs
+-- from the kit button, so it follows the kit, and sits under the slots.
 function Kit:ZoneFrame(z)
     self.zoneFrames = self.zoneFrames or {}
     local f = self.zoneFrames[z.key]
@@ -5897,11 +5939,21 @@ function Kit:ZoneFrame(z)
     f:EnableMouse(false)
     f.parts = {}
     if z.ring then
+        -- (the disc: dark underneath, so a ring inside another hides the
+        -- outer one's shade, then the zone's own gold)
+        f.base = f:CreateTexture(nil, "BACKGROUND")
+        f.base:SetTexture(self.media .. "circle_mask", nil, nil, "LINEAR")
+        f.fill = f:CreateTexture(nil, "BORDER")
+        f.fill:SetTexture(self.media .. "circle_mask", nil, nil, "LINEAR")
         local t = f:CreateTexture(nil, "ARTWORK")
-        t:SetAllPoints()
         t:SetTexture(self.media .. "zone_ring", nil, nil, "LINEAR")
         f.parts[1] = t
     else
+        -- (dark underneath too: it sits over a ring's band where they meet,
+        -- and a drop there goes in the row)
+        f.base = f:CreateTexture(nil, "BACKGROUND", nil, -1)
+        f.base:SetAllPoints()
+        f.base:SetColorTexture(0, 0, 0, 0.5)
         f.fill = f:CreateTexture(nil, "BACKGROUND")
         f.fill:SetAllPoints()
         for _, e in ipairs({ { "TOPLEFT", "TOPRIGHT" }, { "BOTTOMLEFT", "BOTTOMRIGHT" },
@@ -5920,8 +5972,9 @@ function Kit:ZoneFrame(z)
     return f
 end
 
--- Edit mode's outlines round the kit's zones; the one a dragged button
--- would land in is lit.
+-- Edit mode's areas for the kit's zones (v35: each ring's whole drop band
+-- shaded, not just an outline). While a button is dragged, the one it would
+-- land in is lit, and any that won't take it fade right back.
 local ZONE_LINE = 0.965 -- (where zone_ring's line sits: this far from its middle to its edge)
 function Kit:PaintZones()
     local zones = self.cfg.zones
@@ -5930,36 +5983,50 @@ function Kit:PaintZones()
     local lists = self:Zones()
     local sp = self.db.spread or 1
     local BTN = self.BTN
+    local bands = self:ZoneBands()
+    local nRings = 0
+    for _ in pairs(bands) do nRings = nRings + 1 end
+    local drag = C.editDrag and C.editDrag.kit == self and C.editDrag.kind == "slot" and C.editDrag.moved and C.editDrag.key
     for _, z in ipairs(zones) do
         local f = (on or (self.zoneFrames and self.zoneFrames[z.key])) and self:ZoneFrame(z)
         if f and not on then
             f:Hide()
         elseif f then
             local hot = self.zoneHot == z.key
+            local closed = drag and not ZoneTakes(z, drag) -- (dragging one it won't take)
             local ring = z.ring and self:Rings()[z.ring]
+            local band = bands[z.key]
             f:SetScale(self.db.scale or 1)
             f:ClearAllPoints()
             f.label:ClearAllPoints()
-            if ring and z.track then
-                -- (a ring inside another: its outline through the middle of
-                -- its buttons, clear of the other ring's, and its name just
-                -- beyond them, out from the middle of its arc)
-                local radius = ring.radius * sp
-                local size = 2 * radius / ZONE_LINE
+            if ring and band then
+                -- Outer rings underneath, inner ones on top; the rows over them all.
+                f:SetFrameLevel(band.level)
+                local hi = band.hi * sp
+                local size = 2 * hi / ZONE_LINE
                 f:SetSize(size, size)
                 f:SetPoint("CENTER", self.kit, "CENTER", 0, 0)
-                local mid = math.rad((ring.from + ring.to) / 2)
-                local d = radius + (z.small and 11 or BTN / 2) + 8
-                local lx, ly = self:Face(d * math.cos(mid), d * math.sin(mid))
-                f.label:SetPoint("CENTER", f, "CENTER", lx, ly)
-            elseif ring then
-                local radius = ring.radius
-                local size = 2 * (radius * sp + BTN / 2 + 7)
-                f:SetSize(size, size)
-                f:SetPoint("CENTER", self.kit, "CENTER", 0, 0)
-                local lx, ly = self:Face(0, size / 2 + 8)
-                f.label:SetPoint("CENTER", f, "CENTER", lx, ly)
+                f.base:SetSize(2 * hi, 2 * hi)
+                f.base:SetPoint("CENTER")
+                f.fill:SetSize(2 * hi, 2 * hi)
+                f.fill:SetPoint("CENTER")
+                f.parts[1]:SetAllPoints()
+                -- (a ring inside another: nearly opaque, so the outer one's shade doesn't show through)
+                f.base:SetVertexColor(0, 0, 0, band.level > 1 and 0.8 or 0.45)
+                f.fill:SetVertexColor(GOLD[1], GOLD[2], GOLD[3], closed and 0 or hot and 0.26 or 0.07)
+                if z.track then
+                    -- (a ring inside another: its name just beyond its
+                    -- buttons, out from the middle of its arc)
+                    local mid = math.rad((ring.from + ring.to) / 2)
+                    local d = ring.radius * sp + (z.small and 11 or BTN / 2) + 8
+                    local lx, ly = self:Face(d * math.cos(mid), d * math.sin(mid))
+                    f.label:SetPoint("CENTER", f, "CENTER", lx, ly)
+                else
+                    local lx, ly = self:Face(0, hi + 8)
+                    f.label:SetPoint("CENTER", f, "CENTER", lx, ly)
+                end
             else
+                f:SetFrameLevel(nRings + 1)
                 local n = #self:ZoneShown(lists[z.key])
                 local w = math.max(n + 1, 3) * (z.step or (BTN + 8)) * sp + 16
                 local h = BTN + 20
@@ -5968,13 +6035,14 @@ function Kit:PaintZones()
                 f:SetPoint("CENTER", self.kit, "CENTER", self:Face(0, z.y * sp))
                 local lx, ly = self:Face(0, -(h / 2 + 8))
                 f.label:SetPoint("CENTER", f, "CENTER", lx, ly)
-                f.fill:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], hot and 0.16 or 0.05)
+                f.fill:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], closed and 0 or hot and 0.16 or 0.05)
             end
+            local line = closed and 0.15 or hot and 1 or 0.45
             for _, t in ipairs(f.parts) do
-                if ring then t:SetVertexColor(1, 0.82, 0.3, hot and 1 or 0.45)
-                else t:SetColorTexture(1, 0.82, 0.3, hot and 1 or 0.45) end
+                if ring then t:SetVertexColor(1, 0.82, 0.3, line)
+                else t:SetColorTexture(1, 0.82, 0.3, line) end
             end
-            f.label:SetAlpha(hot and 1 or 0.6)
+            f.label:SetAlpha(closed and 0.3 or hot and 1 or 0.6)
             f:Show()
         end
     end
@@ -6204,10 +6272,65 @@ local function EditGhost(kit)
         g.ring:SetBlendMode("ADD")
         g.ring:SetPoint("CENTER")
         g.ring:SetVertexColor(1, 0.82, 0.3)
+        -- (v35) Where it would go, under it: the zone's name, a bar, on its
+        -- own, or back in its place.
+        g.label = g:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        g.label:SetPoint("TOP", g, "BOTTOM", 0, -6)
+        g.label:SetShadowOffset(1, -1)
         g:Hide()
         C.editGhost = g
     end
     return g
+end
+
+-- (v35) The ghost at the size the button would be where it would land
+-- (small over a zone of small buttons, full size elsewhere: the button has
+-- already changed size for the preview), and its label.
+local function SizeGhost(g, btn, text)
+    local size = btn:GetWidth() * btn:GetEffectiveScale() / UIParent:GetEffectiveScale()
+    g:SetSize(size, size)
+    g.ring:SetSize(size * 1.6, size * 1.6)
+    g.label:SetText(text or "")
+end
+
+-- (v35) A gold ring round the spot a dragged button would land on (the
+-- button itself shows there, faint), so it's easy to find among the rest.
+local function EditMark(kit, btn)
+    local m = C.editMark
+    if not m then
+        m = CreateFrame("Frame", nil, UIParent)
+        m:SetFrameStrata("MEDIUM")
+        m:EnableMouse(false)
+        m.tex = m:CreateTexture(nil, "OVERLAY")
+        m.tex:SetAllPoints()
+        m.tex:SetTexture(kit.media .. "glow_ring")
+        m.tex:SetBlendMode("ADD")
+        m.tex:SetVertexColor(1, 0.82, 0.3)
+        C.editMark = m
+    end
+    if not btn then m:Hide() return end
+    -- (anchored to the button, not a child of it: the button is faint while it's dragged)
+    m:SetFrameLevel(btn:GetFrameLevel() + 2)
+    m:ClearAllPoints()
+    m:SetPoint("CENTER", btn, "CENTER")
+    local size = btn:GetWidth() * btn:GetEffectiveScale() / UIParent:GetEffectiveScale() * 1.9
+    m:SetSize(size, size)
+    m:SetShown(btn:IsShown())
+end
+
+-- (v35) What the ghost's label says for a drop target (BarTarget's).
+local function TargetText(kit, t)
+    if t.zone then
+        for _, z in ipairs(kit.cfg.zones or {}) do
+            if z.key == t.zone then return z.label or z.key end
+        end
+    elseif t.bar then
+        return Loc["On a bar"]
+    elseif t.new then
+        return Loc["Floating on its own"]
+    elseif t.kit then
+        return Loc["Back in its place"]
+    end
 end
 
 local editDriver = CreateFrame("Frame")
@@ -6242,6 +6365,7 @@ function C.StopEditDrag(cancel)
     C.editDrag = nil
     editDriver:Hide()
     if C.editGhost then C.editGhost:Hide() end
+    if C.editMark then C.editMark:Hide() end
     local kit = d.kit
     if d.kind == "slot" then
         d.btn.kcDragging = nil
@@ -6327,6 +6451,10 @@ editDriver:SetScript("OnUpdate", function(f)
         kit:ApplyZones()
         kit:DropGlow(t.kit)
         kit:Refresh(false)
+        -- (v35) The ghost at the size it would be there, saying where that
+        -- is, and a ring round the spot it would take.
+        if g then SizeGhost(g, d.btn, TargetText(kit, t)) end
+        EditMark(kit, d.btn)
     elseif t.new then
         local bar = kit.barPreview and kit.barPreview[#kit.barPreview]
         if bar and (bar.x ~= t.x or bar.y ~= t.y) then
@@ -6340,7 +6468,7 @@ end)
 -- The bar at the top of the screen while a layout is being edited.
 local function BuildEditBar()
     local bar = OptPanel("Frame", "KitCoreEditBar", UIParent)
-    bar:SetSize(500, 106)
+    bar:SetSize(500, 116)
     bar:SetPoint("TOP", 0, -20)
     bar:SetFrameStrata("FULLSCREEN_DIALOG")
     bar:EnableMouse(true)
@@ -6357,7 +6485,7 @@ local function BuildEditBar()
     hint:SetPoint("TOPLEFT", bar.title, "BOTTOMLEFT", 0, -5)
     hint:SetWidth(476)
     hint:SetJustifyH("LEFT")
-    hint:SetText(Loc["Drag a button onto one of the kit's outlines to move it there, between two buttons or at an end. Drop it away from the kit and it floats, always shown; drop another on it to make a bar. Drop a button on the kit's icon to put it back. Drag a bar's box to move it."])
+    hint:SetText(Loc["Drag a button into one of the kit's shaded areas to move it there: the one it would land in lights up, and the label under the button says where it'll go. Drop it away from the kit and it floats, always shown; drop another on it to make a bar. Drop it on the kit's icon to put it back. Drag a bar's box to move it."])
 
     local reset = SmallButton(bar, Loc["Reset to defaults"], 140, function()
         local kit = C.editKit
