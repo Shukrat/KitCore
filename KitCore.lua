@@ -79,7 +79,7 @@ local addonName, ns = ...
 -- language (Simplified Chinese so far; anything untranslated stays English).
 ---------------------------------------------------------------------------
 
-local VERSION = 33
+local VERSION = 34
 -- Builds of the same VERSION (test builds while a version is in a pull
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
@@ -577,7 +577,8 @@ C.BASE_CHAR = {
 --                     widest = the longest its arc may get, in degrees, and
 --                     avoid = n for cfg.ring[n], a ring of small buttons it
 --                     must leave room for. With nothing in the row zones it
---                     goes right round the kit
+--                     may reach right round the kit, but keeps to the far
+--                     side from the line while its usual spacing fits (v34)
 --                 { key = "row", label = "Under the line", y = -112, step = 45,
 --                   keys = { slotKey, ... } }
 --                     a centred row at y, step apart, starting with keys
@@ -2951,9 +2952,11 @@ end
 -- never moves further out. Up to its usual number it keeps its usual
 -- spacing; more sit closer together along its arc, the arc reaching a
 -- little further round (to ring.widest) before they'd touch, then closer
--- still. loop: nothing is below the line, so it goes round the kit, evenly:
--- as far as the buttons it has to avoid, or, when there are too many for
--- that, the whole way (round: true), with those buttons moved outside it.
+-- still. loop: nothing is below the line, so it may go round the kit: it
+-- keeps its usual spacing, gathered opposite the line, and only reaches
+-- further round once that runs out of room, as far as the buttons it has to
+-- avoid, or, when there are too many for that, the whole way (round: true),
+-- with those buttons moved outside it.
 function Kit:RingGeo(ring, n, loop)
     local mid = (ring.from + ring.to) / 2
     local full = #ring.keys
@@ -2973,7 +2976,11 @@ function Kit:RingGeo(ring, n, loop)
             -- (too many to fit beside the buttons it avoids: the whole circle,
             -- and those buttons move outside it, see LayoutOneRing)
             if gap > 0 and (n - 1) * touch > cap then cap, round = 360, true end
-            step = math.min(360 / n, cap / (n - 1))
+            -- Still gathered on the far side from the line at the usual
+            -- spacing (v34); it only spreads further round when that runs
+            -- out of room, and goes evenly round once it fills the circle.
+            local usual = ring.count > 1 and span / (ring.count - 1) or touch
+            step = math.min(360 / n, math.max(usual, touch), cap / (n - 1))
         elseif n <= ring.count then
             step = ring.count > 1 and span / (ring.count - 1) or 0
         else
