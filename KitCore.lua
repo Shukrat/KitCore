@@ -77,7 +77,7 @@ local VERSION = 32
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
 -- each change while VERSION stays put; back to 0 with a new VERSION.
-local BUILD = 0
+local BUILD = 1
 local C = _G.KitCore
 if C and ((C.version or 0) > VERSION or ((C.version or 0) == VERSION and (C.build or 0) >= BUILD)) then
     ns.Core = C
@@ -120,7 +120,7 @@ do
         Loc["Settings"] = "设置"
         Loc["Click: open"] = "点击：打开"
         Loc["Right-click: choose"] = "右键点击：选择"
-        Loc["On a bar: always shown"] = "在条上：始终显示"
+        Loc["On a bar: always shown"] = "在按钮条上：始终显示"
         Loc["Shift-right-click: stop always showing"] = "Shift+右键点击：取消始终显示"
         Loc["Shift-right-click: always show"] = "Shift+右键点击：始终显示"
         Loc["Nothing to choose from."] = "没有可选项。"
@@ -133,7 +133,7 @@ do
         Loc["Couldn't move the kit in combat: %s."] = "无法在战斗中移动套件：%s。"
         Loc["stopped at %s"] = "停在了 %s"
         Loc["Click the kit button to open or close it in combat."] = "战斗中请点击套件按钮来打开或关闭它。"
-        Loc["%s is on a bar, so it's always shown. Edit the layout to move it."] = "%s在条上，所以始终显示。编辑布局可移动它。"
+        Loc["%s is on a bar, so it's always shown. Edit the layout to move it."] = "%s在按钮条上，所以始终显示。编辑布局可移动它。"
         Loc["%s: always shown."] = "%s：始终显示。"
         Loc["%s: hides when the kit closes."] = "%s：套件关闭时隐藏。"
         Loc["Left-click: settings"] = "左键点击：设置"
@@ -201,13 +201,13 @@ do
         Loc["Slot choices"] = "栏位选择"
         Loc["Reset"] = "重置"
         Loc["Put every slot back to its starting choice, and every list back in its starting order."] = "把每个栏位恢复为初始选择，每个列表恢复初始顺序。"
-        Loc["Bars"] = "条"
+        Loc["Bars"] = "按钮条"
         Loc["Edit"] = "编辑"
-        Loc["Opens the kit and lets you drag its buttons. The outlines show where a button can go on the kit: drop it there, between two buttons or at an end. Drop a button away from the kit and it floats there, always shown. Drop another on it to make a bar, or between two to put it there. Drop a button on the kit's icon to put it back. Drag a bar by its box to move it. This character only; out of combat. Also in the kit's right-click menu."] = "打开套件并允许你拖动它的按钮。轮廓显示按钮可以放在套件上的哪些位置：放到那里、两个按钮之间或末端。把按钮拖离套件，它就会浮动在那里并始终显示。再拖一个到它上面可组成一个条，或拖到两个之间插入。把按钮拖到套件图标上可放回去。拖动条的框可移动整个条。仅限此角色；需脱离战斗。也可在套件的右键菜单中打开。"
+        Loc["Opens the kit and lets you drag its buttons. The outlines show where a button can go on the kit: drop it there, between two buttons or at an end. Drop a button away from the kit and it floats there, always shown. Drop another on it to make a bar, or between two to put it there. Drop a button on the kit's icon to put it back. Drag a bar by its box to move it. This character only; out of combat. Also in the kit's right-click menu."] = "打开套件并允许你拖动它的按钮。轮廓显示按钮可以放在套件上的哪些位置：放到那里、两个按钮之间或末端。把按钮拖离套件，它就会浮动在那里并始终显示。再拖一个到它上面可组成一个按钮条，或拖到两个之间插入。把按钮拖到套件图标上可放回去。拖动按钮条的框可移动整个按钮条。仅限此角色；需脱离战斗。也可在套件的右键菜单中打开。"
         Loc["Spacing"] = "间距"
-        Loc["Room between the buttons on a bar."] = "条上按钮之间的间隔。"
+        Loc["Room between the buttons on a bar."] = "按钮条上按钮之间的间隔。"
         Loc["Reset to defaults"] = "恢复默认"
-        Loc["Put every button back where it started: off the bars, and the kit's own buttons in their usual places and order."] = "把每个按钮放回原处：从条上取下，套件自己的按钮回到原来的位置和顺序。"
+        Loc["Put every button back where it started: off the bars, and the kit's own buttons in their usual places and order."] = "把每个按钮放回原处：从按钮条上取下，套件自己的按钮回到原来的位置和顺序。"
         Loc["Reminder panel"] = "提醒面板"
         Loc["Put %s's reminders in the panel"] = "把 %s 的提醒放进面板"
         Loc["One panel for all your kits that you can put anywhere. With this on and %s closed, its reminders show there, full size, instead of beside the kit. They stay in the panel while the kit is open too (and in their places in the kit). Each kit has its own switch, so some kits' reminders can be in the panel and others by their kit."] = "一个供所有套件共用、可随意放置的面板。开启后，%s 关闭时它的提醒会以完整大小显示在面板里，而不是在套件旁边。套件打开时它们也留在面板里（同时也在套件中各自的位置）。每个套件有自己的开关，所以可以让一些套件的提醒在面板里，另一些在各自套件旁。"
@@ -266,9 +266,9 @@ do
         Loc["Drag to move it."] = "拖动以移动。"
         Loc["Drop it on the kit to put it back."] = "拖到套件上可放回去。"
         Loc["Drop it away from the kit to float it."] = "拖离套件可让它浮动。"
-        Loc["Bar"] = "条"
-        Loc["Drag to move the whole bar."] = "拖动以移动整个条。"
-        Loc["Drag a button onto one of the kit's outlines to move it there, between two buttons or at an end. Drop it away from the kit and it floats, always shown; drop another on it to make a bar. Drop a button on the kit's icon to put it back. Drag a bar's box to move it."] = "把按钮拖到套件的某个轮廓上即可移到那里、两个按钮之间或末端。拖离套件它就会浮动并始终显示；再拖一个到它上面可组成一个条。把按钮拖到套件图标上可放回去。拖动条的框可移动它。"
+        Loc["Bar"] = "按钮条"
+        Loc["Drag to move the whole bar."] = "拖动以移动整个按钮条。"
+        Loc["Drag a button onto one of the kit's outlines to move it there, between two buttons or at an end. Drop it away from the kit and it floats, always shown; drop another on it to make a bar. Drop a button on the kit's icon to put it back. Drag a bar's box to move it."] = "把按钮拖到套件的某个轮廓上即可移到那里、两个按钮之间或末端。拖离套件它就会浮动并始终显示；再拖一个到它上面可组成一个按钮条。把按钮拖到套件图标上可放回去。拖动按钮条的框可移动它。"
         Loc["The layout can only be edited out of combat."] = "布局只能在脱离战斗后编辑。"
         Loc["Show the kit first."] = "请先显示套件。"
         Loc["Close Quick Keybind Mode first."] = "请先关闭快速按键绑定模式。"
@@ -291,7 +291,7 @@ do
         Loc["%s face up | down | left | right - which way the layout points"] = "%s face up | down | left | right - 布局朝向"
         Loc["%s move - move everything: the reminder panel and the kits' timers and bars, all at once"] = "%s move - 全部移动：提醒面板以及各套件的计时器和条，一次完成"
         Loc["%s panel - move the reminder panel (shared by every kit)"] = "%s panel - 移动提醒面板（所有套件共用）"
-        Loc["%s layout - drag buttons off the kit onto bars"] = "%s layout - 把按钮从套件拖到条上"
+        Loc["%s layout - drag buttons off the kit onto bars"] = "%s layout - 把按钮从套件拖到按钮条上"
         Loc["%s dock - dock every kit on the pin"] = "%s dock - 把所有套件停靠到停靠点"
         Loc["Locked."] = "已锁定。"
         Loc["Unlocked. Drag the kit to move it."] = "已解锁。拖动套件即可移动。"
