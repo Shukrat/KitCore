@@ -72,6 +72,8 @@ local addonName, ns = ...
 -- (slot.panelFlyout): right-click its copy in the reminder panel, or a
 -- kit's own reminder button for it (Kit:OpenFlyoutAt), and the drawer
 -- opens beside that, toward the middle of the screen. Out of combat.
+-- Also from v32: a slot the kit has hidden (btn.hidden) but marked
+-- btn.panelWhenHidden still sends its reminder to the reminder panel.
 ---------------------------------------------------------------------------
 
 local VERSION = 32
@@ -2965,14 +2967,18 @@ end
 -- cfg.panelPinned a pinned slot's reminder goes in the panel too, and the
 -- slot stays out by the kit as pinned slots do.
 function Kit:SlotVisible(slot, btn)
-    local pop = slot.Pop and not btn.hidden and slot.Pop(self, btn) or false
-    local available = self.db.shown ~= false and not btn.hidden
+    -- (v32) Hidden from the kit by its settings but still set up for its
+    -- reminder (btn.panelWhenHidden): never shows by the kit, but its copy can
+    -- still go in the reminder panel when it pops.
+    local still = btn.hidden and btn.panelWhenHidden and true or false
+    local pop = slot.Pop and (not btn.hidden or still) and slot.Pop(self, btn) or false
+    local available = self.db.shown ~= false and (not btn.hidden or still)
     local pinned = self.cdb.pinned[slot.key] and true or false
     local bar = btn.kcBar and true or false -- (on a bar: always out, there)
     local out = (pinned or pop or bar) and true or false
     -- (pinned: it stays by the kit, reminder or not; on a bar: it stays on the bar)
     local panel = available and pop and (self.cfg.panelPinned or not pinned) and not bar and self:PanelAssigned(slot) or false
-    local visible = available and (self.open or (out and (pinned or not panel) and not self.tucked and not self.quiet)) and true or false
+    local visible = available and not btn.hidden and (self.open or (out and (pinned or not panel) and not self.tucked and not self.quiet)) and true or false
     return visible, available, pop, panel and true or false
 end
 
@@ -3341,7 +3347,7 @@ function Kit:Refresh(animate)
             if btn.fly and btn.fly:IsShown() then btn.fly:Hide() end
             if btn.hidden or btn.kcBar or Fighting() then btn:Hide() else PlayClose(self, btn, i, total) end -- (see Fighting)
         end
-        btn.wouldShow = available and not btn.kcBar and (cdb.pinned[slot.key] or (pop and not panel)) and true or false
+        btn.wouldShow = available and not btn.hidden and not btn.kcBar and (cdb.pinned[slot.key] or (pop and not panel)) and true or false
     end
 
     -- The divider shows while the kit is open and its row below is out.
