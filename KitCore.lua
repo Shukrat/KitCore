@@ -85,9 +85,14 @@ local addonName, ns = ...
 -- up; the button under the mouse takes the size it would be there and says
 -- where it'll go (the zone's name, a bar, on its own, back in its place),
 -- and a gold ring marks the spot it would take.
+--
+-- From v37 a kit can name settings that change with your spec
+-- (cfg.specLayer): with "Change with your spec" ticked, each talent tree
+-- keeps its own copy of them, per character, and they switch when your main
+-- tree does. See "Settings that follow your spec".
 ---------------------------------------------------------------------------
 
-local VERSION = 35
+local VERSION = 37
 -- Builds of the same VERSION (test builds while a version is in a pull
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
@@ -323,6 +328,12 @@ do
         Loc["Press Escape to unbind."] = "按 Esc 解除绑定。"
         Loc["Not bound"] = "未绑定"
         Loc["Press a key to bind."] = "按下一个键进行绑定。"
+        Loc["Your spec"] = "你的专精"
+        Loc["Change with your spec"] = "随专精切换"
+        Loc["Your spec is the talent tree you've put the most points in. Each character keeps its own copy for each tree, and a tree you play for the first time starts as a copy of the one before."] = "你的专精是你投入天赋点数最多的天赋树。每个角色为每棵天赋树分别保存一份，第一次使用的天赋树会先复制之前那棵的设置。"
+        Loc["Now using your %s settings."] = "现在使用你的%s设置。"
+        Loc["%s has its own settings from now on, starting as a copy of %s's."] = "%s从现在起使用自己的设置，初始复制自%s。"
+        Loc["Talent tree %d"] = "天赋树%d"
     end
 end
 
@@ -694,6 +705,11 @@ C.BASE_CHAR = {
 --   MenuAfterSettings(kit, root)  lines under "Settings" at the menu's foot
 --                 (v27), e.g. a way straight to one settings page with
 --                 kit:OpenOptions("page title")
+--   specLayer     { keys = { "db.tbRows", "char.pinned", "char.picks.c1", ... },
+--                 tip = "what changes" } (v37) settings that change with
+--                 your spec, once the player ticks "Change with your spec":
+--                 "db." the kit's settings, "char." this character's. See
+--                 "Settings that follow your spec"
 --   Slash(kit, cmd, rest) true if it handled cmd;  helpLines { "..." }
 --   minimapIcon   texture for the minimap button
 --
@@ -4223,6 +4239,13 @@ function Kit:SettingsList(S)
         Loc["Notices in chat when something changes (pinned in place, always shown, snoozed and the like). Slash commands still answer in chat."], true)
     if S.Grid then S.Grid(1) end
     if cfg.GeneralSettings then cfg.GeneralSettings(self, S) end
+    if cfg.specLayer then
+        S.Subheader(Loc["Your spec"])
+        S.Checkbox(db, "specFollow", Loc["Change with your spec"],
+            (cfg.specLayer.tip and (cfg.specLayer.tip .. " ") or "")
+            .. Loc["Your spec is the talent tree you've put the most points in. Each character keeps its own copy for each tree, and a tree you play for the first time starts as a copy of the one before."],
+            false, function() self:SpecToggle(db.specFollow) end)
+    end
     S.Subheader(Loc["In combat"])
     if not self.cfg.alwaysHideInCombat then
         S.Checkbox(db, "hideInCombat", Loc["Hide the kit in combat"], Loc["Hide the kit while you're in combat."], false,
@@ -8190,6 +8213,227 @@ function Kit:RunSlash(msg)
 end
 
 ---------------------------------------------------------------------------
+-- Settings that follow your spec (v37)
+--
+-- A kit names the settings that should change with your spec:
+--   cfg.specLayer = {
+--     keys = { "db.tbRows", "char.pinned", "char.picks.c1", ... },
+--     tip  = "what changes with your spec", for the setting's tooltip,
+--   }
+-- "db." is in the kit's settings (shared by your characters), "char." in
+-- this character's; a table is copied whole. With "Change with your spec"
+-- ticked (db.specFollow), each talent tree keeps its own copy of them, for
+-- each character. Everything the kit doesn't name stays the same in every
+-- spec.
+--
+-- Your spec is the tree you've put the most points in, found by adding up
+-- each tree's points (not by its name, so it works in any game language).
+-- It changes when you respec, or swap specs where the game has two. Then
+-- the settings in use are saved into the old tree's copy and the new tree's
+-- copy goes in their place; a tree played for the first time starts as a
+-- copy of the one before. The kit keeps reading its settings where it
+-- always has (db, cdb): a copy is put back there, and tables are filled in
+-- place, so anything holding one (a settings page) sees the change.
+--
+-- Saved per character: cdb.specs[tree] = { [key] = { v = value } } (an
+-- entry without v: that setting wasn't set) and cdb.specTree, the tree
+-- whose copy is in use. At login the character's own copy goes back in
+-- (another character may have changed the shared settings since); it's
+-- saved again at logout. A switch waits for the end of a fight.
+---------------------------------------------------------------------------
+
+do
+    -- (Talent events the game may not have are registered safely: pcall.)
+    local SPEC_EVENTS = { "CHARACTER_POINTS_CHANGED", "PLAYER_TALENT_UPDATE", "ACTIVE_TALENT_GROUP_CHANGED", "PLAYER_LOGOUT" }
+    local SPEC_CHECK = { PLAYER_ENTERING_WORLD = true, SPELLS_CHANGED = true, CHARACTER_POINTS_CHANGED = true,
+        PLAYER_TALENT_UPDATE = true, ACTIVE_TALENT_GROUP_CHANGED = true, PLAYER_LOGOUT = true }
+    C.SPEC_EVENTS, C.SPEC_CHECK = SPEC_EVENTS, SPEC_CHECK
+
+    local function Num(v)
+        if type(v) == "number" and not U.Sealed(v) then return v end
+        return nil
+    end
+
+    -- The points in each tree ({ [tree] = points }) and in all of them.
+    local function TreePoints()
+        local pts, total = {}, 0
+        if not (GetNumTalentTabs and GetNumTalents and GetTalentInfo) then return pts, 0 end
+        local okT, tabs = pcall(GetNumTalentTabs)
+        for t = 1, (okT and Num(tabs) or 0) do
+            local n = 0
+            local okN, count = pcall(GetNumTalents, t)
+            for i = 1, (okN and Num(count) or 0) do
+                local ok, _, _, _, _, rank = pcall(GetTalentInfo, t, i)
+                rank = ok and Num(rank) or 0
+                n = n + rank
+            end
+            pts[t] = n
+            total = total + n
+        end
+        return pts, total
+    end
+
+    -- Your spec: the tree with the most points. On a tie, the one in use if
+    -- it's one of them, else the first. nil before you've spent any (or
+    -- while the game hasn't said yet, at login).
+    local function MainTree(cur)
+        local pts, total = TreePoints()
+        if total == 0 then return nil end
+        local best, most = nil, -1
+        for t, n in ipairs(pts) do
+            if n > most then best, most = t, n end
+        end
+        if cur and pts[cur] == most then return cur end
+        return best
+    end
+    C.MainTree = MainTree
+
+    -- A tree's name, as the game gives it (in its own language).
+    local function FirstString(ok, ...)
+        if not ok then return nil end
+        for i = 1, select("#", ...) do
+            local v = select(i, ...)
+            if type(v) == "string" and not U.Sealed(v) and v ~= "" then return v end
+        end
+        return nil
+    end
+    local function TreeName(tree)
+        return (GetTalentTabInfo and FirstString(pcall(GetTalentTabInfo, tree)))
+            or (Loc["Talent tree %d"]):format(tonumber(tree) or 0)
+    end
+
+    -- Where a key lives: the table holding it, and its last part
+    -- ("db.tbRows": db, "tbRows"). make: make tables on the way that
+    -- aren't there yet.
+    local function Where(kit, path, make)
+        local parts = {}
+        for p in path:gmatch("[^%.]+") do parts[#parts + 1] = p end
+        local t = (parts[1] == "char" and kit.cdb) or (parts[1] == "db" and kit.db) or nil
+        if not t or #parts < 2 then return nil end
+        for i = 2, #parts - 1 do
+            local nxt = t[parts[i]]
+            if type(nxt) ~= "table" then
+                if not make then return nil end
+                nxt = {}
+                t[parts[i]] = nxt
+            end
+            t = nxt
+        end
+        return t, parts[#parts]
+    end
+
+    local function Copy(v)
+        if type(v) ~= "table" then return v end
+        local c = {}
+        for k, x in pairs(v) do c[k] = Copy(x) end
+        return c
+    end
+
+    -- t[key] = v, but a table goes into the one already there, in place
+    -- (nil there empties it).
+    local function Put(t, key, v)
+        local cur = t[key]
+        if type(cur) == "table" and (v == nil or type(v) == "table") then
+            for k in pairs(cur) do cur[k] = nil end
+            for k, x in pairs(v or {}) do cur[k] = Copy(x) end
+        else
+            t[key] = Copy(v)
+        end
+    end
+
+    -- The settings in use, saved as tree's copy.
+    function Kit:SpecSave(tree)
+        local layer = self.cfg.specLayer
+        if not (layer and tree) then return end
+        local saved = {}
+        for _, path in ipairs(layer.keys or {}) do
+            local t, key = Where(self, path)
+            local e = {}
+            if t then e.v = Copy(t[key]) end
+            saved[path] = e
+        end
+        self.cdb.specs = self.cdb.specs or {}
+        self.cdb.specs[tree] = saved
+    end
+
+    -- tree's copy put in use. False when there's none.
+    function Kit:SpecLoad(tree)
+        local layer = self.cfg.specLayer
+        local saved = layer and tree and self.cdb.specs and self.cdb.specs[tree]
+        if not saved then return false end
+        for _, path in ipairs(layer.keys or {}) do
+            local e = saved[path]
+            if e then -- (a key the kit has named since: left as it is)
+                local t, key = Where(self, path, true)
+                if t then Put(t, key, e.v) end
+            end
+        end
+        return true
+    end
+
+    -- Is the spec still the one whose settings are in use? If not, switch.
+    -- event: what asked ("build" at login, before the first refresh, which
+    -- follows anyway).
+    function Kit:SpecCheck(event)
+        if not self.cfg.specLayer then return end
+        local db, cdb = self.db, self.cdb
+        if event == "PLAYER_LOGOUT" then
+            if db.specFollow and self.specLive and cdb.specTree then self:SpecSave(cdb.specTree) end
+            return
+        end
+        if not db.specFollow then return end
+        local tree = MainTree(cdb.specTree)
+        if not tree then
+            -- At login the talents may not be readable yet, and not every
+            -- change says so: look again a little later.
+            if event == "PLAYER_ENTERING_WORLD" and not self.specLive and C_Timer and C_Timer.After then
+                for _, t in ipairs({ 3, 10 }) do C_Timer.After(t, function() self:SpecCheck("later") end) end
+            end
+            return
+        end
+        if self.specLive and tree == cdb.specTree then return end
+        if InCombatLockdown() then self.specPending = true return end
+        self.specPending = nil
+        local old = cdb.specTree
+        local login = not self.specLive
+        -- A switch: what's in use now is the old tree's.
+        if not login and old then self:SpecSave(old) end
+        -- In comes the new tree's copy. At login, with none for it yet, this
+        -- character's last one (the shared settings may be another
+        -- character's now).
+        local loaded = self:SpecLoad(tree) or (login and self:SpecLoad(old)) or false
+        cdb.specTree = tree
+        self.specLive = true
+        if not login then
+            if loaded then
+                self:Print((Loc["Now using your %s settings."]):format(TreeName(tree)))
+            elseif old then
+                self:Print((Loc["%s has its own settings from now on, starting as a copy of %s's."]):format(TreeName(tree), TreeName(old)))
+            end
+        end
+        if (loaded or not login) and event ~= "build" then
+            self:Refresh(false)
+            self:PaintOptions()
+            self:SettingsChanged()
+        end
+    end
+
+    -- "Change with your spec" ticked or unticked. On: the settings in use
+    -- now are your current tree's. Off: they're saved as its copy (for
+    -- when it's back on), and stay as they are.
+    function Kit:SpecToggle(on)
+        local cdb = self.cdb
+        if on then
+            cdb.specTree = MainTree(cdb.specTree)
+            self.specLive = cdb.specTree ~= nil or nil
+        else
+            if self.specLive and cdb.specTree then self:SpecSave(cdb.specTree) end
+            self.specLive, self.specPending = nil, nil
+        end
+    end
+end
+
+---------------------------------------------------------------------------
 -- Events
 ---------------------------------------------------------------------------
 
@@ -8225,6 +8469,12 @@ function Kit:OnEvent(event, ...)
         return self:Build()
     end
     if not self.built then return end
+
+    -- Settings that follow your spec (v37): first, so the kit's own handlers
+    -- and the refresh below see the right ones.
+    if cfg.specLayer and (C.SPEC_CHECK[event] or (event == "PLAYER_REGEN_ENABLED" and self.specPending)) then
+        self:SpecCheck(event)
+    end
 
     local h = cfg.events and cfg.events[event]
     if h then h(self, ...) end
@@ -8602,6 +8852,9 @@ function Kit:Build()
 
     for _, e in ipairs(BASE_EVENTS) do pcall(self.events.RegisterEvent, self.events, e) end
     for e in pairs(cfg.events or {}) do pcall(self.events.RegisterEvent, self.events, e) end
+    if cfg.specLayer then
+        for _, e in ipairs(C.SPEC_EVENTS) do pcall(self.events.RegisterEvent, self.events, e) end
+    end
     for e, u in pairs(cfg.unitEvents or {}) do
         pcall(self.events.RegisterUnitEvent, self.events, e, unpack(u.units))
     end
@@ -8623,5 +8876,8 @@ function Kit:Build()
             cfg.Tick(self)
         end)
     end
+    -- This character's settings for its spec, before the first refresh (if
+    -- the game can say its talents yet: if not, at PLAYER_ENTERING_WORLD).
+    if cfg.specLayer then self:SpecCheck("build") end
     self:Refresh(false)
 end
