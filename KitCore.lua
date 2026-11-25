@@ -8264,6 +8264,8 @@ function Kit:RunSlash(msg)
         if self.Dock and self.Dock.Undock then self.Dock.Undock(self.key) end
         self:ApplyPosition()
         self:Print(Loc["Kit moved back to its starting spot."])
+    elseif cmd == "radialdebug" and self.radial then
+        self:RadialDebugToggle()
     elseif cmd == "minimap" then
         self.db.minimapButton = not self.db.minimapButton
         self:ApplyMinimap()
@@ -8918,14 +8920,77 @@ function Kit:BuildRadial()
         R.lastIndex = nil
         self:RadialDraw()
         GameTooltip:Hide()
+        if R.debug and C_Timer then C_Timer.After(0, function() self:RadialDebugState("opened") end) end
     end)
     d:HookScript("OnHide", function()
         if C.radialHold then pcall(C.radialHold.Closed, C.radialHold) end
+        if R.debug then self:RadialDebug("closed") end
+    end)
+    R.trigger:HookScript("OnClick", function(_, button, down)
+        if R.debug then
+            self:RadialDebug(("trigger %s (%s): ring now %s"):format(down and "PRESS" or "RELEASE", tostring(button),
+                h:GetAttribute("kcr-isopen") and "open" or "closed"))
+        end
     end)
     v:SetScript("OnUpdate", function(_, elapsed) self:RadialTick(elapsed) end)
     -- (the camera holder's frames are set up now, out of combat: whether they
     -- pass stick input on can't be set in a fight)
     pcall(RADIAL.Holder)
+end
+
+-- Debug readout (/<slash> radialdebug, out of combat): chat lines on what
+-- the ring sees, to find out in game where a press or release goes.
+-- English only, on purpose: it's for whoever is testing.
+function Kit:RadialDebug(msg)
+    print("|cffd8b4ff" .. self.prefix .. " radial:|r " .. tostring(msg))
+end
+
+local function PadKeyAction(key)
+    if not (key and GetBindingAction) then return "?" end
+    local a = GetBindingAction(key, true)
+    return (a and a ~= "") and a or "(nothing)"
+end
+
+function Kit:RadialDebugState(what)
+    local R = self.radial
+    if not (R and R.debug) then return end
+    local h = R.header
+    local held = {}
+    local st = C_GamePad and C_GamePad.GetDeviceMappedState and C_GamePad.GetDeviceMappedState()
+    if st and st.buttons then
+        for i, down in pairs(st.buttons) do
+            if down then
+                local name = C_GamePad.ButtonIndexToBinding and C_GamePad.ButtonIndexToBinding(i - 1)
+                held[#held + 1] = ("#%s %s, taken as %s, bound to %s"):format(tostring(i), tostring(name),
+                    tostring(h:GetAttribute("kcr-pk" .. i)), PadKeyAction(name))
+            end
+        end
+    end
+    self:RadialDebug(("%s. pad state: %s; held now: %s; held flag: %s; keys mapped: %s"):format(what,
+        st and "yes" or "NONE", #held > 0 and table.concat(held, " | ") or "none",
+        tostring(h:GetAttribute("kcr-held")), tostring(h:GetAttribute("kcr-pkn"))))
+end
+
+function Kit:RadialDebugToggle()
+    local R = self.radial
+    if not R then self:Print("No radial in this kit.") return end
+    R.debug = not R.debug
+    if R.debug and not R.debugPad then
+        -- Sees every pad press and release first, passing it on to the game.
+        local f = CreateFrame("Frame")
+        pcall(f.SetPropagateKeyboardInput, f, true)
+        f:EnableGamePadButton(true)
+        f:SetScript("OnGamePadButtonDown", function(_, key)
+            if R.debug then self:RadialDebug(("pad PRESS %s, bound to %s"):format(tostring(key), PadKeyAction(key))) end
+        end)
+        f:SetScript("OnGamePadButtonUp", function(_, key)
+            if R.debug then self:RadialDebug(("pad RELEASE %s, bound to %s"):format(tostring(key), PadKeyAction(key))) end
+        end)
+        R.debugPad = f
+    end
+    if R.debugPad then R.debugPad:SetShown(R.debug) end
+    self:RadialDebug(R.debug and "debug on (same command turns it off)" or "debug off")
+    if R.debug then self:RadialDebugState("now") end
 end
 
 -- The parts of the ring you see (made once).
