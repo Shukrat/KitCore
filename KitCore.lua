@@ -8385,15 +8385,35 @@ RADIAL.OPEN = [[
     self:SetAttribute("kcr-isopen", true)
     self:RunAttribute("kcr-switch", "main")
     self:GetFrameRef("kcr-display"):Show()
+    -- Pad buttons held right now go to the trigger while the ring is up:
+    -- opened from a gamepad bar slot, that slot's button is still down, and
+    -- letting it go then reaches the trigger (the game sends a release to
+    -- whatever the key is bound to by then). Any modifier mix, so letting go
+    -- of a trigger first doesn't matter. kcr-pk<i> is pad button i's key
+    -- (modifiers and stick leans left out), set out of combat.
+    local taken = "|"
+    local st = GetGamePadState()
+    local pressed, trig = st and st.buttons, self:GetAttribute("kcr-btn-trigger")
+    if pressed and trig then
+        local mods = { "", "SHIFT-", "CTRL-", "CTRL-SHIFT-", "ALT-", "ALT-SHIFT-", "ALT-CTRL-", "ALT-CTRL-SHIFT-" }
+        for i = 1, (self:GetAttribute("kcr-pkn") or 0) do
+            local key = pressed[i] and self:GetAttribute("kcr-pk" .. i)
+            if key then
+                for m = 1, #mods do self:SetBindingClick(true, mods[m] .. key, trig, "LeftButton") end
+                taken = taken .. key .. "|"
+                self:SetAttribute("kcr-held", true)
+            end
+        end
+    end
     local t1, t2 = self:GetAttribute("kcr-trig1"), self:GetAttribute("kcr-trig2")
     local k = self:GetAttribute("kcr-key-use")
-    if k and k ~= t1 and k ~= t2 then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-use"), "LeftButton") end
+    if k and k ~= t1 and k ~= t2 and not taken:find("|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-use"), "LeftButton") end
     k = self:GetAttribute("kcr-key-back")
-    if k and k ~= t1 and k ~= t2 then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-back"), "LeftButton") end
+    if k and k ~= t1 and k ~= t2 and not taken:find("|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-back"), "LeftButton") end
     k = self:GetAttribute("kcr-key-open")
-    if k and k ~= t1 and k ~= t2 then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-open"), "LeftButton") end
+    if k and k ~= t1 and k ~= t2 and not taken:find("|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-open"), "LeftButton") end
     k = self:GetAttribute("kcr-key-alt")
-    if k and k ~= t1 and k ~= t2 then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-alt"), "LeftButton") end
+    if k and k ~= t1 and k ~= t2 and not taken:find("|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-alt"), "LeftButton") end
     return true
 ]]
 
@@ -8425,7 +8445,9 @@ RADIAL.USE = [[
 -- The binding that brings the ring up. Its press opens the ring; its release
 -- uses what the stick points at (hold, lean, let go). Released with the stick
 -- centred, the ring stays up (a tap), and the next press uses or, centred,
--- closes. A macro's /click is one release: it opens, then uses or closes.
+-- closes. A macro's /click is one release: it opens, then uses or closes;
+-- from a gamepad bar the slot's button is still held, OPEN hands it to this
+-- button, and letting it go is the release.
 RADIAL.TRIGGER = [[
     self:SetAttribute("type", nil)
     if down then
@@ -8856,6 +8878,7 @@ function Kit:BuildRadial()
         return b
     end
     R.trigger = Button("", RADIAL.TRIGGER)
+    h:SetAttribute("kcr-btn-trigger", R.trigger:GetName())
     local names = {}
     for role, body in pairs({ use = RADIAL.A, back = RADIAL.B, open = RADIAL.X, alt = RADIAL.Y }) do
         local b = Button(role:sub(1, 1):upper() .. role:sub(2), body)
@@ -9269,6 +9292,38 @@ function Kit:RadialKeys()
     if GetBindingKey then k1, k2 = GetBindingKey("CLICK " .. self.prefix .. "Radial:LeftButton") end
     R.header:SetAttribute("kcr-trig1", k1)
     R.header:SetAttribute("kcr-trig2", k2)
+    -- Pad button i's key, for OPEN to hand a held button to the trigger.
+    -- Left out: anything the game must see let go of itself (the triggers,
+    -- buttons acting as Shift/Ctrl/Alt, the Gamepad UI's bar-swap and
+    -- targeting modifiers, which keep state between press and release) and
+    -- stick leans (PADLSTICKUP and so on: letting the stick go would count).
+    local skip = { [GAMEPAD_TRIGGER_LEFT or "PADLTRIGGER"] = true, [GAMEPAD_TRIGGER_RIGHT or "PADRTRIGGER"] = true }
+    local getCVar = (C_CVar and C_CVar.GetCVar) or GetCVar
+    for _, m in ipairs({ "Shift", "Ctrl", "Alt" }) do
+        local ok, v = pcall(getCVar, "GamePadEmulate" .. m)
+        if ok and type(v) == "string" and v ~= "" then skip[v] = true end
+    end
+    if GetBindingKey then
+        for _, action in ipairs({ "GAMEPADLEFTMOD", "GAMEPADRIGHTMOD", "GAMEPADLEFTTARGETMODIFIER",
+                "GAMEPADRIGHTTARGETMODIFIER", "TOGGLEPINGSYSTEM" }) do
+            local got = { pcall(GetBindingKey, action, true) }
+            for j = 2, got[1] and #got or 1 do
+                if type(got[j]) == "string" then skip[got[j]:match("([^%-]+)$") or got[j]] = true end
+            end
+        end
+    end
+    local toKey = C_GamePad and C_GamePad.ButtonIndexToBinding
+    local n = 0
+    for i = 1, 64 do
+        local key
+        if toKey then
+            local ok, b = pcall(toKey, i - 1)
+            if ok and type(b) == "string" and b ~= "" and not skip[b] and not b:find("STICK%u") then key = b end
+        end
+        R.header:SetAttribute("kcr-pk" .. i, key)
+        if key then n = i end
+    end
+    R.header:SetAttribute("kcr-pkn", n)
 end
 
 -- A macro for a gamepad bar (/click <prefix>Radial), picked up on the cursor
@@ -9350,6 +9405,7 @@ function Kit:OnEvent(event, ...)
         if self.radial and not InCombatLockdown() then
             self.radial.sig = nil
             self:RadialRefresh()
+            self:RadialKeys()
         end
     elseif event == "ITEM_DATA_LOAD_RESULT" then
         -- Item info arriving (often in bursts at login): one refresh shortly after.
