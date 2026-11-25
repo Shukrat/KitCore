@@ -85,9 +85,14 @@ local addonName, ns = ...
 -- up; the button under the mouse takes the size it would be there and says
 -- where it'll go (the zone's name, a bar, on its own, back in its place),
 -- and a gold ring marks the spot it would take.
+--
+-- From v37 a kit can have profiles (cfg.profiles): named sets of the
+-- settings it lists, shared by all your characters, with a profile picked
+-- for each spec (dual spec) that comes in when you swap specs. The kit can
+-- ship built-in ones. See "Profiles".
 ---------------------------------------------------------------------------
 
-local VERSION = 35
+local VERSION = 37
 -- Builds of the same VERSION (test builds while a version is in a pull
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
@@ -323,6 +328,33 @@ do
         Loc["Press Escape to unbind."] = "按 Esc 解除绑定。"
         Loc["Not bound"] = "未绑定"
         Loc["Press a key to bind."] = "按下一个键进行绑定。"
+        Loc["Profiles"] = "配置"
+        Loc["Your specs"] = "你的专精"
+        Loc["Spec %d"] = "专精%d"
+        Loc["Profile"] = "配置"
+        Loc["Own settings"] = "自身设置"
+        Loc["your own settings"] = "你的自身设置"
+        Loc["The profile this spec uses. It comes in when you swap to the spec. Own settings are this character's, as they've always been. A profile is shared by all your characters: changes you make while it's in use are saved to it."] = "这个专精使用的配置，切换到该专精时启用。自身设置是这个角色一直以来的设置。配置由你的所有角色共用：使用期间所做的更改都会保存到其中。"
+        Loc["The profile in use"] = "使用中的配置"
+        Loc["In use now: %s"] = "当前使用：%s"
+        Loc["New profile"] = "新建配置"
+        Loc["Save as..."] = "另存为…"
+        Loc["A new profile with the settings in use now. Your current spec switches to it."] = "用当前使用的设置新建一个配置，并让你当前的专精改用它。"
+        Loc["Name for the new profile:"] = "新配置的名称："
+        Loc["Rename"] = "重命名"
+        Loc["Rename..."] = "重命名…"
+        Loc["Give the profile in use a new name (for all your characters)."] = "为使用中的配置改名（对你的所有角色生效）。"
+        Loc["New name for %s:"] = "%s的新名称："
+        Loc["Delete"] = "删除"
+        Loc["Delete the profile in use, for all your characters. Specs that used it go back to their own settings."] = "删除使用中的配置（对你的所有角色生效）。使用它的专精会恢复为自身设置。"
+        Loc["Delete %s? Every character using it goes back to its own settings."] = "删除%s？所有使用它的角色都会恢复为自身设置。"
+        Loc["Put this built-in profile back to how it came. Your changes to it are lost."] = "把这个内置配置恢复为初始状态。你对它的更改将会丢失。"
+        Loc["Put %s back to how it came? Your changes to it are lost."] = "把%s恢复为初始状态？你对它的更改将会丢失。"
+        Loc["There's already a profile called %s."] = "已经有名为%s的配置。"
+        Loc["%s: now using %s."] = "%s：现在使用%s。"
+        Loc["Profiles can only change out of combat."] = "只能在脱离战斗后更改配置。"
+        Loc["OK"] = "确定"
+        Loc["Cancel"] = "取消"
     end
 end
 
@@ -694,6 +726,11 @@ C.BASE_CHAR = {
 --   MenuAfterSettings(kit, root)  lines under "Settings" at the menu's foot
 --                 (v27), e.g. a way straight to one settings page with
 --                 kit:OpenOptions("page title")
+--   profiles      { keys = { "db.tbRows", "char.pinned", "char.picks.c1", ... },
+--                 tip = "what a profile holds", presets = { { key, name,
+--                 vals = { [key] = value } }, ... } } (v37) the settings a
+--                 profile holds ("db." the kit's, "char." this character's)
+--                 and the kit's built-in profiles. See "Profiles"
 --   Slash(kit, cmd, rest) true if it handled cmd;  helpLines { "..." }
 --   minimapIcon   texture for the minimap button
 --
@@ -4274,6 +4311,9 @@ function Kit:SettingsList(S)
     -- The kit's own pages, right after General (v24).
     if cfg.FirstSettings then cfg.FirstSettings(self, S) end
 
+    -- Profiles (v37), for a kit that has them: in the window only.
+    if cfg.profiles and window then self:ProfileSettings(S) end
+
     S.Header(Loc["Look"])
     S.Subheader(Loc["Size"])
     S.Slider(db, "scale", Loc["Whole kit"], Loc["The whole kit: the center icon, the buttons round it and the space between them."], 1, 0.6, 1.6, 0.05, pct,
@@ -6620,9 +6660,13 @@ function Kit:CollectOptions()
     -- label). opts.heads (v27): small gold words over each
     -- choice when they show as a row of buttons, like a table's column
     -- heads; rows under it with the same choices line up beneath them.
+    -- list can be a function giving the list (v37): it's asked again each
+    -- time the row paints or opens, for choices that come and go (profiles).
+    -- Such a list always shows as a menu.
     function S.Choice(name, tip, list, get, set, fn, opts)
-        Add({ kind = "dropdown", name = name, tip = tip, list = list, get = get, set = set, fn = fn,
-            heads = opts and opts.heads or nil })
+        local listFn = type(list) == "function" and list or nil
+        Add({ kind = "dropdown", name = name, tip = tip, list = listFn and listFn() or list, listFn = listFn,
+            get = get, set = set, fn = fn, heads = opts and opts.heads or nil })
     end
     -- A colour, as a row of coloured squares (v29): one per preset, the one
     -- in use marked, then a Custom... button with your own colour in its
@@ -6941,7 +6985,7 @@ function ROW.dropdown(kit, parent, item, w)
     row:SetWidth(w)
     row:EnableMouse(true)
     Tip(row, item, kit.optAnchor)
-    local segW = Segments(kit, row, item, w)
+    local segW = not item.listFn and Segments(kit, row, item, w)
     if segW then
         local h = Label(row, item, w - segW - 12)
         if item.heads then
@@ -6976,8 +7020,13 @@ function ROW.dropdown(kit, parent, item, w)
     hl:SetAllPoints()
     hl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.12)
     Tip(b, item, kit.optAnchor)
-    function row.Paint() text:SetText(OptionLabel(item, Value(item))) end
+    local function Fresh() if item.listFn then item.list = item.listFn() end end
+    function row.Paint()
+        Fresh()
+        text:SetText(OptionLabel(item, Value(item)))
+    end
     b:SetScript("OnClick", function(self)
+        Fresh()
         if MenuUtil and MenuUtil.CreateContextMenu then
             MenuUtil.CreateContextMenu(self, function(_, root)
                 for _, o in ipairs(item.list) do
@@ -8190,6 +8239,514 @@ function Kit:RunSlash(msg)
 end
 
 ---------------------------------------------------------------------------
+-- Profiles (v37)
+--
+-- A kit lists the settings a profile holds, and can ship built-in ones:
+--   cfg.profiles = {
+--     keys    = { "db.tbRows", "char.pinned", "char.picks.c1", ... },
+--     tip     = "what a profile holds", for the settings' tooltips,
+--     presets = { { key = "fireDestro", name = "Fire Destruction",
+--                   vals = { ["db.tbRows"] = { ... }, ["char.picks.c1"] = "elements" } }, ... },
+--   }
+-- "db." is in the kit's settings (shared by your characters), "char." in
+-- this character's; a table is copied whole. A preset's settings it doesn't
+-- give are the kit's defaults.
+--
+-- A profile is a named set of those settings, shared by all your characters
+-- (db.profiles[id] = { name, vals }; a built-in one, id "preset:<key>", has
+-- no name there and only once it's been used). Each character picks one for
+-- each spec (cdb.specProfile[1 or 2]), or none: "Own settings", the way the
+-- settings have always worked (the db ones shared, the char ones this
+-- character's). Without dual spec there's only spec 1.
+--
+-- The settings in use stay where the kit keeps them (db, cdb), so the kit
+-- reads them as always. cdb.profileInUse says whose they are. Switching
+-- saves them as that profile's (or, leaving Own settings, puts those aside:
+-- the db part in db.ownShared, the char part in cdb.ownVals) and fills the
+-- new one's into the same tables, so anything holding one (a settings page)
+-- sees the change. Edits made while a profile is in use are saved to it
+-- when it's switched away from and at logout.
+--
+-- At logout a character on a profile puts the shared Own settings back
+-- into db, so the saved settings are always the shared ones and any
+-- character not on a profile sees them as before. At login a character on
+-- a profile takes them aside again and fills in its profile (another
+-- character may have changed it since). A swap seen in combat waits for the
+-- end of it; a change from the settings needs you out of combat.
+---------------------------------------------------------------------------
+
+do
+    -- (Events the game may not have are registered safely: pcall.)
+    local PROFILE_EVENTS = { "ACTIVE_TALENT_GROUP_CHANGED", "PLAYER_TALENT_UPDATE", "PLAYER_LOGOUT" }
+    local PROFILE_CHECK = { PLAYER_ENTERING_WORLD = true, SPELLS_CHANGED = true,
+        ACTIVE_TALENT_GROUP_CHANGED = true, PLAYER_TALENT_UPDATE = true, PLAYER_LOGOUT = true }
+    C.PROFILE_EVENTS, C.PROFILE_CHECK = PROFILE_EVENTS, PROFILE_CHECK
+    local OWN = "own"
+    local PRESET = "preset:"
+
+    local function Num(v)
+        if type(v) == "number" and not U.Sealed(v) then return v end
+        return nil
+    end
+
+    -- The game's way of saying which spec is active (1 or 2), if it has one.
+    local function GroupAPI()
+        return GetActiveTalentGroup or (C_SpecializationInfo and C_SpecializationInfo.GetActiveSpecGroup) or nil
+    end
+    C.HasDualSpec = function() return GroupAPI() ~= nil end
+
+    -- The spec in use: 1 or 2 (1 without dual spec). nil while the game
+    -- has dual spec but can't say yet.
+    local function ActiveGroup()
+        local f = GroupAPI()
+        if not f then return 1 end
+        local ok, g = pcall(f)
+        g = ok and Num(g) or nil
+        if g and g >= 1 then return g end
+        return nil
+    end
+    C.ActiveGroup = ActiveGroup
+
+    -- Where a key lives: the table holding it, and its last part
+    -- ("db.tbRows": db, "tbRows"). make: make tables on the way that
+    -- aren't there yet.
+    local function Where(root, path, make)
+        local parts = {}
+        for p in path:gmatch("[^%.]+") do parts[#parts + 1] = p end
+        local t = root[parts[1]]
+        if type(t) ~= "table" or #parts < 2 then return nil end
+        for i = 2, #parts - 1 do
+            local nxt = t[parts[i]]
+            if type(nxt) ~= "table" then
+                if not make then return nil end
+                nxt = {}
+                t[parts[i]] = nxt
+            end
+            t = nxt
+        end
+        return t, parts[#parts]
+    end
+
+    local function Copy(v)
+        if type(v) ~= "table" then return v end
+        local c = {}
+        for k, x in pairs(v) do c[k] = Copy(x) end
+        return c
+    end
+
+    -- t[key] = v, but a table goes into the one already there, in place
+    -- (nil there empties it).
+    local function Put(t, key, v)
+        local cur = t[key]
+        if type(cur) == "table" and (v == nil or type(v) == "table") then
+            for k in pairs(cur) do cur[k] = nil end
+            for k, x in pairs(v or {}) do cur[k] = Copy(x) end
+        else
+            t[key] = Copy(v)
+        end
+    end
+
+    local function Live(kit) return { db = kit.db, char = kit.cdb } end
+
+    -- The settings in use as { [key] = { v = value } } (an entry without v:
+    -- not set). only: "db" or "char" for just that part.
+    function Kit:ProfileSnap(only)
+        local vals, live = {}, Live(self)
+        for _, path in ipairs(self.cfg.profiles.keys or {}) do
+            if not only or path:sub(1, #only + 1) == only .. "." then
+                local t, key = Where(live, path)
+                local e = {}
+                if t then e.v = Copy(t[key]) end
+                vals[path] = e
+            end
+        end
+        return vals
+    end
+
+    -- Saved settings put in use (only the keys they have).
+    function Kit:ProfileApply(vals)
+        if not vals then return end
+        local live = Live(self)
+        for _, path in ipairs(self.cfg.profiles.keys or {}) do
+            local e = vals[path]
+            if e then
+                local t, key = Where(live, path, true)
+                if t then Put(t, key, e.v) end
+            end
+        end
+    end
+
+    local function Preset(kit, id)
+        if type(id) ~= "string" or id:sub(1, #PRESET) ~= PRESET then return nil end
+        local key = id:sub(#PRESET + 1)
+        for _, p in ipairs(kit.cfg.profiles.presets or {}) do
+            if p.key == key then return p end
+        end
+        return nil
+    end
+
+    -- A built-in profile as it came: every key, the kit's default where it
+    -- gives none.
+    local function Shipped(kit, preset)
+        local defaults = {
+            db = { kit.cfg.defaults or {}, C.BASE_DEFAULTS or {} },
+            char = { kit.cfg.charDefaults or {}, C.BASE_CHAR or {} },
+        }
+        local vals = {}
+        for _, path in ipairs(kit.cfg.profiles.keys or {}) do
+            local v = preset.vals and preset.vals[path]
+            if v == nil then
+                local root = path:match("^(%a+)%.")
+                for _, d in ipairs(defaults[root] or {}) do
+                    local t, key = Where({ [root] = d }, path)
+                    if t and t[key] ~= nil then v = t[key] break end
+                end
+            end
+            vals[path] = { v = Copy(v) }
+        end
+        return vals
+    end
+
+    function Kit:ProfileExists(id)
+        if id == OWN then return true end
+        if Preset(self, id) then return true end
+        local p = self.db.profiles and self.db.profiles[id]
+        return p and p.name and true or false
+    end
+
+    function Kit:ProfileName(id, lower)
+        if id == OWN or id == nil then return lower and Loc["your own settings"] or Loc["Own settings"] end
+        local preset = Preset(self, id)
+        if preset then return preset.name end
+        local p = self.db.profiles and self.db.profiles[id]
+        return p and p.name or "?"
+    end
+
+    -- Own settings, the built-in profiles, then yours by name: { { id, name }, ... }.
+    function Kit:ProfileList()
+        local list = { { OWN, Loc["Own settings"] } }
+        for _, p in ipairs(self.cfg.profiles.presets or {}) do list[#list + 1] = { PRESET .. p.key, p.name } end
+        local mine = {}
+        for id, p in pairs(self.db.profiles or {}) do
+            if p.name then mine[#mine + 1] = { id, p.name } end
+        end
+        table.sort(mine, function(x, y) return x[2]:lower() < y[2]:lower() end)
+        for _, e in ipairs(mine) do list[#list + 1] = e end
+        return list
+    end
+
+    local function Stored(kit, id)
+        local p = kit.db.profiles and kit.db.profiles[id]
+        if p and p.vals then return p.vals end
+        local preset = Preset(kit, id)
+        return preset and Shipped(kit, preset) or nil
+    end
+
+    local function Store(kit, id, vals)
+        if id == OWN or not kit:ProfileExists(id) then return end
+        kit.db.profiles = kit.db.profiles or {}
+        local p = kit.db.profiles[id] or {}
+        p.vals = vals
+        kit.db.profiles[id] = p
+    end
+
+    -- The profile the active spec should be on.
+    function Kit:ProfileWanted(g)
+        local id = self.cdb.specProfile and self.cdb.specProfile[g]
+        if id and self:ProfileExists(id) then return id end
+        if id and self.cdb.specProfile then self.cdb.specProfile[g] = nil end -- (deleted since)
+        return OWN
+    end
+
+    local function Redraw(kit)
+        kit:Refresh(false)
+        kit:PaintOptions()
+        kit:SettingsChanged()
+    end
+
+    -- Put profile `to` in use. login: the first time this session, when the
+    -- db part in use is the shared Own settings (see logout) and the char
+    -- part is whatever was in use at logout.
+    function Kit:ProfileSwitch(to, login)
+        local db, cdb = self.db, self.cdb
+        local from = cdb.profileInUse or OWN
+        if login then
+            if to == OWN then
+                if from ~= OWN and cdb.ownVals then self:ProfileApply(cdb.ownVals) end
+            else
+                db.ownShared = self:ProfileSnap("db")
+                if from == OWN then cdb.ownVals = self:ProfileSnap("char") end
+                self:ProfileApply(Stored(self, to))
+            end
+        else
+            if from == to then return false end
+            if from == OWN then
+                db.ownShared = self:ProfileSnap("db")
+                cdb.ownVals = self:ProfileSnap("char")
+            else
+                Store(self, from, self:ProfileSnap())
+            end
+            if to == OWN then
+                self:ProfileApply(db.ownShared)
+                self:ProfileApply(cdb.ownVals)
+                db.ownShared = nil
+            else
+                self:ProfileApply(Stored(self, to))
+            end
+        end
+        cdb.profileInUse = to ~= OWN and to or nil
+        self.profileLive = true
+        return true
+    end
+
+    -- Is the active spec on the profile it should be? event: what asked
+    -- ("build" at login, before the first refresh, which follows anyway).
+    function Kit:ProfileCheck(event)
+        if not self.cfg.profiles then return end
+        local db, cdb = self.db, self.cdb
+        if event == "PLAYER_LOGOUT" then
+            local id = cdb.profileInUse
+            if self.profileLive and id then
+                Store(self, id, self:ProfileSnap())
+                if db.ownShared then
+                    self:ProfileApply(db.ownShared)
+                    db.ownShared = nil
+                end
+            end
+            return
+        end
+        local g = ActiveGroup()
+        if not g then
+            -- At login the game may not say yet: look again a little later.
+            if event == "PLAYER_ENTERING_WORLD" and not self.profileLive and C_Timer and C_Timer.After then
+                for _, t in ipairs({ 3, 10 }) do C_Timer.After(t, function() self:ProfileCheck("later") end) end
+            end
+            return
+        end
+        local want = self:ProfileWanted(g)
+        if self.profileLive and want == (cdb.profileInUse or OWN) then return end
+        if InCombatLockdown() then self.profilePending = true return end
+        self.profilePending = nil
+        local login = not self.profileLive
+        local switched = self:ProfileSwitch(want, login)
+        if login then
+            if want ~= OWN or cdb.ownVals then
+                if event ~= "build" then Redraw(self) end
+            end
+        elseif switched then
+            self:Print((Loc["%s: now using %s."]):format((Loc["Spec %d"]):format(g), self:ProfileName(want, true)))
+            Redraw(self)
+        end
+    end
+
+    -- From the settings: spec g's profile is now id.
+    function Kit:ProfileSetSpec(g, id)
+        if InCombatLockdown() then self:Print(Loc["Profiles can only change out of combat."], true) return end
+        local cdb = self.cdb
+        cdb.specProfile = cdb.specProfile or {}
+        cdb.specProfile[g] = (id ~= OWN) and id or nil
+        if g == ActiveGroup() and self.profileLive then
+            if self:ProfileSwitch(self:ProfileWanted(g)) then Redraw(self) end
+        end
+    end
+
+    -- The small box that asks for a name, or to confirm (in the kits' panel look).
+    local function Ask(title, start, onOK)
+        local f = C.askBox
+        if not f then
+            f = OptPanel("Frame", "KitCoreAskBox", UIParent)
+            f:SetSize(320, 112)
+            f:SetPoint("CENTER", 0, 140)
+            f:SetFrameStrata("DIALOG")
+            f:SetToplevel(true)
+            f:EnableMouse(true)
+            f:Hide()
+            f.title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            f.title:SetPoint("TOPLEFT", 16, -16)
+            f.title:SetWidth(288)
+            f.title:SetJustifyH("LEFT")
+            local eb = CreateFrame("EditBox", nil, f)
+            eb:SetSize(288, 24)
+            eb:SetPoint("TOPLEFT", f.title, "BOTTOMLEFT", 0, -10)
+            eb:SetAutoFocus(false)
+            eb:SetFontObject("GameFontHighlight")
+            eb:SetTextInsets(8, 8, 0, 0)
+            eb:SetMaxLetters(32)
+            Well(eb, 0.6)
+            f.edit = eb
+            local ok = GoldButton(f, OKAY or Loc["OK"])
+            ok:SetPoint("BOTTOMRIGHT", -16, 14)
+            local cancel = GoldButton(f, CANCEL or Loc["Cancel"])
+            cancel:SetPoint("RIGHT", ok, "LEFT", -8, 0)
+            local function Done()
+                local fn, asking = f.onOK, f.edit:IsShown()
+                local text = asking and (f.edit:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", "") or true
+                f:Hide()
+                if fn and text ~= "" then
+                    local okC, err = pcall(fn, text)
+                    if not okC then geterrorhandler()(err) end
+                end
+            end
+            ok:SetScript("OnClick", Done)
+            cancel:SetScript("OnClick", function() f:Hide() end)
+            eb:SetScript("OnEnterPressed", Done)
+            eb:SetScript("OnEscapePressed", function() f:Hide() end)
+            f:SetScript("OnHide", function() f.onOK = nil eb:ClearFocus() end)
+            if UISpecialFrames then table.insert(UISpecialFrames, "KitCoreAskBox") end -- (Esc closes it)
+            C.askBox = f
+        end
+        f.title:SetText(title)
+        f.onOK = onOK
+        local th = math.ceil(f.title:GetStringHeight())
+        if start then
+            f.edit:Show()
+            f.edit:SetText(start)
+            f:SetHeight(th + 92)
+        else
+            f.edit:Hide()
+            f:SetHeight(th + 64)
+        end
+        f:Show()
+        f:Raise()
+        if start then
+            f.edit:SetFocus()
+            f.edit:HighlightText()
+        end
+    end
+
+    local function NameTaken(kit, name, except)
+        for id, p in pairs(kit.db.profiles or {}) do
+            if id ~= except and p.name and p.name:lower() == name:lower() then return true end
+        end
+        for _, p in ipairs(kit.cfg.profiles.presets or {}) do
+            if p.name:lower() == name:lower() then return true end
+        end
+        return false
+    end
+
+    -- New: a profile of the settings in use, and the spec you're in on it.
+    function Kit:ProfileNew(name)
+        if InCombatLockdown() then self:Print(Loc["Profiles can only change out of combat."], true) return end
+        if NameTaken(self, name) then self:Print((Loc["There's already a profile called %s."]):format(name), true) return end
+        local db = self.db
+        db.profiles = db.profiles or {}
+        db.profileNext = (db.profileNext or 0) + 1
+        local id = "p" .. db.profileNext
+        while db.profiles[id] do
+            db.profileNext = db.profileNext + 1
+            id = "p" .. db.profileNext
+        end
+        db.profiles[id] = { name = name, vals = self:ProfileSnap() }
+        self:ProfileSetSpec(ActiveGroup() or 1, id)
+        self:PaintOptions()
+    end
+
+    function Kit:ProfileRename(id, name)
+        local p = self.db.profiles and self.db.profiles[id]
+        if not (p and p.name) then return end
+        if NameTaken(self, name, id) then self:Print((Loc["There's already a profile called %s."]):format(name), true) return end
+        p.name = name
+        self:PaintOptions()
+    end
+
+    -- Delete one of yours. Any spec on it (this character's now; the others'
+    -- at their next login) goes back to own settings.
+    function Kit:ProfileDelete(id)
+        if InCombatLockdown() then self:Print(Loc["Profiles can only change out of combat."], true) return end
+        if not (self.db.profiles and self.db.profiles[id] and self.db.profiles[id].name) then return end
+        self.db.profiles[id] = nil
+        local sp = self.cdb.specProfile
+        if sp then
+            for g, v in pairs(sp) do if v == id then sp[g] = nil end end
+        end
+        if self.cdb.profileInUse == id then
+            -- (nothing to save it to now: Own settings come back)
+            self:ProfileApply(self.db.ownShared)
+            self:ProfileApply(self.cdb.ownVals)
+            self.db.ownShared, self.cdb.profileInUse = nil, nil
+        end
+        local g = ActiveGroup()
+        if g and self.profileLive and self:ProfileWanted(g) ~= (self.cdb.profileInUse or OWN) then
+            self:ProfileSwitch(self:ProfileWanted(g))
+        end
+        Redraw(self)
+    end
+
+    -- A built-in profile back to how it came.
+    function Kit:ProfileReset(id)
+        if InCombatLockdown() then self:Print(Loc["Profiles can only change out of combat."], true) return end
+        local preset = Preset(self, id)
+        if not preset then return end
+        if self.db.profiles then self.db.profiles[id] = nil end
+        if self.cdb.profileInUse == id then
+            self:ProfileApply(Shipped(self, preset))
+            Redraw(self)
+        end
+    end
+
+    -- The Profiles page of the settings window.
+    function Kit:ProfileSettings(S)
+        local cfg = self.cfg
+        local tip = (cfg.profiles.tip and (cfg.profiles.tip .. " ") or "")
+            .. Loc["The profile this spec uses. It comes in when you swap to the spec. Own settings are this character's, as they've always been. A profile is shared by all your characters: changes you make while it's in use are saved to it."]
+        local list = function() return self:ProfileList() end
+        local function InUse() return self.cdb.profileInUse or OWN end
+        local function Mine() local id = InUse() return id ~= OWN and not Preset(self, id) end
+        local function Built() return Preset(self, InUse()) ~= nil end
+
+        S.Header(Loc["Profiles"])
+        S.Subheader(Loc["Your specs"])
+        local dual = C.HasDualSpec()
+        for g = 1, dual and 2 or 1 do
+            S.Choice(dual and (Loc["Spec %d"]):format(g) or Loc["Profile"], tip, list,
+                function()
+                    local id = self.cdb.specProfile and self.cdb.specProfile[g]
+                    return (id and self:ProfileExists(id)) and id or OWN
+                end,
+                function(id) self:ProfileSetSpec(g, id) end)
+        end
+
+        S.Subheader(Loc["The profile in use"])
+        S.Custom(Loc["The profile in use"], "", function(parent, w)
+            local f = CreateFrame("Frame", nil, parent)
+            f:SetSize(w, 22)
+            local fs = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+            fs:SetPoint("LEFT")
+            fs:SetWidth(w)
+            fs:SetJustifyH("LEFT")
+            function f.Paint() fs:SetText((Loc["In use now: %s"]):format(self:ProfileName(InUse()))) end
+            f.Paint()
+            return f
+        end)
+        S.Button(Loc["New profile"], Loc["Save as..."], Loc["A new profile with the settings in use now. Your current spec switches to it."],
+            function()
+                Ask(Loc["Name for the new profile:"], "", function(name) self:ProfileNew(name) end)
+            end)
+        S.Only(Mine)
+        S.Button(Loc["Rename"], Loc["Rename..."], Loc["Give the profile in use a new name (for all your characters)."],
+            function()
+                local id = InUse()
+                Ask((Loc["New name for %s:"]):format(self:ProfileName(id)), self:ProfileName(id),
+                    function(name) self:ProfileRename(id, name) end)
+            end)
+        S.Only(Mine)
+        S.Button(Loc["Delete"], Loc["Delete"], Loc["Delete the profile in use, for all your characters. Specs that used it go back to their own settings."],
+            function()
+                local id = InUse()
+                Ask((Loc["Delete %s? Every character using it goes back to its own settings."]):format(self:ProfileName(id)), nil,
+                    function() self:ProfileDelete(id) end)
+            end)
+        S.Only(Built)
+        S.Button(Loc["Reset"], Loc["Reset"], Loc["Put this built-in profile back to how it came. Your changes to it are lost."],
+            function()
+                local id = InUse()
+                Ask((Loc["Put %s back to how it came? Your changes to it are lost."]):format(self:ProfileName(id)), nil,
+                    function() self:ProfileReset(id) end)
+            end)
+    end
+end
+
+---------------------------------------------------------------------------
 -- Events
 ---------------------------------------------------------------------------
 
@@ -8225,6 +8782,12 @@ function Kit:OnEvent(event, ...)
         return self:Build()
     end
     if not self.built then return end
+
+    -- Profiles (v37): first, so the kit's own handlers and the refresh
+    -- below see the right settings.
+    if cfg.profiles and (C.PROFILE_CHECK[event] or (event == "PLAYER_REGEN_ENABLED" and self.profilePending)) then
+        self:ProfileCheck(event)
+    end
 
     local h = cfg.events and cfg.events[event]
     if h then h(self, ...) end
@@ -8602,6 +9165,9 @@ function Kit:Build()
 
     for _, e in ipairs(BASE_EVENTS) do pcall(self.events.RegisterEvent, self.events, e) end
     for e in pairs(cfg.events or {}) do pcall(self.events.RegisterEvent, self.events, e) end
+    if cfg.profiles then
+        for _, e in ipairs(C.PROFILE_EVENTS) do pcall(self.events.RegisterEvent, self.events, e) end
+    end
     for e, u in pairs(cfg.unitEvents or {}) do
         pcall(self.events.RegisterUnitEvent, self.events, e, unpack(u.units))
     end
@@ -8623,5 +9189,7 @@ function Kit:Build()
             cfg.Tick(self)
         end)
     end
+    -- This character's profile for its spec, before the first refresh.
+    if cfg.profiles then self:ProfileCheck("build") end
     self:Refresh(false)
 end
