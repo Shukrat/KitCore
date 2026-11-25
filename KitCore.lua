@@ -348,7 +348,7 @@ do
         Loc["Opening it"] = "打开方式"
         Loc["Gamepad bar"] = "手柄动作条"
         Loc["Make macro"] = "创建宏"
-        Loc["Puts a macro on your cursor that brings the ring up: drop it on a gamepad bar slot. Press it to bring the ring up, press again (or A) to use."] = "在光标上放一个打开环形菜单的宏：把它放到手柄动作条的栏位上。按一下打开环形菜单，再按一下（或 A）使用。"
+        Loc["Puts a macro on your cursor that brings the ring up: drop it on a gamepad bar slot. Hold its button, tilt the stick at a button and let go; or tap it and use A."] = "在光标上放一个打开环形菜单的宏：把它放到手柄动作条的栏位上。按住它的按键，把摇杆推向一个按钮再松开；或者轻按一下，再用 A 使用。"
         Loc["Key binding"] = "按键绑定"
         Loc["Bind a button to bring the ring up: hold it, tilt, let go. Under %s in the key bindings."] = "绑定一个打开环形菜单的按钮：按住、推动摇杆、松开。在按键绑定的 %s 下。"
         Loc["Picking"] = "选择"
@@ -4399,7 +4399,7 @@ function Kit:SettingsList(S)
         local on = function() return rc.on ~= false end
         S.Subheader(Loc["Opening it"], on)
         S.Button(Loc["Gamepad bar"], Loc["Make macro"],
-            Loc["Puts a macro on your cursor that brings the ring up: drop it on a gamepad bar slot. Press it to bring the ring up, press again (or A) to use."],
+            Loc["Puts a macro on your cursor that brings the ring up: drop it on a gamepad bar slot. Hold its button, tilt the stick at a button and let go; or tap it and use A."],
             function() self:RadialMacro() end)
         S.Button(Loc["Key binding"], Loc["Open"],
             (Loc["Bind a button to bring the ring up: hold it, tilt, let go. Under %s in the key bindings."]):format(self.name),
@@ -8391,15 +8391,23 @@ RADIAL.OPEN = [[
     -- whatever the key is bound to by then). Any modifier mix, so letting go
     -- of a trigger first doesn't matter. kcr-pk<i> is pad button i's key
     -- (modifiers and stick leans left out), set out of combat.
+    -- No table literals or the keyword for making closures in a snippet, not
+    -- even in a comment: the game refuses to compile it (BuildRestrictedClosure).
     local taken = "|"
     local st = GetGamePadState()
     local pressed, trig = st and st.buttons, self:GetAttribute("kcr-btn-trigger")
     if pressed and trig then
-        local mods = { "", "SHIFT-", "CTRL-", "CTRL-SHIFT-", "ALT-", "ALT-SHIFT-", "ALT-CTRL-", "ALT-CTRL-SHIFT-" }
         for i = 1, (self:GetAttribute("kcr-pkn") or 0) do
             local key = pressed[i] and self:GetAttribute("kcr-pk" .. i)
             if key then
-                for m = 1, #mods do self:SetBindingClick(true, mods[m] .. key, trig, "LeftButton") end
+                self:SetBindingClick(true, key, trig, "LeftButton")
+                self:SetBindingClick(true, "SHIFT-" .. key, trig, "LeftButton")
+                self:SetBindingClick(true, "CTRL-" .. key, trig, "LeftButton")
+                self:SetBindingClick(true, "CTRL-SHIFT-" .. key, trig, "LeftButton")
+                self:SetBindingClick(true, "ALT-" .. key, trig, "LeftButton")
+                self:SetBindingClick(true, "ALT-SHIFT-" .. key, trig, "LeftButton")
+                self:SetBindingClick(true, "ALT-CTRL-" .. key, trig, "LeftButton")
+                self:SetBindingClick(true, "ALT-CTRL-SHIFT-" .. key, trig, "LeftButton")
                 taken = taken .. key .. "|"
                 self:SetAttribute("kcr-held", true)
             end
@@ -8407,13 +8415,13 @@ RADIAL.OPEN = [[
     end
     local t1, t2 = self:GetAttribute("kcr-trig1"), self:GetAttribute("kcr-trig2")
     local k = self:GetAttribute("kcr-key-use")
-    if k and k ~= t1 and k ~= t2 and not taken:find("|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-use"), "LeftButton") end
+    if k and k ~= t1 and k ~= t2 and not strfind(taken, "|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-use"), "LeftButton") end
     k = self:GetAttribute("kcr-key-back")
-    if k and k ~= t1 and k ~= t2 and not taken:find("|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-back"), "LeftButton") end
+    if k and k ~= t1 and k ~= t2 and not strfind(taken, "|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-back"), "LeftButton") end
     k = self:GetAttribute("kcr-key-open")
-    if k and k ~= t1 and k ~= t2 and not taken:find("|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-open"), "LeftButton") end
+    if k and k ~= t1 and k ~= t2 and not strfind(taken, "|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-open"), "LeftButton") end
     k = self:GetAttribute("kcr-key-alt")
-    if k and k ~= t1 and k ~= t2 and not taken:find("|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-alt"), "LeftButton") end
+    if k and k ~= t1 and k ~= t2 and not strfind(taken, "|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-alt"), "LeftButton") end
     return true
 ]]
 
