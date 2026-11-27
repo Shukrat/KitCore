@@ -8593,6 +8593,7 @@ RADIAL.CLOSE = [[
     self:ClearBindings()
     self:SetAttribute("kcr-isopen", false)
     self:SetAttribute("kcr-held", false)
+    self:SetAttribute("kcr-opener", nil)
     CUR, ROT = nil, 0
     local d = self:GetFrameRef("kcr-display")
     d:SetAttribute("kcr-cur", nil)
@@ -8696,6 +8697,43 @@ RADIAL.Y = [[
     self:SetAttribute("type", "macro")
     self:SetAttribute("macrotext", m)
     owner:RunAttribute("kcr-close")
+]]
+
+-- Gamepad bar buttons. The game sends a button's release to whatever took
+-- its press, and the gamepad bar clicks the same bar button again on
+-- release (GamepadMainActionBarFrame:PressActionButton keeps the owner), so
+-- letting go of the bar slot whose macro opened the ring reaches that bar
+-- button, never the ring. Each bar button's clicks are wrapped (out of
+-- combat; Kit:RadialWrapBars): the press notes whether it opened the ring,
+-- and that button's release uses what the stick points at, through the bar
+-- button's own release action (pressAndHoldAction + typerelease, which
+-- SecureActionButton runs on a release), put back straight after. Let go
+-- with the stick centred (or on a drawer), the ring stays up as after a tap.
+-- self is the bar button, owner the ring's header.
+RADIAL.BARPRE = [[
+    if down then
+        if owner:GetAttribute("kcr-isopen") then return nil, "was" end
+        return nil, "wasnt"
+    end
+    if not owner:GetAttribute("kcr-isopen") or owner:GetAttribute("kcr-opener") ~= self then return end
+    owner:SetAttribute("kcr-opener", nil)
+    owner:SetAttribute("kcr-held", false)
+    local what, t = owner:RunAttribute("kcr-use")
+    if what ~= "use" then return end
+    self:SetAttribute("pressAndHoldAction", true)
+    self:SetAttribute("typerelease", "macro")
+    self:SetAttribute("macrotext", "/click " .. t)
+    owner:RunAttribute("kcr-close")
+    return nil, "used"
+]]
+RADIAL.BARPOST = [[
+    if message == "wasnt" then
+        if owner:GetAttribute("kcr-isopen") then owner:SetAttribute("kcr-opener", self) end
+    elseif message == "used" then
+        self:SetAttribute("pressAndHoldAction", nil)
+        self:SetAttribute("typerelease", nil)
+        self:SetAttribute("macrotext", nil)
+    end
 ]]
 
 -- The stick a kit reads: its index in the game's mapped state, found by the
@@ -8820,7 +8858,22 @@ local function RadialArt(kit, it)
     local b = it.btn
     if it.special then return nil end
     if it.choice then return Val(it.choice.icon), Val(it.choice.dim) end
-    if b and b.icon then return b.icon:GetTexture(), b.greyed end
+    if not b then return nil end
+    -- A slot that's hidden with the kit closed (the small ones) isn't
+    -- painted by PaintAll, so it may have no icon yet: paint it now.
+    if not (b:IsShown() or (b.twin and b.twin:IsShown())) then pcall(kit.PaintSlot, kit, b) end
+    local tex = b.icon and b.icon:GetTexture()
+    if not tex then
+        -- (still none: what the button casts or uses)
+        local sp = U.ButtonSpell(b)
+        tex = sp and U.SpellIcon(sp)
+        if not tex then
+            local item = b:GetAttribute("item")
+            local id = item and tonumber(tostring(item):match("item:(%d+)") or item)
+            tex = id and U.ItemIcon(id)
+        end
+    end
+    return tex, b.greyed
 end
 
 -- A button's name for the middle of the ring: what it casts or uses, else its label.
@@ -8891,6 +8944,7 @@ end
 function Kit:RadialRefresh()
     local R = self.radial
     if not R or InCombatLockdown() or self.trial then return end
+    self:RadialWrapBars()
     local rc = self:RadialCfg()
     local on = rc.on ~= false and self.db.shown ~= false
     local function Usable(key)
@@ -9128,9 +9182,12 @@ function Kit:RadialDebugState(what)
             end
         end
     end
-    self:RadialDebug(("%s. pad state: %s; held now: %s; held flag: %s; keys mapped: %s"):format(what,
+    local wrapped = 0
+    for _ in pairs(R.barWrapped or {}) do wrapped = wrapped + 1 end
+    self:RadialDebug(("%s. pad state: %s; held now: %s; held flag: %s; keys mapped: %s; bar buttons wrapped: %d; opened by a bar button: %s"):format(what,
         st and "yes" or "NONE", #held > 0 and table.concat(held, " | ") or "none",
-        tostring(h:GetAttribute("kcr-held")), tostring(h:GetAttribute("kcr-pkn"))))
+        tostring(h:GetAttribute("kcr-held")), tostring(h:GetAttribute("kcr-pkn")), wrapped,
+        h:GetAttribute("kcr-opener") and "yes" or "no"))
 end
 
 function Kit:RadialDebugToggle()
@@ -9520,6 +9577,28 @@ function Kit:RadialTick(elapsed)
 end
 
 -- The keys bound to bring the ring up (out of combat, as bindings change).
+-- Wraps the gamepad bar's buttons (RADIAL.BARPRE/BARPOST), once each, out
+-- of combat. The bars come with the Gamepad UI, which may load after the
+-- kit, so this runs again on every refresh until they're there.
+function Kit:RadialWrapBars()
+    local R = self.radial
+    if not R or InCombatLockdown() then return end
+    local unit = _G.GamepadMainActionBarFrame and _G.GamepadMainActionBarFrame.PageUnit
+    if not (unit and type(unit.actionBars) == "table" and SecureHandlerWrapScript) then return end
+    R.barWrapped = R.barWrapped or {}
+    for _, bar in pairs(unit.actionBars) do
+        if type(bar) == "table" and type(bar.actionButtons) == "table" then
+            for _, b in pairs(bar.actionButtons) do
+                if type(b) == "table" and not R.barWrapped[b] and b.IsProtected and b:IsProtected() then
+                    if pcall(SecureHandlerWrapScript, b, "OnClick", R.header, RADIAL.BARPRE, RADIAL.BARPOST) then
+                        R.barWrapped[b] = true
+                    end
+                end
+            end
+        end
+    end
+end
+
 function Kit:RadialKeys()
     local R = self.radial
     if not R or InCombatLockdown() then return end
