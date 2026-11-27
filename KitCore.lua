@@ -27,7 +27,9 @@ local addonName, ns = ...
 -- every refresh works out both layouts, open and closed, and hands each slot
 -- where it goes and whether it shows in each. A click on the button in combat
 -- runs a secure snippet that switches the slots between the two. Kits on the
--- pin with other kits still open and close out of combat only.
+-- pin with other kits open in combat from v8 (in their slice), and kits in a
+-- tuck box from v40; a kit open on the pin (taking it) closes out of combat
+-- only.
 --
 -- From v6 the kit can be dragged in combat too (same kits): a faint copy of
 -- the button (not secure) follows the mouse, and where you let go, a secure
@@ -95,14 +97,19 @@ local addonName, ns = ...
 -- mode go together: Move everything also puts the kit it's pressed from
 -- into edit mode, edit mode's bar is the one bar while both run, and its
 -- Done (or Esc) ends both.
+--
+-- From v40 a kit in a Kit Dock tuck box opens and closes in combat too (with
+-- Kit Dock v29), where it sits in the box: while it's open the other kits in
+-- the box put their buttons away, and they come back as it closes. See "In
+-- a tuck box, in combat".
 ---------------------------------------------------------------------------
 
-local VERSION = 38
+local VERSION = 40
 -- Builds of the same VERSION (test builds while a version is in a pull
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
 -- each change while VERSION stays put; back to 0 with a new VERSION.
-local BUILD = 1
+local BUILD = 0
 local C = _G.KitCore
 if C and ((C.version or 0) > VERSION or ((C.version or 0) == VERSION and (C.build or 0) >= BUILD)) then
     ns.Core = C
@@ -1217,9 +1224,13 @@ end
 -- closed one; see PushSnapshot), and close the flyouts, which belong to the
 -- layout being left. Out of combat this does nothing: the click opens the
 -- kit the usual way (animated, with the dock told). "kcready" is 0 when
--- this kit has no layouts to switch to (the kit open on the pin, or parked
--- in Kit Dock's box). A kit shrunk on the pin opens in its own slice there,
--- its slots fanned out in rings of 4 (from v8). Whether
+-- this kit has no layouts to switch to (the kit open on the pin). A kit
+-- shrunk on the pin opens in its own slice there, its slots fanned out in
+-- rings of 4 (from v8). A kit in a Kit Dock tuck box (from v40) opens where
+-- it sits in the box, and the other kits in the box put their buttons away
+-- while it's open and bring them back as it closes (BOX_QUIET, BOX_BACK, run
+-- on each of their headers; "kcboxn" and the "kcbox<i>" refs on the kit
+-- button name them, see PushBoxInfo). Whether
 -- it's combat comes from a state driver on the button itself ("kcincombat",
 -- registered in BuildKit), which the game keeps right however early or late
 -- combat's events arrive.
@@ -1236,6 +1247,44 @@ local TOGGLE_BODY = [[
         elseif b:GetAttribute("kc" .. want .. "show") == 1 then
             b:ClearAllPoints()
             b:SetPoint("CENTER", kit, "CENTER", b:GetAttribute("kc" .. want .. "x") or 0, b:GetAttribute("kc" .. want .. "y") or 0)
+            b:Show()
+        else
+            b:Hide()
+        end
+    end
+    for i = 1, kit:GetAttribute("kcboxn") or 0 do
+        local mate = kit:GetFrameRef("kcbox" .. i)
+        if mate then
+            if want == "o" then mate:RunAttribute("kcboxquiet") else mate:RunAttribute("kcboxback") end
+        end
+    end
+]]
+-- Another kit in the same tuck box opened in combat: this kit closes (if it
+-- was open) and puts its buttons away. Runs on this kit's header (self), so
+-- SLOTS are its own. A kit with no layouts ready is left as it is.
+local BOX_QUIET = [[
+    local kit = self:GetFrameRef("kcbtn")
+    if not kit or kit:GetAttribute("kcready") ~= 1 then return end
+    kit:SetAttribute("kcisopen", 0)
+    for i = 1, NFLY do FLYOUTS[i]:Hide() end
+    for i = 1, NSLOT do
+        local b = SLOTS[i]
+        if b:GetAttribute("kcbar") ~= 1 then b:Hide() end
+    end
+]]
+-- ... and it closed again: this kit's buttons come back as it shows them
+-- closed in the box (kcc*, its spots in the box's row).
+local BOX_BACK = [[
+    local kit = self:GetFrameRef("kcbtn")
+    if not kit or kit:GetAttribute("kcready") ~= 1 then return end
+    if kit:GetAttribute("kcisopen") == 1 then return end
+    for i = 1, NSLOT do
+        local b = SLOTS[i]
+        if b:GetAttribute("kcbar") == 1 then
+            -- (on a bar: it stays where it is)
+        elseif b:GetAttribute("kccshow") == 1 then
+            b:ClearAllPoints()
+            b:SetPoint("CENTER", kit, "CENTER", b:GetAttribute("kccx") or 0, b:GetAttribute("kccy") or 0)
             b:Show()
         else
             b:Hide()
@@ -1506,6 +1555,7 @@ function Kit:BuildKit()
         else
             Try(RegisterStateDriver, kit, "kcincombat", "[combat] yes; no")
             header:SetFrameRef("kcholder", holder)
+            self:BoxSnippets()
             -- The grip (see GRIP_CLICK): over the kit button in combat, below
             -- the buttons a kit puts on it (those sit 6 or more levels up).
             local okg, grip = pcall(CreateFrame, "Button", P .. "Grip", kit, "SecureActionButtonTemplate")
@@ -3244,15 +3294,18 @@ end
 -- Can the kit button open and close this kit in combat? Shrunk on the pin
 -- with other kits: yes, in place, every slot fanned out in its slice away
 -- from the pin (nothing else moves; out of combat it takes the pin as
--- usual once combat ends). Parked in Kit Dock's box: no, its fan points off
--- the screen. Open on the pin (taking it, the others tucked): no, closing
--- would leave the others tucked.
+-- usual once combat ends). Parked in a Kit Dock box: yes (from v40), where
+-- it sits, with the box's other kits putting their buttons away while it's
+-- open (see "In a tuck box, in combat"). Open on the pin (taking it, the
+-- others tucked): no, closing would leave the others tucked.
 function Kit:CanSecureToggle()
     if self.noSecureToggle then return false end
     local D = self.Dock
-    -- In a Kit Dock box: no (it stays closed in combat, and it only steps out
-    -- of the box out of combat).
-    if self.parked or (D and D.IsParked and D.IsParked(self.key)) then return false end
+    -- In a Kit Dock box: it opens where it sits (from v40), with a Kit Dock
+    -- that keeps each kit's spots in the box's row (v29, D.BoxSpots).
+    if self.parked or (D and D.IsParked and D.IsParked(self.key)) then
+        return (D and D.BoxSpots and D.BoxMates) and true or false
+    end
     if self.compactAngle then
         return not (D and D.IsParked and D.IsParked(self.key)) and true or false
     end
@@ -3263,7 +3316,103 @@ end
 -- Can the kit be dragged in combat? The same kits as open there, while it
 -- isn't pinned in place.
 function Kit:CanSecureMove()
+    if self.parked or self:InBox() then return false end -- (in a box: it opens there, but stays in it)
     return not self.noSecureMove and not self.db.locked and (self:CanSecureToggle() or self:OnProtectedPin()) and true or false
+end
+
+---------------------------------------------------------------------------
+-- In a tuck box, in combat (from v40)
+--
+-- A kit in a Kit Dock box opens and closes in combat where it sits, like a
+-- kit on a screen edge: its open layout is the trial one, and its closed one
+-- is its spots in the box's row, as Kit Dock last laid the row out with no
+-- kit in the box open (D.BoxSpots). Opening it puts the other kits' buttons
+-- in the box away, and closing it brings them back to their spots in the
+-- row (BOX_QUIET and BOX_BACK, on their headers, run from TOGGLE_BODY). One
+-- kit from the box is open at a time, as out of combat: opening another
+-- closes it. The box itself can't slide out in a fight, so it stays as it
+-- was (tucked half off the screen, or out). After combat the dock lays the
+-- box out as it would have for the kit opening or closing.
+---------------------------------------------------------------------------
+
+function Kit:InBox()
+    local D = self.Dock
+    return (self.parked and D and D.IsParked and D.IsParked(self.key)) and true or false
+end
+
+-- The other kits (Kit Core kits, built) in this kit's box.
+function Kit:BoxMates()
+    local D = self.Dock
+    local list = {}
+    if not (self:InBox() and D.BoxMates) then return list end
+    for _, k in ipairs(D.BoxMates(self.key) or {}) do
+        for _, o in ipairs(C.kits or {}) do
+            if o.key == k and o ~= self and o.built and o.header and o.kit then list[#list + 1] = o end
+        end
+    end
+    return list
+end
+
+-- The closed layout in the box: the slots in the box's row, at their spots
+-- there (kit-relative, as Kit Dock puts them). nil without the dock's record.
+function Kit:BoxSnap()
+    local D = self.Dock
+    local spots = D and D.BoxSpots and D.BoxSpots(self.key)
+    if not spots then return nil end
+    local snap = { vis = {}, pos = {}, div = false, rowOut = false }
+    for _, slot in ipairs(self.cfg.slots) do
+        local btn = self.slots[slot.key]
+        local p = btn and spots[btn]
+        if btn then
+            snap.vis[btn] = (p and not btn.kcBar) and true or false
+            if snap.vis[btn] then snap.pos[btn] = { p[1], p[2] } end
+        end
+    end
+    return snap
+end
+
+-- The header's snippets the other kits in a box run on it (BOX_QUIET and
+-- BOX_BACK), and its kit button for them. Out of combat.
+function Kit:BoxSnippets()
+    local h = self.header
+    if not h or InCombatLockdown() then return end
+    if h:GetAttribute("kcboxquiet") ~= BOX_QUIET then h:SetAttribute("kcboxquiet", BOX_QUIET) end
+    if h:GetAttribute("kcboxback") ~= BOX_BACK then h:SetAttribute("kcboxback", BOX_BACK) end
+    h:SetFrameRef("kcbtn", self.kit)
+end
+
+-- Name the other kits in the box (their headers) on the kit button, for
+-- TOGGLE_BODY. Out of combat; none outside a box.
+function Kit:PushBoxInfo()
+    if InCombatLockdown() or self.noSecureToggle then return end
+    local kit = self.kit
+    local mates = {}
+    if self:InBox() and self:CanSecureToggle() then mates = self:BoxMates() end
+    for i, o in ipairs(mates) do
+        o:BoxSnippets() -- (a kit built by an older copy has none yet)
+        SecureHandlerSetFrameRef(kit, "kcbox" .. i, o.header)
+    end
+    kit:SetAttribute("kcboxn", #mates)
+end
+
+-- After a kit in a box opened or closed in combat: the other kits in the
+-- box catch up with what the secure code did to them (closed, and quiet
+-- while this one is open), and Kit Dock with the box.
+function Kit:CombatBoxSync()
+    if not self:InBox() then return end
+    local mates = self:BoxMates()
+    for _, o in ipairs(mates) do o:CombatToggled(true) end
+    local D = self.Dock
+    if D.CombatBox then
+        local ok, err = pcall(D.CombatBox, self.key)
+        if not ok then
+            local h = geterrorhandler and geterrorhandler()
+            if h then h(err) end
+        end
+    else
+        for _, o in ipairs(mates) do o.quiet = self.open or nil end
+    end
+    for _, o in ipairs(mates) do o:PaintAll() end
 end
 
 -- On Kit Dock's pin with other kits, and the pin is a protected frame (Kit
@@ -3529,7 +3678,12 @@ end
 -- snippet to use in combat (KIT_PRE). Out of combat only.
 function Kit:PushSnapshot()
     local kit = self.kit
-    local ready = self:CanSecureToggle() and self.snap[true] and self.snap[false] and true or false
+    local canToggle = self:CanSecureToggle()
+    if canToggle and self:InBox() then
+        -- (in a box, closed is its spots in the box's row; see BoxSnap)
+        self.snap[false] = self:BoxSnap()
+    end
+    local ready = canToggle and self.snap[true] and self.snap[false] and true or false
     for _, slot in ipairs(self.cfg.slots) do
         local btn = self.slots[slot.key]
         btn:SetAttribute("kcbar", btn.kcBar and 1 or 0) -- (on a bar: the combat switch leaves it be)
@@ -3544,6 +3698,7 @@ function Kit:PushSnapshot()
     kit:SetAttribute("kcisopen", self.open and 1 or 0)
     kit:SetAttribute("kcready", ready and 1 or 0)
     self:PushMoveInfo()
+    self:PushBoxInfo()
 end
 
 function Kit:Refresh(animate)
@@ -3683,14 +3838,16 @@ end
 -- already switched the slots, if it could, and said so in "kcisopen". This
 -- catches up what a snippet can't reach: where the kit thinks everything is,
 -- the divider, the fade, the paint, and the kit's own extras. Anything moved
--- is tidied by the refresh when combat ends.
-function Kit:CombatToggled()
+-- is tidied by the refresh when combat ends. mate: another kit in the same
+-- box was clicked (see CombatBoxSync); this one only catches up, if the
+-- secure code closed it, and says nothing.
+function Kit:CombatToggled(mate)
     local kit = self.kit
     self.snap = self.snap or {}
     local now = kit:GetAttribute("kcisopen") == 1
     local s = self.snap[now]
     if kit:GetAttribute("kcready") ~= 1 or now == self.open or not s then
-        self:Print(Loc["That can only change out of combat."])
+        if not mate then self:Print(Loc["That can only change out of combat."]) end
         return
     end
     self.open = now
@@ -3717,6 +3874,7 @@ function Kit:CombatToggled()
     self:ApplyFade()
     self:PaintAll()
     if self.cfg.OnCombatToggle then self.cfg.OnCombatToggle(self, now) end
+    if not mate then self:CombatBoxSync() end
 end
 
 function Kit:TogglePin(key)
@@ -8443,7 +8601,9 @@ function Kit:OnEvent(event, ...)
                 if self.kit.fadeAG then self.kit.fadeAG:Stop() end
                 self.kit:Hide()
             end
-            self:PushMoveInfo() -- (the button's scale, as it is now)
+            -- (in a box: its spots in the box's row as they are now, which
+            -- another kit's refresh may have moved since this one's)
+            if self:InBox() then self:PushSnapshot() else self:PushMoveInfo() end -- (the button's scale, as it is now)
             if self.grip then self.grip:SetShown(self:CanSecureToggle() or self:CanSecureMove()) end -- (see GRIP_CLICK)
             local delay = tonumber(self.db.flyoutHide) or 0.5
             delay = math.min(2, math.max(0.2, delay))
@@ -8490,7 +8650,7 @@ function Kit:OnEvent(event, ...)
                     if D and D.Opening and D.Closed then
                         if self.open then D.Opening(self.key) else D.Closed(self.key) end
                     end
-                    self:KeepOnScreen()
+                    if not self:InBox() then self:KeepOnScreen() end -- (in a box: the dock places it)
                 end
             end
             if C_Timer and C_Timer.After then C_Timer.After(0, After) else After() end
