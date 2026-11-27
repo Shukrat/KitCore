@@ -85,14 +85,24 @@ local addonName, ns = ...
 -- up; the button under the mouse takes the size it would be there and says
 -- where it'll go (the zone's name, a bar, on its own, back in its place),
 -- and a gold ring marks the spot it would take.
+--
+-- From v38 the bars go on the placing grid (the one Move everything uses):
+-- edit mode shows the grid under the kits, with its Grid size and Snap on
+-- edit mode's bar, and a bar dragged by its box, or a button floating on its
+-- own, snaps to the screen's middle lines, the kit buttons and the other
+-- bars, or else its left and top edges to the grid. Shift places it freely.
+-- The bars are things the placed pieces line up with too. Placing and edit
+-- mode go together: Move everything also puts the kit it's pressed from
+-- into edit mode, edit mode's bar is the one bar while both run, and its
+-- Done (or Esc) ends both.
 ---------------------------------------------------------------------------
 
-local VERSION = 35
+local VERSION = 38
 -- Builds of the same VERSION (test builds while a version is in a pull
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
 -- each change while VERSION stays put; back to 0 with a new VERSION.
-local BUILD = 0
+local BUILD = 1
 local C = _G.KitCore
 if C and ((C.version or 0) > VERSION or ((C.version or 0) == VERSION and (C.build or 0) >= BUILD)) then
     ns.Core = C
@@ -287,6 +297,11 @@ do
         Loc["Floating on its own"] = "单独浮动"
         Loc["Back in its place"] = "放回原位"
         Loc["Drag a button into one of the kit's shaded areas to move it there: the one it would land in lights up, and the label under the button says where it'll go. Drop it away from the kit and it floats, always shown; drop another on it to make a bar. Drop it on the kit's icon to put it back. Drag a bar's box to move it."] = "把按钮拖进套件的某个阴影区域即可移到那里：它将落入的区域会亮起，按钮下方的标签会说明它的去向。拖离套件它就会浮动并始终显示；再拖一个到它上面可组成一个按钮条。拖到套件图标上可放回去。拖动按钮条的框可移动它。"
+        Loc["Bars and buttons on their own snap to the grid, the middle of the screen, the kit buttons and other bars; hold Shift to place them freely."] = "按钮条和单独浮动的按钮会吸附到网格、屏幕中线、套件按钮和其他按钮条；按住 Shift 可自由放置。"
+        Loc["Drag to move the whole bar. It snaps to the grid; hold Shift to place it freely."] = "拖动以移动整个按钮条。它会吸附到网格；按住 Shift 可自由放置。"
+        Loc["Editing %s's layout, placing %s"] = "正在编辑 %s 的布局，放置 %s"
+        Loc["The reminder panel and the kits' timers and bars move by dragging them, snapping the same way."] = "提醒面板以及各套件的计时器和计时条也可拖动移动，吸附方式相同。"
+        Loc["The kit's own buttons and bars too, as in Edit layout."] = "也包括本套件自己的按钮和按钮条，与编辑布局相同。"
         Loc["The layout can only be edited out of combat."] = "布局只能在脱离战斗后编辑。"
         Loc["Show the kit first."] = "请先显示套件。"
         Loc["Close Quick Keybind Mode first."] = "请先关闭快速按键绑定模式。"
@@ -4702,6 +4717,7 @@ function C.SharePanel(src)
         end
     end
     if C.placeUI then C.placeUI.paint() end
+    if C.editBar and C.editBar.paint and C.editKit then C.editBar.paint() end
 end
 
 local function Cursor()
@@ -4853,6 +4869,12 @@ function C.RegisterMover(key, m)
     movers[key] = m
 end
 
+-- Whether any piece is being placed now.
+local function AnyPlacing()
+    for _, k in ipairs(moverOrder) do if movers[k].placing then return true end end
+    return false
+end
+
 local function PlaceCfg()
     local p = C.PanelCfg() or {}
     return tonumber(p.grid) or 16, p.snap ~= false, p
@@ -4971,35 +4993,48 @@ local function Nearest(values, targets)
 end
 
 -- What a piece can line up with, along one axis: the screen's middle line,
--- the other pieces being placed, and the kit buttons (edges and middles).
-local function Targets(skip, vertical)
+-- the other pieces being placed, the kit buttons and (v38) the kits' button
+-- bars (edges and middles). ex (v38, for a bar or a floating button being
+-- dragged in edit mode): { kit = , bars = that kit's bars to use, skip = a
+-- bar to leave out }.
+local function Targets(skip, vertical, ex)
     local list = { 0 }
-    local function Add(f)
-        if not (f and f:IsVisible()) then return end
-        local x, y, hw, hh = Box(f)
+    local function AddBox(x, y, hw, hh)
         if not x then return end
         local c, half = vertical and x or y, vertical and hw or hh
         list[#list + 1] = c - half
         list[#list + 1] = c
         list[#list + 1] = c + half
     end
+    local function Add(f)
+        if not (f and f:IsVisible()) then return end
+        AddBox(Box(f))
+    end
     for _, key in ipairs(moverOrder) do
         local m = movers[key]
         if key ~= skip and m.placing and m.frame then Add(m.frame()) end
     end
     for _, kit in ipairs(C.kits or {}) do
-        if kit.built then Add(kit.kit) end
+        if kit.built then
+            Add(kit.kit)
+            if kit.cfg.bars then
+                local bars = ex and ex.kit == kit and ex.bars or kit:Bars()
+                for _, bar in ipairs(bars) do
+                    if not (ex and bar == ex.skip) then AddBox(kit:BarExtent(bar)) end
+                end
+            end
+        end
     end
     return list
 end
 
 -- A piece dragged so its middle would be at (x, y): where it goes, and the
--- guide lines to show (or nil).
-local function Snap(key, x, y, hw, hh)
+-- guide lines to show (or nil). ex: as Targets'.
+local function Snap(key, x, y, hw, hh, ex)
     local step, snapping = PlaceCfg()
     if not snapping or IsShiftKeyDown() then return x, y end
-    local dx, gx = Nearest({ x - hw, x, x + hw }, Targets(key, true))
-    local dy, gy = Nearest({ y - hh, y, y + hh }, Targets(key, false))
+    local dx, gx = Nearest({ x - hw, x, x + hw }, Targets(key, true, ex))
+    local dy, gy = Nearest({ y - hh, y, y + hh }, Targets(key, false, ex))
     -- (otherwise its left and top edges on the grid)
     if dx then x = x + dx else x = Round(x - hw, step) + hw end
     if dy then y = y + dy else y = Round(y + hh, step) - hh end
@@ -5016,10 +5051,7 @@ function C.EndPlacing()
             m.placing = nil
         end
     end
-    if placeUI then
-        C.grid:Hide()
-        if placeUI.bar:IsShown() then placeUI.bar:Hide() end
-    end
+    C.MoveUI()
 end
 
 local function SmallButton(parent, text, w, fn)
@@ -5028,6 +5060,52 @@ local function SmallButton(parent, text, w, fn)
     b:SetText(text)
     b:SetScript("OnClick", fn)
     return b
+end
+
+-- The grid size and Snap, along the foot of a bar from x (v38: the placing
+-- bar's and edit mode's, both the reminder panel's settings, so they're the
+-- same everywhere). Returns a function that shows what they're set to now.
+local GRID_SIZES = { 8, 16, 24, 32 }
+local function GridControls(bar, x)
+    local grid = SmallButton(bar, "", 80, nil)
+    grid:SetPoint("BOTTOMLEFT", x, 10)
+    local snap = CreateFrame("Button", nil, bar)
+    snap:SetSize(84, 22)
+    snap:SetPoint("BOTTOMLEFT", x + 88, 10)
+    local box = CreateFrame("Frame", nil, snap)
+    box:SetSize(16, 16)
+    box:SetPoint("LEFT", 2, 0)
+    Well(box, 0.7)
+    local tick = box:CreateTexture(nil, "OVERLAY")
+    tick:SetPoint("CENTER", 1, 0)
+    tick:SetSize(22, 22)
+    tick:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
+    tick:SetVertexColor(1, 0.85, 0.4)
+    local label = snap:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    label:SetPoint("LEFT", box, "RIGHT", 6, 0)
+    label:SetText(Loc["Snap"])
+    local function Paint()
+        local step, snapping = PlaceCfg()
+        grid:SetText((Loc["Grid %s"]):format(step))
+        tick:SetShown(snapping)
+    end
+    -- Grid size: steps through the sizes.
+    grid:SetScript("OnClick", function()
+        local step, _, p = PlaceCfg()
+        local i = 1
+        for n, g in ipairs(GRID_SIZES) do if g == step then i = n end end
+        p.grid = GRID_SIZES[i % #GRID_SIZES + 1]
+        if C.PanelCfg() == p then C.SharePanel(p) end
+        C.DrawGrid()
+        Paint()
+    end)
+    snap:SetScript("OnClick", function()
+        local _, snapping, p = PlaceCfg()
+        p.snap = not snapping
+        if C.PanelCfg() == p then C.SharePanel(p) end
+        Paint()
+    end)
+    return Paint
 end
 
 local function BuildPlaceBar()
@@ -5049,57 +5127,20 @@ local function BuildPlaceBar()
     hint:SetPoint("LEFT", title, "RIGHT", 10, 0)
     hint:SetText(Loc["Drag to move, Shift for free"])
 
-    local x = 12
-    local function Place(f, w)
-        f:SetPoint("BOTTOMLEFT", x, 10)
-        x = x + w + 8
-    end
-    -- Grid size: steps through the sizes.
-    local GRID_SIZES = { 8, 16, 24, 32 }
-    local grid = SmallButton(bar, "", 80, nil)
-    grid:SetScript("OnClick", function()
-        local step, _, p = PlaceCfg()
-        local i = 1
-        for n, g in ipairs(GRID_SIZES) do if g == step then i = n end end
-        p.grid = GRID_SIZES[i % #GRID_SIZES + 1]
-        if C.PanelCfg() == p then C.SharePanel(p) end
-        C.DrawGrid()
-    end)
-    Place(grid, 80)
-    local snap = CreateFrame("Button", nil, bar)
-    snap:SetSize(84, 22)
-    local box = CreateFrame("Frame", nil, snap)
-    box:SetSize(16, 16)
-    box:SetPoint("LEFT", 2, 0)
-    Well(box, 0.7)
-    local tick = box:CreateTexture(nil, "OVERLAY")
-    tick:SetPoint("CENTER", 1, 0)
-    tick:SetSize(22, 22)
-    tick:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
-    tick:SetVertexColor(1, 0.85, 0.4)
-    local label = snap:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    label:SetPoint("LEFT", box, "RIGHT", 6, 0)
-    label:SetText(Loc["Snap"])
-    snap:SetScript("OnClick", function()
-        local _, snapping, p = PlaceCfg()
-        p.snap = not snapping
-        if C.PanelCfg() == p then C.SharePanel(p) end
-        tick:SetShown(p.snap)
-    end)
-    Place(snap, 60)
+    local paintGrid = GridControls(bar, 12) -- (grid size and Snap)
     local done = SmallButton(bar, Loc["Done"], 70, function() bar:Hide() end)
     done:SetPoint("BOTTOMRIGHT", -12, 10)
     bar:Hide()
     -- (Esc or Done: every piece finished. Set only now: a new frame starts
     -- shown, so the Hide above would otherwise end the placing it was built for.)
-    bar:SetScript("OnHide", function() C.EndPlacing() end)
+    bar:SetScript("OnHide", function()
+        if not placeUI.quiet then C.EndPlacing() end
+    end)
 
     placeUI = { bar = bar }
     C.placeUI = placeUI
     function placeUI.paint()
-        local step, snapping = PlaceCfg()
-        grid:SetText((Loc["Grid %s"]):format(step))
-        tick:SetShown(snapping)
+        paintGrid()
         -- The title says what's being placed: one piece by name, or several.
         local names = {}
         for _, key in ipairs(moverOrder) do
@@ -5126,20 +5167,36 @@ function C.Place.Update(key, on)
         local f = m.frame and m.frame()
         if f and not InCombatLockdown() then f:SetFrameStrata(on and "DIALOG" or (m.strata or "MEDIUM")) end
     end
-    local any = false
-    for _, k in ipairs(moverOrder) do if movers[k].placing then any = true end end
-    if any then
+    C.MoveUI()
+end
+
+-- (v38) What's on screen while things move. The grid, while anything is
+-- being placed or a layout edited. One bar at the top: edit mode's while a
+-- layout is being edited, placing or not (its Done ends both), otherwise the
+-- placing bar. With a layout being edited the grid goes under the kits, so
+-- its shade doesn't dim the kit; pieces being placed sit over it either way.
+function C.MoveUI()
+    local placing, editing = AnyPlacing(), C.editKit ~= nil
+    if placing or editing then
         C.grid = C.grid or BuildGrid()
-        if not placeUI then BuildPlaceBar() end
+        C.grid:SetFrameStrata(editing and "LOW" or "HIGH")
         C.DrawGrid()
         C.Guide(nil, nil)
-        placeUI.paint()
         C.grid:Show()
-        if not placeUI.bar:IsShown() then placeUI.bar:Show() end
-    elseif placeUI then
+    elseif C.grid then
+        C.Guide(nil, nil)
         C.grid:Hide()
-        if placeUI.bar:IsShown() then placeUI.bar:Hide() end
     end
+    if placing and not editing then
+        if not placeUI then BuildPlaceBar() end
+        placeUI.paint()
+        if not placeUI.bar:IsShown() then placeUI.bar:Show() end
+    elseif placeUI and placeUI.bar:IsShown() then
+        placeUI.quiet = true -- (out of the way, not Done: the placing goes on)
+        placeUI.bar:Hide()
+        placeUI.quiet = nil
+    end
+    if editing and C.editBar and C.editBar.paint then C.editBar.paint() end
 end
 
 -- Dragging a piece: frame is what's dragged; move(x, y) puts its middle at
@@ -5177,8 +5234,10 @@ end
 -- Move everything: every piece in use, placed at once (or, if anything is
 -- being placed, all of it done).
 function C.MoveAll(kit)
-    for _, key in ipairs(moverOrder) do
-        if movers[key].placing then C.EndPlacing() return end
+    if AnyPlacing() then
+        -- (and a layout edited along with them: edit mode's end ends the placing)
+        if C.editKit then C.editKit:SetEdit(false) else C.EndPlacing() end
+        return
     end
     if InCombatLockdown() then
         kit:Print(Loc["Things can only be moved out of combat."], true)
@@ -5196,10 +5255,13 @@ function C.MoveAll(kit)
         end
     end
     C.movingAll = nil
-    if n == 0 then
+    -- (v38) The kit's own layout too (its buttons and bars, as Edit layout),
+    -- when it has one to edit.
+    if kit.cfg.bars and not kit.editing then kit:SetEdit(true, true) end
+    if n == 0 and not kit.editing then
         kit:Print(Loc["Nothing to move: turn on the reminder panel or a kit's timers first. The kits themselves move by dragging them."], true)
-    elseif placeUI then
-        placeUI.paint()
+    else
+        C.MoveUI()
     end
 end
 
@@ -5569,6 +5631,29 @@ end
 -- One cell of a bar (a full slot and the gap), in UIParent units.
 function Kit:BarCell()
     return (self.BTN * (self.db.buttonSize or 1) + (tonumber(self.db.barGap) or 4)) * (self.db.scale or 1)
+end
+
+-- (v38) A bar's buttons as a box, for lining things up with it: its middle
+-- and half-size, in UIParent units from the screen's centre (the buttons'
+-- own edges, not edit mode's box round them). nil with none showing, or
+-- with the kit hidden.
+function Kit:BarExtent(bar)
+    local shown = self:BarShown(bar)
+    local n = #shown
+    if n == 0 then return nil end
+    if not self.editing then
+        local btn = self.slots[shown[1]]
+        if not (btn and btn:IsVisible()) then return nil end
+    end
+    local cell, size = self:BarCell(), self:BarButtonSize()
+    local long = (n - 1) * cell + size
+    if bar.dir == "col" then return bar.x, bar.y, size / 2, long / 2 end
+    return bar.x, bar.y, long / 2, size / 2
+end
+
+-- (v38) One button on a bar, across, in UIParent units (a cell without its gap).
+function Kit:BarButtonSize()
+    return self:BarCell() - (tonumber(self.db.barGap) or 4) * (self.db.scale or 1)
 end
 
 -- A bar's slots that are there right now (a hidden one leaves no gap).
@@ -6203,7 +6288,7 @@ function Kit:MakeBarBox(i)
         if C.editDrag then return end
         GameTooltip:SetOwner(f, "ANCHOR_TOP")
         GameTooltip:AddLine(Loc["Bar"])
-        GameTooltip:AddLine(Loc["Drag to move the whole bar."], 1, 1, 1)
+        GameTooltip:AddLine(Loc["Drag to move the whole bar. It snaps to the grid; hold Shift to place it freely."], 1, 1, 1)
         GameTooltip:Show()
     end
     local function Leave() GameTooltip:Hide() end
@@ -6336,6 +6421,26 @@ end
 local editDriver = CreateFrame("Frame")
 editDriver:Hide()
 
+-- (v38) Where a bar, or a button floating on its own, dragged so its middle
+-- would be at (x, y) goes: snapped the way a placed piece is (the screen's
+-- middle lines, the kit buttons, the other bars, else its left and top
+-- edges to the grid; Shift for free) and kept whole on the screen. hw, hh:
+-- its half-size; ex: as Targets'. Also the guide lines to show (or nil).
+local function BarSpot(kit, x, y, hw, hh, ex)
+    local gx, gy
+    if hw then
+        x, y, gx, gy = Snap(nil, x, y, hw, hh, ex)
+        local sw, sh = UIParent:GetWidth() / 2, UIParent:GetHeight() / 2
+        x = math.max(-sw + hw, math.min(sw - hw, x))
+        y = math.max(-sh + hh, math.min(sh - hh, y))
+    else
+        x, y = kit:ClampBar(x, y)
+    end
+    local _, snapping = PlaceCfg()
+    if not snapping or IsShiftKeyDown() then x, y = Round(x, 1), Round(y, 1) end
+    return x, y, gx, gy
+end
+
 -- A button was pressed in edit mode: it's a drag once the mouse has moved.
 function C.StartEditDrag(kit, btn)
     if C.editDrag or InCombatLockdown() or not kit.editing then return end
@@ -6354,7 +6459,7 @@ function C.StartBarDrag(kit, box)
     if C.editDrag or InCombatLockdown() or not kit.editing or kit.barPreview or not box.bar then return end
     GameTooltip:Hide()
     local mx, my = Cursor()
-    C.editDrag = { kit = kit, kind = "bar", bar = box.bar, offX = box.bar.x - mx, offY = box.bar.y - my }
+    C.editDrag = { kit = kit, kind = "bar", bar = box.bar, offX = box.bar.x - mx, offY = box.bar.y - my, downX = mx, downY = my }
     editDriver:Show()
 end
 
@@ -6364,6 +6469,7 @@ function C.StopEditDrag(cancel)
     if not d then return end
     C.editDrag = nil
     editDriver:Hide()
+    C.Guide(nil, nil)
     if C.editGhost then C.editGhost:Hide() end
     if C.editMark then C.editMark:Hide() end
     local kit = d.kit
@@ -6409,7 +6515,12 @@ editDriver:SetScript("OnUpdate", function(f)
     local down = IsMouseButtonDown and IsMouseButtonDown("LeftButton")
     if d.kind == "bar" then
         if not down then C.StopEditDrag(false) return end
-        local x, y = kit:ClampBar(Round(mx + d.offX, 1), Round(my + d.offY, 1))
+        -- (v38: a click on the box doesn't nudge the bar onto the grid)
+        if not d.moved and math.abs(mx - d.downX) + math.abs(my - d.downY) < 3 then return end
+        d.moved = true
+        local _, _, hw, hh = kit:BarExtent(d.bar)
+        local x, y, gx, gy = BarSpot(kit, mx + d.offX, my + d.offY, hw, hh, { kit = kit, skip = d.bar })
+        C.Guide(gx, gy)
         if x ~= d.bar.x or y ~= d.bar.y then
             d.bar.x, d.bar.y = x, y
             kit:PlaceBars(false)
@@ -6441,6 +6552,14 @@ editDriver:SetScript("OnUpdate", function(f)
     -- Show the layout as it would be if it were dropped here. Only a change
     -- of place is a refresh; a button floating on its own just follows.
     local t = kit:BarTarget(d.base, mx, my, d.zbase, d.key)
+    -- (v38) A button floating on its own goes on the grid like a bar; the
+    -- copy under the mouse still follows the mouse.
+    local gx, gy
+    if t.new then
+        local half = kit:BarButtonSize() / 2
+        t.x, t.y, gx, gy = BarSpot(kit, mx, my, half, half, { kit = kit, bars = d.base })
+    end
+    C.Guide(gx, gy)
     local sig = t.kit and "kit" or t.new and "new" or t.zone and ("zone:" .. t.zone .. ":" .. t.at)
         or (t.bar .. ":" .. t.dir .. ":" .. t.at)
     if sig ~= d.sig then
@@ -6485,15 +6604,44 @@ local function BuildEditBar()
     hint:SetPoint("TOPLEFT", bar.title, "BOTTOMLEFT", 0, -5)
     hint:SetWidth(476)
     hint:SetJustifyH("LEFT")
-    hint:SetText(Loc["Drag a button into one of the kit's shaded areas to move it there: the one it would land in lights up, and the label under the button says where it'll go. Drop it away from the kit and it floats, always shown; drop another on it to make a bar. Drop it on the kit's icon to put it back. Drag a bar's box to move it."])
+    local layoutHint = Loc["Drag a button into one of the kit's shaded areas to move it there: the one it would land in lights up, and the label under the button says where it'll go. Drop it away from the kit and it floats, always shown; drop another on it to make a bar. Drop it on the kit's icon to put it back. Drag a bar's box to move it."]
+        .. " " .. Loc["Bars and buttons on their own snap to the grid, the middle of the screen, the kit buttons and other bars; hold Shift to place them freely."]
 
     local reset = SmallButton(bar, Loc["Reset to defaults"], 140, function()
         local kit = C.editKit
         if kit then kit:ResetLayout() end
     end)
     reset:SetPoint("BOTTOMLEFT", 12, 10)
+    local paintGrid = GridControls(bar, 160) -- (v38: the grid's size and Snap, as when placing)
     local done = SmallButton(bar, Loc["Done"], 70, function() bar:Hide() end)
     done:SetPoint("BOTTOMRIGHT", -12, 10)
+
+    -- (v38) The title and words for what's going on: a layout being edited,
+    -- and (Move everything, or a piece's Move) things being placed with it.
+    function bar.paint()
+        local kit = C.editKit
+        if not kit then return end
+        local names = {}
+        for _, key in ipairs(moverOrder) do
+            local m = movers[key]
+            if m.placing then names[#names + 1] = m.label or key end
+        end
+        local text = layoutHint
+        if #names == 0 then
+            bar.title:SetText((Loc["Editing %s's layout"]):format(kit.name))
+        else
+            if #names == 1 then
+                bar.title:SetText((Loc["Editing %s's layout, placing %s"]):format(kit.name, names[1]))
+            else
+                bar.title:SetText(Loc["Moving everything"])
+            end
+            text = Loc["The reminder panel and the kits' timers and bars move by dragging them, snapping the same way."] .. " " .. text
+        end
+        hint:SetText(text)
+        -- (tall enough for the words, whatever the language)
+        bar:SetHeight(math.max(116, math.ceil(hint:GetStringHeight() or 0) + 76))
+        paintGrid()
+    end
     bar:Hide()
     -- (Esc or Done: finished editing. Set only now: a new frame starts shown,
     -- so the Hide above would otherwise end the edit it was built for.)
@@ -6507,16 +6655,28 @@ end
 -- Edit mode on or off. On: the kit opens fully (and stays open), its
 -- buttons take drags instead of clicks, and each bar shows its box. Off:
 -- everything works again, and the kit closes if it was closed before.
-function Kit:SetEdit(on)
+-- (v38) It goes along with placing (Move everything puts the kit it's
+-- pressed from into it), and its Done ends that too. quiet: no message when
+-- it can't start; handover: off only because another kit's layout is
+-- taking over, so whatever's being placed carries on.
+function Kit:SetEdit(on, quiet, handover)
     on = on and true or false
     if (self.editing and true or false) == on then return end
     if on then
         if not self.cfg.bars or not self.built then return end
-        if InCombatLockdown() then self:Print(Loc["The layout can only be edited out of combat."], true) return end
-        if self.db.shown == false then self:Print(Loc["Show the kit first."], true) return end
-        if self.qkbOpen then self:Print(Loc["Close Quick Keybind Mode first."], true) return end
-        if C.editKit and C.editKit ~= self then C.editKit:SetEdit(false) end
-        C.EndPlacing() -- (the reminder panel and anything else being placed)
+        if InCombatLockdown() then
+            if not quiet then self:Print(Loc["The layout can only be edited out of combat."], true) end
+            return
+        end
+        if self.db.shown == false then
+            if not quiet then self:Print(Loc["Show the kit first."], true) end
+            return
+        end
+        if self.qkbOpen then
+            if not quiet then self:Print(Loc["Close Quick Keybind Mode first."], true) end
+            return
+        end
+        if C.editKit and C.editKit ~= self then C.editKit:SetEdit(false, nil, true) end
         self:CloseFlyouts()
         self.editing = true
         C.editKit = self
@@ -6525,8 +6685,8 @@ function Kit:SetEdit(on)
         self:ApplyFade()
         self:EditCovers(true)
         C.editBar = C.editBar or BuildEditBar()
-        C.editBar.title:SetText((Loc["Editing %s's layout"]):format(self.name))
         C.editBar:Show()
+        C.MoveUI() -- (the grid, under the kits; the bar's words)
         self:PaintEdit()
     else
         C.StopEditDrag(true)
@@ -6536,6 +6696,7 @@ function Kit:SetEdit(on)
         self:HideBarBoxes()
         GameTooltip:Hide()
         if C.editBar and C.editBar:IsShown() then C.editBar:Hide() end
+        if handover then C.MoveUI() else C.EndPlacing() end -- (EndPlacing tidies up too)
         if InCombatLockdown() then self.editLeavePending = true return end
         self:EditRestore()
     end
@@ -7924,7 +8085,8 @@ function Kit:BuildOptions()
     mhl:SetAllPoints()
     mhl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.06)
     move:SetScript("OnClick", function() C.MoveAll(self) end)
-    Tip(move, { name = Loc["Move everything"], tip = Loc["The reminder panel and every timer and bar in use, shown where they sit on a grid so you can drag them all at once. Done (or Esc) when you're finished."] .. (self.cfg.slash and (" " .. (Loc["Also %s move."]):format(self.cfg.slash[1])) or "") }, self.optAnchor)
+    Tip(move, { name = Loc["Move everything"], tip = Loc["The reminder panel and every timer and bar in use, shown where they sit on a grid so you can drag them all at once. Done (or Esc) when you're finished."]
+        .. (self.cfg.bars and (" " .. Loc["The kit's own buttons and bars too, as in Edit layout."]) or "") .. (self.cfg.slash and (" " .. (Loc["Also %s move."]):format(self.cfg.slash[1])) or "") }, self.optAnchor)
     local keys = CreateFrame("Button", nil, f)
     keys:SetSize(OPT.nav - OPT.pad - 6, 20)
     keys:SetPoint("BOTTOMLEFT", OPT.pad, OPT.pad)
