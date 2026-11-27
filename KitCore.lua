@@ -8541,52 +8541,43 @@ RADIAL.SWITCH = [[
     d:SetAttribute("kcr-cur", ring)
 ]]
 
--- (A, B, X and Y go to the ring while it's up, except a key that's bound
--- to bring the ring up itself: its release has to reach the ring's binding.)
 RADIAL.OPEN = [[
     if self:GetAttribute("kcr-isopen") then return true end
     if (self:GetAttribute("kcr-main-n") or 0) == 0 then return false end
     self:SetAttribute("kcr-isopen", true)
     self:RunAttribute("kcr-switch", "main")
     self:GetFrameRef("kcr-display"):Show()
-    -- Pad buttons held right now go to the trigger while the ring is up:
-    -- opened from a gamepad bar slot, that slot's button is still down, and
-    -- letting it go then reaches the trigger (the game sends a release to
-    -- whatever the key is bound to by then). Any modifier mix, so letting go
-    -- of a trigger first doesn't matter. kcr-pk<i> is pad button i's key
-    -- (modifiers and stick leans left out), set out of combat.
-    -- No table literals or the keyword for making closures in a snippet, not
-    -- even in a comment: the game refuses to compile it (BuildRestrictedClosure).
-    local taken = "|"
+    self:RunAttribute("kcr-roles")
+    return true
+]]
+
+-- A, B, X and Y go to the ring while it's up (override bindings on the
+-- header), except a key that's held right now or is bound to bring the ring
+-- up: a key's release goes only to what took its press, and changing a held
+-- key's binding loses the release altogether (so the gamepad bar slot that
+-- opened the ring, still held, would never be let go of). Run again once the
+-- slot is let go, to bind what was skipped. kcr-pk<i> is pad button i's key,
+-- set out of combat. (No table literals or the keyword for making closures
+-- in a snippet, not even in a comment: the game won't compile it.)
+RADIAL.ROLES = [[
+    local held = "|"
     local st = GetGamePadState()
-    local pressed, trig = st and st.buttons, self:GetAttribute("kcr-btn-trigger")
-    if pressed and trig then
+    local pressed = st and st.buttons
+    if pressed then
         for i = 1, (self:GetAttribute("kcr-pkn") or 0) do
             local key = pressed[i] and self:GetAttribute("kcr-pk" .. i)
-            if key then
-                self:SetBindingClick(true, key, trig, "LeftButton")
-                self:SetBindingClick(true, "SHIFT-" .. key, trig, "LeftButton")
-                self:SetBindingClick(true, "CTRL-" .. key, trig, "LeftButton")
-                self:SetBindingClick(true, "CTRL-SHIFT-" .. key, trig, "LeftButton")
-                self:SetBindingClick(true, "ALT-" .. key, trig, "LeftButton")
-                self:SetBindingClick(true, "ALT-SHIFT-" .. key, trig, "LeftButton")
-                self:SetBindingClick(true, "ALT-CTRL-" .. key, trig, "LeftButton")
-                self:SetBindingClick(true, "ALT-CTRL-SHIFT-" .. key, trig, "LeftButton")
-                taken = taken .. key .. "|"
-                self:SetAttribute("kcr-held", true)
-            end
+            if key then held = held .. key .. "|" end
         end
     end
     local t1, t2 = self:GetAttribute("kcr-trig1"), self:GetAttribute("kcr-trig2")
     local k = self:GetAttribute("kcr-key-use")
-    if k and k ~= t1 and k ~= t2 and not strfind(taken, "|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-use"), "LeftButton") end
+    if k and k ~= t1 and k ~= t2 and not strfind(held, "|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-use"), "LeftButton") end
     k = self:GetAttribute("kcr-key-back")
-    if k and k ~= t1 and k ~= t2 and not strfind(taken, "|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-back"), "LeftButton") end
+    if k and k ~= t1 and k ~= t2 and not strfind(held, "|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-back"), "LeftButton") end
     k = self:GetAttribute("kcr-key-open")
-    if k and k ~= t1 and k ~= t2 and not strfind(taken, "|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-open"), "LeftButton") end
+    if k and k ~= t1 and k ~= t2 and not strfind(held, "|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-open"), "LeftButton") end
     k = self:GetAttribute("kcr-key-alt")
-    if k and k ~= t1 and k ~= t2 and not strfind(taken, "|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-alt"), "LeftButton") end
-    return true
+    if k and k ~= t1 and k ~= t2 and not strfind(held, "|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-alt"), "LeftButton") end
 ]]
 
 RADIAL.CLOSE = [[
@@ -8619,8 +8610,8 @@ RADIAL.USE = [[
 -- uses what the stick points at (hold, lean, let go). Released with the stick
 -- centred, the ring stays up (a tap), and the next press uses or, centred,
 -- closes. A macro's /click is one release: it opens, then uses or closes;
--- from a gamepad bar the slot's button is still held, OPEN hands it to this
--- button, and letting it go is the release.
+-- from a gamepad bar, letting go of the slot is caught on the bar button
+-- itself (RADIAL.BARPRE).
 RADIAL.TRIGGER = [[
     self:SetAttribute("type", nil)
     if down then
@@ -8719,7 +8710,10 @@ RADIAL.BARPRE = [[
     owner:SetAttribute("kcr-opener", nil)
     owner:SetAttribute("kcr-held", false)
     local what, t = owner:RunAttribute("kcr-use")
-    if what ~= "use" then return end
+    if what ~= "use" then
+        owner:RunAttribute("kcr-roles")
+        return
+    end
     self:SetAttribute("pressAndHoldAction", true)
     self:SetAttribute("typerelease", "macro")
     self:SetAttribute("macrotext", "/click " .. t)
@@ -9088,6 +9082,7 @@ function Kit:BuildRadial()
     h:SetAttribute("kcr-switch", RADIAL.SWITCH)
     h:SetAttribute("kcr-open", RADIAL.OPEN)
     h:SetAttribute("kcr-close", RADIAL.CLOSE)
+    h:SetAttribute("kcr-roles", RADIAL.ROLES)
     h:SetAttribute("kcr-use", RADIAL.USE)
     h:SetAttribute("kcr-dead", RADIAL.DEAD)
     h:SetAttribute("kcr-invy", RADIAL.INVERT_Y)
@@ -9177,16 +9172,17 @@ function Kit:RadialDebugState(what)
         for i, down in pairs(st.buttons) do
             if down then
                 local name = C_GamePad.ButtonIndexToBinding and C_GamePad.ButtonIndexToBinding(i - 1)
-                held[#held + 1] = ("#%s %s, taken as %s, bound to %s"):format(tostring(i), tostring(name),
+                held[#held + 1] = ("#%s %s, mapped as %s, bound to %s"):format(tostring(i), tostring(name),
                     tostring(h:GetAttribute("kcr-pk" .. i)), PadKeyAction(name))
             end
         end
     end
     local wrapped = 0
     for _ in pairs(R.barWrapped or {}) do wrapped = wrapped + 1 end
-    self:RadialDebug(("%s. pad state: %s; held now: %s; held flag: %s; keys mapped: %s; bar buttons wrapped: %d; opened by a bar button: %s"):format(what,
+    self:RadialDebug(("%s. pad state: %s; held now: %s; held flag: %s; keys mapped: %s; bar buttons wrapped: %d%s; opened by a bar button: %s"):format(what,
         st and "yes" or "NONE", #held > 0 and table.concat(held, " | ") or "none",
         tostring(h:GetAttribute("kcr-held")), tostring(h:GetAttribute("kcr-pkn")), wrapped,
+        R.barWrapErr and (" (error: " .. tostring(R.barWrapErr) .. ")") or "",
         h:GetAttribute("kcr-opener") and "yes" or "no"))
 end
 
@@ -9590,9 +9586,8 @@ function Kit:RadialWrapBars()
         if type(bar) == "table" and type(bar.actionButtons) == "table" then
             for _, b in pairs(bar.actionButtons) do
                 if type(b) == "table" and not R.barWrapped[b] and b.IsProtected and b:IsProtected() then
-                    if pcall(SecureHandlerWrapScript, b, "OnClick", R.header, RADIAL.BARPRE, RADIAL.BARPOST) then
-                        R.barWrapped[b] = true
-                    end
+                    local ok, err = pcall(SecureHandlerWrapScript, b, "OnClick", R.header, RADIAL.BARPRE, RADIAL.BARPOST)
+                    if ok then R.barWrapped[b] = true else R.barWrapErr = err end
                 end
             end
         end
@@ -9606,7 +9601,7 @@ function Kit:RadialKeys()
     if GetBindingKey then k1, k2 = GetBindingKey("CLICK " .. self.prefix .. "Radial:LeftButton") end
     R.header:SetAttribute("kcr-trig1", k1)
     R.header:SetAttribute("kcr-trig2", k2)
-    -- Pad button i's key, for OPEN to hand a held button to the trigger.
+    -- Pad button i's key, for kcr-roles to leave a held button alone.
     -- Left out: anything the game must see let go of itself (the triggers,
     -- buttons acting as Shift/Ctrl/Alt, the Gamepad UI's bar-swap and
     -- targeting modifiers, which keep state between press and release) and
