@@ -95,14 +95,20 @@ local addonName, ns = ...
 -- mode go together: Move everything also puts the kit it's pressed from
 -- into edit mode, edit mode's bar is the one bar while both run, and its
 -- Done (or Esc) ends both.
+--
+-- From v39 a kit (cfg.radial) can be used from a controller as a ring round
+-- the middle of the screen: hold its binding (or press a /click macro on a
+-- gamepad bar), tilt a stick at a button, let go. The kit's ring, its inner
+-- ring and its row under the line are three rings; drawers open as rings of
+-- their own. All of it works in combat. See "The radial".
 ---------------------------------------------------------------------------
 
-local VERSION = 38
+local VERSION = 39
 -- Builds of the same VERSION (test builds while a version is in a pull
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
 -- each change while VERSION stays put; back to 0 with a new VERSION.
-local BUILD = 1
+local BUILD = 0
 local C = _G.KitCore
 if C and ((C.version or 0) > VERSION or ((C.version or 0) == VERSION and (C.build or 0) >= BUILD)) then
     ns.Core = C
@@ -338,6 +344,40 @@ do
         Loc["Press Escape to unbind."] = "按 Esc 解除绑定。"
         Loc["Not bound"] = "未绑定"
         Loc["Press a key to bind."] = "按下一个键进行绑定。"
+        Loc["Radial (controller)"] = "环形菜单（手柄）"
+        Loc["Below the line"] = "分隔线下方"
+        Loc["Back to the ring"] = "返回主环"
+        Loc["Inner ring"] = "内环"
+        Loc["Stick centred + X: inner ring"] = "摇杆居中 + X：内环"
+        Loc["Tilt the stick"] = "推动摇杆"
+        Loc["Cast"] = "施放"
+        Loc["Use"] = "使用"
+        Loc["Alternate"] = "备选"
+        Loc["Close"] = "关闭"
+        Loc["Back"] = "返回"
+        Loc["Couldn't make the macro: your macro slots may be full."] = "无法创建宏：你的宏栏位可能已满。"
+        Loc["Macro \"%s\" is on your cursor: drop it on a gamepad bar slot."] = "宏“%s”已在你的光标上：把它放到手柄动作条的栏位上。"
+        Loc["Controller"] = "手柄"
+        Loc["Radial on a controller"] = "手柄环形菜单"
+        Loc["Use %s from a controller as a ring round the middle of the screen: hold its binding, tilt a stick at a button, let go. Works in combat."] = "用手柄以屏幕中央的环形菜单使用%s：按住它的绑定键，把摇杆推向某个按钮，然后松开。战斗中也可使用。"
+        Loc["Opening it"] = "打开方式"
+        Loc["Gamepad bar"] = "手柄动作条"
+        Loc["Make macro"] = "创建宏"
+        Loc["Puts a macro on your cursor that brings the ring up: drop it on a gamepad bar slot. Hold its button, tilt the stick at a button and let go; or tap it and use A."] = "在光标上放一个打开环形菜单的宏：把它放到手柄动作条的栏位上。按住它的按键，把摇杆推向一个按钮再松开；或者轻按一下，再用 A 使用。"
+        Loc["Key binding"] = "按键绑定"
+        Loc["Bind a button to bring the ring up: hold it, tilt, let go. Under %s in the key bindings."] = "绑定一个打开环形菜单的按钮：按住、推动摇杆、松开。在按键绑定的 %s 下。"
+        Loc["Picking"] = "选择"
+        Loc["Pick with"] = "选择用摇杆"
+        Loc["The stick that points at a button while the ring is up."] = "环形菜单打开时用来指向按钮的摇杆。"
+        Loc["Right stick"] = "右摇杆"
+        Loc["Left stick"] = "左摇杆"
+        Loc["Hold the camera still"] = "选择时固定镜头"
+        Loc["While the ring is up, the stick you pick with doesn't turn the camera (or move you, for the left stick)."] = "环形菜单打开时，用来选择的摇杆不会转动镜头（左摇杆则不会移动角色）。"
+        Loc["Ring"] = "环形"
+        Loc["Ring size"] = "环形大小"
+        Loc["Button names"] = "按钮名称"
+        Loc["Each button's name under it."] = "在每个按钮下方显示名称。"
+        Loc["While it's up: A uses, X opens a drawer or the row under the line (with the stick centred: the inner ring), Y does a button's alternate, B goes back or closes."] = "打开时：A 使用，X 打开弹出栏或分隔线下方一行（摇杆居中时：内环），Y 执行按钮的备选操作，B 返回或关闭。"
     end
 end
 
@@ -550,6 +590,10 @@ C.BASE_DEFAULTS = {
     facing = "up",         -- which way the layout points while the kit floats: up, down, left, right
     flyoutHide = 0.5,      -- seconds a drawer stays open in combat after the mouse leaves it
     barGap = 4,            -- room between the buttons on a bar (v23)
+    -- The radial, for controllers (v39): on, the stick it's picked with
+    -- ("right" or "left"), the camera held still while picking, its size,
+    -- the buttons' names under them.
+    radial = { on = true, stick = "right", camera = true, scale = 1, names = true },
     -- The reminder panel (v21): its look and spot are shared by every kit, so
     -- each kit keeps a copy and the one changed last wins (see C.SyncPanel).
     -- x, y: its starting corner from the screen's centre, in UIParent units.
@@ -711,6 +755,10 @@ C.BASE_CHAR = {
 --                 kit:OpenOptions("page title")
 --   Slash(kit, cmd, rest) true if it handled cmd;  helpLines { "..." }
 --   minimapIcon   texture for the minimap button
+--   radial        true: the kit can be used from a controller as a ring (v39,
+--                 see "The radial"); its Bindings.xml lists
+--                 CLICK <prefix>Radial:LeftButton
+--   macroIcon     the icon for its gamepad bar macro (a file ID or icon name)
 --
 -- A slot:
 --   key, label, pos = { x, y } (from the kit's centre, +y up)
@@ -747,6 +795,8 @@ C.BASE_CHAR = {
 --                 for a slot with Pop, false for the rest)
 --   OnAttribute(kit, btn, name, value)  a flyout choice changed an attribute
 --   OnPick(kit, btn, value)             a flyout "pick" choice (out of combat)
+--   radialAlt     Y on the slot, or on its drawer's choices, in the radial (v39):
+--                 { label, ready(kit), macro(kit, btn, choice, target) }
 --   sub = { key, label, Update(kit, sb), Paint(kit, sb), Tooltip(kit, sb) }
 --         a small round button on the slot's corner (below = true: under the
 --         slot instead, except on a screen edge, where it's on the corner)
@@ -784,6 +834,9 @@ function C.NewKit(cfg)
             _G["BINDING_NAME_CLICK " .. cfg.prefix .. "Slot_" .. slot.key .. ":LeftButton"] =
                 slot.binding or (Loc["Use %s"]):format(slot.label:lower())
         end
+    end
+    if H and cfg.radial then
+        _G["BINDING_NAME_CLICK " .. cfg.prefix .. "Radial:LeftButton"] = Loc["Radial (controller)"]
     end
     _G[cfg.prefix .. "_Toggle"] = function() self:Toggle() end
     _G[cfg.prefix .. "_OnCompartmentClick"] = function() self:OpenSettings() end
@@ -3644,6 +3697,7 @@ function Kit:Refresh(animate)
     -- This layout, for the combat switch, beside the other one worked out above.
     if canToggle then self:StoreSnap(self.open, { vis = vis, pos = {}, div = self.liveDiv }) end
     self:PushSnapshot()
+    if self.radial then self:RadialRefresh() end
     self:PaintAll()
     if self.editing then self:PaintEdit() end
 end
@@ -4344,6 +4398,37 @@ function Kit:SettingsList(S)
         S.Slider(db, "barGap", Loc["Spacing"], Loc["Room between the buttons on a bar."],
             4, 0, 16, 1, function(v) return tostring(v) end, refresh)
         S.Button(Loc["Layout"], Loc["Reset to defaults"], Loc["Put every button back where it started: off the bars, and the kit's own buttons in their usual places and order."], function() self:ResetLayout() end)
+    end
+
+    -- The radial, for controllers (v39).
+    if cfg.radial and type(db.radial) == "table" then
+        local rc = db.radial
+        local redo = function() if self.radial then self.radial.sig = nil end refresh() end
+        S.Header(Loc["Controller"])
+        S.Checkbox(rc, "on", Loc["Radial on a controller"],
+            (Loc["Use %s from a controller as a ring round the middle of the screen: hold its binding, tilt a stick at a button, let go. Works in combat."]):format(self.name),
+            true, redo, "radialOn")
+        if S.Note then
+            S.Note(Loc["While it's up: A uses, X opens a drawer or the row under the line (with the stick centred: the inner ring), Y does a button's alternate, B goes back or closes."])
+        end
+        local on = function() return rc.on ~= false end
+        S.Subheader(Loc["Opening it"], on)
+        S.Button(Loc["Gamepad bar"], Loc["Make macro"],
+            Loc["Puts a macro on your cursor that brings the ring up: drop it on a gamepad bar slot. Hold its button, tilt the stick at a button and let go; or tap it and use A."],
+            function() self:RadialMacro() end)
+        S.Button(Loc["Key binding"], Loc["Open"],
+            (Loc["Bind a button to bring the ring up: hold it, tilt, let go. Under %s in the key bindings."]):format(self.name),
+            function() self:OpenKeyBindings() end)
+        S.Subheader(Loc["Picking"], on)
+        S.Dropdown(rc, "stick", Loc["Pick with"], Loc["The stick that points at a button while the ring is up."],
+            "right", { { "right", Loc["Right stick"] }, { "left", Loc["Left stick"] } }, redo)
+        S.Checkbox(rc, "camera", Loc["Hold the camera still"],
+            Loc["While the ring is up, the stick you pick with doesn't turn the camera (or move you, for the left stick)."],
+            true, nil, "radialCamera")
+        S.Subheader(Loc["Ring"], on)
+        S.Slider(rc, "scale", Loc["Ring size"], "", 1, 0.6, 1.6, 0.05, pct,
+            function() if self.radial and self.radial.display:IsShown() then self:RadialDraw() end end)
+        S.Checkbox(rc, "names", Loc["Button names"], Loc["Each button's name under it."], true, nil, "radialNames")
     end
 
     -- The reminder panel (v21): whether this kit uses it, and which of its
@@ -8341,6 +8426,8 @@ function Kit:RunSlash(msg)
         if self.Dock and self.Dock.Undock then self.Dock.Undock(self.key) end
         self:ApplyPosition()
         self:Print(Loc["Kit moved back to its starting spot."])
+    elseif cmd == "radialdebug" and self.radial then
+        self:RadialDebugToggle()
     elseif cmd == "minimap" then
         self.db.minimapButton = not self.db.minimapButton
         self:ApplyMinimap()
@@ -8349,6 +8436,1226 @@ function Kit:RunSlash(msg)
     else
         self:Print((Loc["Unknown command. %s help lists them."]):format(slash))
     end
+end
+
+---------------------------------------------------------------------------
+-- The radial, for controllers (v39)
+--
+-- With cfg.radial, a kit can be used from a controller as a ring round the
+-- middle of the screen instead of opening and closing it. Its binding
+-- ("CLICK <prefix>Radial:LeftButton", or /click <prefix>Radial in a macro
+-- on a gamepad bar) brings the ring up; tilting a stick points at a button;
+-- letting go of the binding (or A) uses it. Tapping the binding leaves the
+-- ring up until a button is used, B closes it, or the binding is pressed
+-- again with the stick centred.
+--
+-- The kit's three parts are three rings:
+--   main    the kit's ring (zone "ring", or cfg.ring[1]), and, when the kit
+--           has a row under its line, a "Below the line" button at the
+--           bottom that opens it
+--   inner   the kit's small buttons (a zone with small, or the small
+--           slots): X with the stick centred opens it, so a button that
+--           acts at once (Demonic Sacrifice) is never one flick away
+--   below   the row under the line, with the way back to the main ring at
+--           the top
+-- A slot with a drawer opens it as a ring of its own with X (the
+-- right-click of a mouse): the drawer opens with the slot's current
+-- choice under the stick, and a choice used there becomes the slot's, as
+-- a click in the drawer does. Y does a slot's "alternate" (slot.radialAlt,
+-- below), say Fel Domination before a summon. B goes back a ring, and
+-- closes the main one.
+--
+-- Everything that decides what's used is secure, so all of it works in
+-- combat: the header's snippets read the stick with GetGamePadState()
+-- and "/click" the slot (or drawer choice) it points at, through the
+-- button that was pressed. What's in each ring is worked out out of combat,
+-- on every refresh, and handed to the header as attributes. The ring you
+-- see is drawn by ordinary code from the same lists (and the stick, read
+-- the same way), so it can update in combat too.
+--
+-- While the ring is up, A, B, X and Y belong to it (override bindings on
+-- the header, cleared as it closes). The stick it reads is held off the
+-- camera (cfg setting), the way ConsolePort's rings do it: the camera's
+-- stick event for that frame is caught by a frame that stops it.
+--
+-- slot.radialAlt = { label = "...", ready = function(kit) end,
+--                    macro = function(kit, btn, choice, target) end }
+--     Y on this slot (choice nil) or on one of its drawer's choices: macro
+--     returns the macro text to run ("/cast X\n/click " .. target, target
+--     being the button's name) or nil for none; ready (optional) says
+--     whether to offer it right now (the prompt only: the macro is set out
+--     of combat).
+---------------------------------------------------------------------------
+
+local RADIAL = {
+    DEAD = 0.35,                     -- how far the stick leans before it points at anything (0..1)
+    KEYS = { use = "PAD1", back = "PAD2", open = "PAD3", alt = "PAD4" },
+    RADIUS = 175, ICON = 46, SMALL = 34,
+    INVERT_Y = 1,                    -- the stick's y: 1 = up is positive
+    RAW = { "Left", "Right", "Gyro" }, -- the game's stick events, in the order they come each frame
+    VIRT = { Left = "Movement", Right = "Camera", Gyro = "Look" },
+}
+
+-- Header snippets (run with owner:RunAttribute from the buttons' snippets).
+-- CUR is the ring that's up (nil: none), ROT how far a drawer is turned
+-- (degrees), so its current choice sits where its slot did.
+RADIAL.PICK = [[
+    if not CUR then return end
+    local n = self:GetAttribute("kcr-" .. CUR .. "-n") or 0
+    if n == 0 then return end
+    local st = GetGamePadState()
+    local s = st and st.sticks and st.sticks[self:GetAttribute("kcr-stick") or 2]
+    if not s or not s.len or s.len < (self:GetAttribute("kcr-dead") or 0.35) then return end
+    local ang = math.deg(math.atan2(s.x, s.y * (self:GetAttribute("kcr-invy") or 1)))
+    ang = (ang - (ROT or 0)) % 360
+    local best, bi = 1000, nil
+    for i = 1, n do
+        local a = self:GetAttribute("kcr-" .. CUR .. "-a" .. i) or 0
+        local d = math.abs(((ang - a + 540) % 360) - 180)
+        if d < best then best, bi = d, i end
+    end
+    return CUR, bi
+]]
+
+-- Bring up a ring: ring, and (for a drawer) the ring and index it was opened from.
+RADIAL.SWITCH = [[
+    local ring, from, fi = ...
+    if not ring or (self:GetAttribute("kcr-" .. ring .. "-n") or 0) == 0 then return end
+    local rot = 0
+    local slot = self:GetFrameRef("kcr-" .. ring .. "-slot")
+    if slot and from and fi then
+        -- A drawer: turned so its current choice sits under the stick.
+        local at = ((self:GetAttribute("kcr-" .. from .. "-a" .. fi) or 0) + (ROT or 0)) % 360
+        local v, c = slot:GetAttribute("kcvalue"), 1
+        if v ~= nil then
+            for j = 1, self:GetAttribute("kcr-" .. ring .. "-n") or 0 do
+                local f = self:GetFrameRef("kcr-" .. ring .. "-f" .. j)
+                if f and f:GetAttribute("kcvalue") == v then c = j break end
+            end
+        end
+        rot = (at - (self:GetAttribute("kcr-" .. ring .. "-a" .. c) or 0)) % 360
+    end
+    CUR, ROT = ring, rot
+    local d = self:GetFrameRef("kcr-display")
+    d:SetAttribute("kcr-rot", rot)
+    d:SetAttribute("kcr-cur", ring)
+]]
+
+RADIAL.OPEN = [[
+    if self:GetAttribute("kcr-isopen") then return true end
+    if (self:GetAttribute("kcr-main-n") or 0) == 0 then return false end
+    self:SetAttribute("kcr-isopen", true)
+    self:RunAttribute("kcr-switch", "main")
+    self:GetFrameRef("kcr-display"):Show()
+    self:RunAttribute("kcr-roles")
+    return true
+]]
+
+-- A, B, X and Y go to the ring while it's up (override bindings on the
+-- header), except a key that's held right now or is bound to bring the ring
+-- up: a key's release goes only to what took its press, and changing a held
+-- key's binding loses the release altogether (so the gamepad bar slot that
+-- opened the ring, still held, would never be let go of). Run again once the
+-- slot is let go, to bind what was skipped. kcr-pk<i> is pad button i's key,
+-- set out of combat. (No table literals or the keyword for making closures
+-- in a snippet, not even in a comment: the game won't compile it.)
+RADIAL.ROLES = [[
+    local held = "|"
+    local st = GetGamePadState()
+    local pressed = st and st.buttons
+    if pressed then
+        for i = 1, (self:GetAttribute("kcr-pkn") or 0) do
+            local key = pressed[i] and self:GetAttribute("kcr-pk" .. i)
+            if key then held = held .. key .. "|" end
+        end
+    end
+    local t1, t2 = self:GetAttribute("kcr-trig1"), self:GetAttribute("kcr-trig2")
+    local k = self:GetAttribute("kcr-key-use")
+    if k and k ~= t1 and k ~= t2 and not strfind(held, "|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-use"), "LeftButton") end
+    k = self:GetAttribute("kcr-key-back")
+    if k and k ~= t1 and k ~= t2 and not strfind(held, "|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-back"), "LeftButton") end
+    k = self:GetAttribute("kcr-key-open")
+    if k and k ~= t1 and k ~= t2 and not strfind(held, "|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-open"), "LeftButton") end
+    k = self:GetAttribute("kcr-key-alt")
+    if k and k ~= t1 and k ~= t2 and not strfind(held, "|" .. k .. "|", 1, true) then self:SetBindingClick(true, k, self:GetAttribute("kcr-btn-alt"), "LeftButton") end
+]]
+
+RADIAL.CLOSE = [[
+    self:ClearBindings()
+    self:SetAttribute("kcr-isopen", false)
+    self:SetAttribute("kcr-held", false)
+    self:SetAttribute("kcr-opener", nil)
+    CUR, ROT = nil, 0
+    local d = self:GetFrameRef("kcr-display")
+    d:SetAttribute("kcr-cur", nil)
+    d:Hide()
+]]
+
+-- What's under the stick: switch to its ring (Below the line, the way back,
+-- a slot whose drawer is all it does) and say "ring", or say "use" with the
+-- button to click. Nothing under it: nil.
+RADIAL.USE = [[
+    local ring, i = self:RunAttribute("kcr-pick")
+    if not ring then return end
+    local pre = "kcr-" .. ring
+    if self:GetAttribute(pre .. "-k" .. i) == "ring" then
+        self:RunAttribute("kcr-switch", self:GetAttribute(pre .. "-o" .. i), ring, i)
+        return "ring"
+    end
+    local t = self:GetAttribute(pre .. "-t" .. i)
+    if t then return "use", t end
+]]
+
+-- The binding that brings the ring up. Its press opens the ring; its release
+-- uses what the stick points at (hold, lean, let go). Released with the stick
+-- centred, the ring stays up (a tap), and the next press uses or, centred,
+-- closes. A macro's /click is one release: it opens, then uses or closes;
+-- from a gamepad bar, letting go of the slot is caught on the bar button
+-- itself (RADIAL.BARPRE).
+RADIAL.TRIGGER = [[
+    self:SetAttribute("type", nil)
+    if down then
+        if not owner:GetAttribute("kcr-isopen") then
+            if owner:RunAttribute("kcr-open") then owner:SetAttribute("kcr-held", true) end
+        end
+        return false
+    end
+    if not owner:GetAttribute("kcr-isopen") then
+        owner:RunAttribute("kcr-open")
+        return false
+    end
+    local held = owner:GetAttribute("kcr-held")
+    owner:SetAttribute("kcr-held", false)
+    local what, t = owner:RunAttribute("kcr-use")
+    if what == "use" then
+        self:SetAttribute("type", "macro")
+        self:SetAttribute("macrotext", "/click " .. t)
+        owner:RunAttribute("kcr-close")
+        return
+    end
+    if what == "ring" or held then return false end
+    owner:RunAttribute("kcr-close")
+    return false
+]]
+
+-- A: use what the stick points at.
+RADIAL.A = [[
+    self:SetAttribute("type", nil)
+    if down or not owner:GetAttribute("kcr-isopen") then return false end
+    local what, t = owner:RunAttribute("kcr-use")
+    if what == "use" then
+        self:SetAttribute("type", "macro")
+        self:SetAttribute("macrotext", "/click " .. t)
+        owner:RunAttribute("kcr-close")
+        return
+    end
+    return false
+]]
+
+-- B: back a ring, or close.
+RADIAL.B = [[
+    if down or not owner:GetAttribute("kcr-isopen") then return false end
+    if CUR == "main" then
+        owner:RunAttribute("kcr-close")
+    else
+        owner:RunAttribute("kcr-switch", owner:GetAttribute("kcr-" .. CUR .. "-up") or "main")
+    end
+    return false
+]]
+
+-- X: open what's behind the button the stick points at (a drawer, the row
+-- under the line); with the stick centred on the main ring, the inner ring.
+RADIAL.X = [[
+    if down or not owner:GetAttribute("kcr-isopen") then return false end
+    local ring, i = owner:RunAttribute("kcr-pick")
+    if ring then
+        local sub = owner:GetAttribute("kcr-" .. ring .. "-o" .. i)
+        if sub then owner:RunAttribute("kcr-switch", sub, ring, i) end
+    elseif CUR == "main" and (owner:GetAttribute("kcr-inner-n") or 0) > 0 then
+        owner:RunAttribute("kcr-switch", "inner")
+    end
+    return false
+]]
+
+-- Y: the alternate (slot.radialAlt) of what the stick points at.
+RADIAL.Y = [[
+    self:SetAttribute("type", nil)
+    if down or not owner:GetAttribute("kcr-isopen") then return false end
+    local ring, i = owner:RunAttribute("kcr-pick")
+    if not ring then return false end
+    local m = owner:GetAttribute("kcr-" .. ring .. "-y" .. i)
+    if not m then return false end
+    self:SetAttribute("type", "macro")
+    self:SetAttribute("macrotext", m)
+    owner:RunAttribute("kcr-close")
+]]
+
+-- Gamepad bar buttons. The game sends a button's release to whatever took
+-- its press, and the gamepad bar clicks the same bar button again on
+-- release (GamepadMainActionBarFrame:PressActionButton keeps the owner), so
+-- letting go of the bar slot whose macro opened the ring reaches that bar
+-- button, never the ring. Each bar button's clicks are wrapped (out of
+-- combat; Kit:RadialWrapBars): the press notes whether it opened the ring,
+-- and that button's release uses what the stick points at, through the bar
+-- button's own release action (pressAndHoldAction + typerelease, which
+-- SecureActionButton runs on a release), put back straight after. Let go
+-- with the stick centred (or on a drawer), the ring stays up as after a tap.
+-- self is the bar button, owner the ring's header.
+RADIAL.BARPRE = [[
+    if down then
+        if owner:GetAttribute("kcr-isopen") then return nil, "was" end
+        return nil, "wasnt"
+    end
+    if not owner:GetAttribute("kcr-isopen") or owner:GetAttribute("kcr-opener") ~= self then return end
+    owner:SetAttribute("kcr-opener", nil)
+    owner:SetAttribute("kcr-held", false)
+    local what, t = owner:RunAttribute("kcr-use")
+    if what ~= "use" then
+        owner:RunAttribute("kcr-roles")
+        return
+    end
+    self:SetAttribute("pressAndHoldAction", true)
+    self:SetAttribute("typerelease", "macro")
+    self:SetAttribute("macrotext", "/click " .. t)
+    owner:RunAttribute("kcr-close")
+    return nil, "used"
+]]
+RADIAL.BARPOST = [[
+    if message == "wasnt" then
+        if owner:GetAttribute("kcr-isopen") then owner:SetAttribute("kcr-opener", self) end
+    elseif message == "used" then
+        self:SetAttribute("pressAndHoldAction", nil)
+        self:SetAttribute("typerelease", nil)
+        self:SetAttribute("macrotext", nil)
+    end
+]]
+
+-- The stick a kit reads: its index in the game's mapped state, found by the
+-- name the game gives it ("Camera" is the right stick, "Movement" the left).
+function RADIAL.StickIndex(which)
+    local names = which == "left" and { "Movement", "Left" } or { "Camera", "Right" }
+    local st = C_GamePad and C_GamePad.GetDeviceMappedState and C_GamePad.GetDeviceMappedState()
+    local count = st and (st.stickCount or (st.sticks and #st.sticks)) or 0
+    if C_GamePad and C_GamePad.StickIndexToConfigName then
+        for _, want in ipairs(names) do
+            for i = 1, count do
+                local ok, n = pcall(C_GamePad.StickIndexToConfigName, i - 1)
+                if ok and n == want then return i end
+            end
+        end
+    end
+    return which == "left" and 1 or 2
+end
+
+-- The stick as the snippets read it: x, y, length (nil if there's no pad).
+function RADIAL.Stick(index)
+    local st = C_GamePad and C_GamePad.GetDeviceMappedState and C_GamePad.GetDeviceMappedState()
+    local s = st and st.sticks and st.sticks[index]
+    if not s then return nil end
+    return s.x or 0, s.y or 0, s.len or 0
+end
+
+-- Which of a ring's buttons the stick points at (the same sum as PICK).
+function RADIAL.Index(items, rot, x, y, len)
+    if not (items and #items > 0 and len and len >= RADIAL.DEAD) then return nil end
+    local ang = (math.deg(math.atan2(x, y * RADIAL.INVERT_Y)) - (rot or 0)) % 360
+    local best, bi = 1000, nil
+    for i, it in ipairs(items) do
+        local d = math.abs(((ang - it.a + 540) % 360) - 180)
+        if d < best then best, bi = d, i end
+    end
+    return bi
+end
+
+-- Holding the camera still while a ring reads the right stick (or the
+-- character still, for the left). Each frame the game sends the sticks'
+-- raw events (Left, Right, Gyro) and then their twins (Movement, Camera,
+-- Look), and acts on the twins. A frame that takes stick input and doesn't
+-- pass it on, shown just before the twin of the stick we read, stops that
+-- one alone; it hides again at the end of the frame. If a stick earlier in
+-- the order moved this frame, its twin has to get past first, so the
+-- stopper waits for it. (Seen in ConsolePort; propagation can't change in
+-- combat, showing and hiding can, so both frames are set up once.) After
+-- the ring closes it keeps holding until the stick is let go, so the
+-- camera doesn't jump.
+function RADIAL.Holder()
+    if C.radialHold then return C.radialHold end
+    local H = CreateFrame("Frame")
+    local stop = CreateFrame("Frame")
+    H:SetFrameStrata("BACKGROUND")
+    stop:SetFrameStrata("TOOLTIP")
+    Try(H.SetPropagateKeyboardInput, H, true)
+    Try(stop.SetPropagateKeyboardInput, stop, false)
+    Try(H.EnableGamePadStick, H, false)
+    Try(stop.EnableGamePadStick, stop, true)
+    stop:Hide()
+    H.seen = {}
+    H:SetScript("OnGamePadStick", function(_, stick, x, y, len) -- (errors, on a client without it: see the callers)
+        if not H.raw then return end
+        if stick == H.raw then
+            if (len or 0) > 0 then
+                local wait
+                for _, r in ipairs(RADIAL.RAW) do
+                    if r == H.raw then break end
+                    if H.seen[r] then wait = RADIAL.VIRT[r] end
+                end
+                if wait then H.armed = wait else stop:Show() end
+            elseif not H.open then
+                H:Release() -- (closed, and the stick's back in the middle)
+            end
+        elseif stick == H.armed then
+            H.armed = nil
+            stop:Show()
+        end
+        if RADIAL.VIRT[stick] then H.seen[stick] = true end
+    end)
+    H:SetScript("OnUpdate", function()
+        wipe(H.seen)
+        H.armed = nil
+        if stop:IsShown() then stop:Hide() end
+    end)
+    stop:SetScript("OnGamePadStick", function(_, stick)
+        if stick == RADIAL.VIRT[H.raw or ""] then stop:Hide() end
+    end)
+    H:Hide()
+    function H:Hold(which)
+        self.raw = which == "left" and "Left" or "Right"
+        self.open = true
+        if self.timer then self.timer:Cancel() self.timer = nil end
+        self:Show()
+        Try(self.EnableGamePadStick, self, true)
+    end
+    -- The ring closed: keep holding until the stick's let go (or a second).
+    function H:Closed()
+        self.open = false
+        if not self.raw then return end
+        if C_Timer and C_Timer.NewTimer then
+            if self.timer then self.timer:Cancel() end
+            self.timer = C_Timer.NewTimer(1, function() H.timer = nil H:Release() end)
+        else
+            self:Release()
+        end
+    end
+    function H:Release()
+        if self.open then return end
+        self.raw, self.armed = nil, nil
+        Try(self.EnableGamePadStick, self, false)
+        self:Hide()
+        stop:Hide()
+    end
+    C.radialHold = H
+    return H
+end
+
+-- The ring's art: what's on the kit's buttons, read as it's drawn.
+local function RadialArt(kit, it)
+    local b = it.btn
+    if it.special then return nil end
+    if it.choice then return Val(it.choice.icon), Val(it.choice.dim) end
+    if not b then return nil end
+    -- A slot that's hidden with the kit closed (the small ones) isn't
+    -- painted by PaintAll, so it may have no icon yet: paint it now.
+    if not (b:IsShown() or (b.twin and b.twin:IsShown())) then pcall(kit.PaintSlot, kit, b) end
+    local tex = b.icon and b.icon:GetTexture()
+    if not tex then
+        -- (still none: what the button casts or uses)
+        local sp = U.ButtonSpell(b)
+        tex = sp and U.SpellIcon(sp)
+        if not tex then
+            local item = b:GetAttribute("item")
+            local id = item and tonumber(tostring(item):match("item:(%d+)") or item)
+            tex = id and U.ItemIcon(id)
+        end
+    end
+    return tex, b.greyed
+end
+
+-- A button's name for the middle of the ring: what it casts or uses, else its label.
+local function RadialName(kit, it)
+    if it.special then return it.label end
+    local c = it.choice or (it.btn and it.btn.assigned)
+    if c and c.label then return c.label end
+    local b = it.btn
+    if c and c.spell then return U.SpellName(c.spell) or it.label end
+    if c and c.item then return U.ItemName(c.item) or it.label end
+    if b then
+        local sp = U.ButtonSpell(b)
+        if sp then
+            local n = type(sp) == "number" and U.SpellName(sp) or sp
+            if n and not U.Sealed(n) then return n end
+        end
+        local item = b:GetAttribute("item")
+        if item then
+            local id = tonumber(tostring(item):match("item:(%d+)") or item)
+            local n = id and U.ItemName(id)
+            if n then return n end
+        end
+    end
+    return it.label
+end
+
+function Kit:RadialCfg()
+    local r = self.db and self.db.radial
+    if type(r) ~= "table" then return { on = true, stick = "right", camera = true, scale = 1, names = true } end
+    return r
+end
+
+-- The slots in each ring, in order: zone lists if the kit has them, else
+-- the kit's first ring, its small slots and the row under its line.
+function Kit:RadialLists()
+    local cfg = self.cfg
+    local main, inner, below, seen = {}, {}, {}, {}
+    local function Add(list, key)
+        if seen[key] or not self.slots[key] then return end
+        seen[key] = true
+        list[#list + 1] = key
+    end
+    if cfg.zones then
+        local lists = self:Zones()
+        for _, z in ipairs(cfg.zones) do
+            local dest = z.small and inner or (z.ring and main) or below
+            for _, key in ipairs(lists[z.key] or {}) do Add(dest, key) end
+        end
+    else
+        local rings = self:Rings()
+        local belowSet = {}
+        for _, key in ipairs(cfg.divider and cfg.divider.below or {}) do belowSet[key] = true end
+        for _, ring in ipairs(rings) do
+            for _, key in ipairs(ring.keys or {}) do
+                local slot = self.slotByKey[key]
+                if slot and not belowSet[key] then Add(slot.small and inner or main, key) end
+            end
+        end
+        for _, key in ipairs(cfg.divider and cfg.divider.below or {}) do Add(below, key) end
+    end
+    -- (anything left: by its size)
+    for _, slot in ipairs(cfg.slots) do Add(slot.small and inner or main, slot.key) end
+    return main, inner, below
+end
+
+-- Out of combat, on every refresh: what's in each ring, for the snippets
+-- (header attributes) and for drawing it (self.radial.rings).
+function Kit:RadialRefresh()
+    local R = self.radial
+    if not R or InCombatLockdown() or self.trial then return end
+    self:RadialWrapBars()
+    local rc = self:RadialCfg()
+    local on = rc.on ~= false and self.db.shown ~= false
+    local function Usable(key)
+        local b = self.slots[key]
+        return on and b and not b.hidden and true or false
+    end
+    local rings = {}
+    local function AltFor(slot, btn, choice, target)
+        local alt = slot.radialAlt
+        if not (alt and alt.macro) then return nil end
+        local ok, m = pcall(alt.macro, self, btn, choice, target)
+        return ok and m or nil
+    end
+    -- A slot's drawer as a ring of its own (its choices, as laid out).
+    local function Drawer(key, up)
+        local b = self.slots[key]
+        local fly = b and b.fly
+        if not (fly and (fly.count or 0) > 0) then return nil end
+        local id = "d:" .. key
+        local items = {}
+        local m = math.min(fly.count, 16)
+        for j = 1, m do
+            local fb = fly.buttons[j]
+            local c = fb and fb.choice
+            if c then
+                local name = fb:GetName()
+                items[#items + 1] = { kind = "use", target = name, frame = fb, choice = c, btn = b,
+                    label = c.label, alt = AltFor(b.slot, b, c, name), slot = b.slot }
+            end
+        end
+        if #items == 0 then return nil end
+        for j, it in ipairs(items) do it.a = (j - 1) * 360 / #items end
+        rings[id] = { items = items, up = up, slot = b, drawer = true }
+        return id
+    end
+    local function SlotItem(key, ringId)
+        local b = self.slots[key]
+        local slot = b.slot
+        local it = { kind = "use", target = b:GetName(), btn = b, label = slot.label, slot = slot,
+            small = slot.small and true or false }
+        if b.fly then
+            local sub = Drawer(key, ringId)
+            if sub then
+                it.open = sub
+                -- (a drawer that opens on any click: using the slot is opening it)
+                if slot.flyout == "left" then it.kind = "ring" end
+            elseif slot.flyout == "left" then
+                return nil
+            end
+        end
+        it.alt = AltFor(slot, b, nil, it.target)
+        return it
+    end
+    local mainKeys, innerKeys, belowKeys = self:RadialLists()
+    local function Build(keys, ringId)
+        local items = {}
+        for _, key in ipairs(keys) do
+            if Usable(key) then
+                local it = SlotItem(key, ringId)
+                if it then items[#items + 1] = it end
+            end
+        end
+        return items
+    end
+    local below = Build(belowKeys, "below")
+    local main = Build(mainKeys, "main")
+    local inner = Build(innerKeys, "inner")
+    -- Main: left to right over the top, clockwise; with a row under the line,
+    -- its button at the bottom and the rest spread round from it.
+    if #below > 0 then
+        local step = 360 / (#main + 1)
+        for i, it in ipairs(main) do it.a = (180 + i * step) % 360 end
+        table.insert(main, 1, { kind = "ring", open = "below", special = "below", a = 180,
+            label = Loc["Below the line"] })
+        local stepB = 360 / (#below + 1)
+        for i, it in ipairs(below) do it.a = (360 - i * stepB) % 360 end
+        table.insert(below, 1, { kind = "ring", open = "main", special = "back", a = 0, label = Loc["Back to the ring"] })
+        rings.below = { items = below, up = "main" }
+    elseif #main > 0 then
+        local step = 360 / #main
+        for i, it in ipairs(main) do it.a = (180 + (i - 0.5) * step) % 360 end
+    end
+    -- Inner: spread round from the bottom, left to right as on the kit.
+    if #inner > 0 then
+        local step = 360 / #inner
+        for i, it in ipairs(inner) do it.a = (180 - (i - (#inner + 1) / 2) * step) % 360 end
+        rings.inner = { items = inner, up = "main" }
+    end
+    rings.main = { items = main }
+    R.rings = rings
+
+    -- Hand it to the header, only when something changed.
+    local parts = {}
+    for id, ring in pairs(rings) do
+        parts[#parts + 1] = id .. "/" .. (ring.up or "") .. "/" .. #ring.items
+        for i, it in ipairs(ring.items) do
+            parts[#parts + 1] = ("%d:%s:%s:%.1f:%s:%s"):format(i, it.kind, it.target or "", it.a or 0, it.open or "", it.alt or "")
+        end
+    end
+    table.sort(parts)
+    R.stick = RADIAL.StickIndex(rc.stick)
+    local sig = table.concat(parts, "|") .. "|" .. tostring(R.stick) .. "|" .. (rc.stick or "right")
+    if sig == R.sig then return end
+    R.sig = sig
+    local h = R.header
+    -- (rings from before that are gone: emptied)
+    for id in pairs(R.pushed or {}) do
+        if not rings[id] then h:SetAttribute("kcr-" .. id .. "-n", 0) end
+    end
+    R.pushed = {}
+    for id, ring in pairs(rings) do
+        local pre = "kcr-" .. id
+        R.pushed[id] = true
+        h:SetAttribute(pre .. "-n", #ring.items)
+        h:SetAttribute(pre .. "-up", ring.up)
+        if ring.drawer then SecureHandlerSetFrameRef(h, pre .. "-slot", ring.slot) end
+        for i, it in ipairs(ring.items) do
+            h:SetAttribute(pre .. "-a" .. i, it.a)
+            h:SetAttribute(pre .. "-k" .. i, it.kind)
+            h:SetAttribute(pre .. "-t" .. i, it.target)
+            h:SetAttribute(pre .. "-o" .. i, it.open)
+            h:SetAttribute(pre .. "-y" .. i, it.alt)
+            if it.frame then SecureHandlerSetFrameRef(h, pre .. "-f" .. i, it.frame) end
+        end
+    end
+    h:SetAttribute("kcr-stick", R.stick)
+    if R.display:IsShown() then self:RadialDraw() end
+end
+
+-- Made once (out of combat, as the kit is built): the header and its
+-- buttons, and the ring you see.
+function Kit:BuildRadial()
+    if self.radial or not self.cfg.radial then return end
+    local P = self.prefix
+    local R = {}
+    self.radial = R
+    local h = CreateFrame("Frame", P .. "RadialHeader", UIParent, "SecureHandlerBaseTemplate")
+    R.header = h
+    h:Execute([[ CUR = nil ROT = 0 ]])
+    h:SetAttribute("kcr-pick", RADIAL.PICK)
+    h:SetAttribute("kcr-switch", RADIAL.SWITCH)
+    h:SetAttribute("kcr-open", RADIAL.OPEN)
+    h:SetAttribute("kcr-close", RADIAL.CLOSE)
+    h:SetAttribute("kcr-roles", RADIAL.ROLES)
+    h:SetAttribute("kcr-use", RADIAL.USE)
+    h:SetAttribute("kcr-dead", RADIAL.DEAD)
+    h:SetAttribute("kcr-invy", RADIAL.INVERT_Y)
+    h:SetAttribute("kcr-stick", 2)
+    h:SetAttribute("kcr-isopen", false)
+
+    local function Button(suffix, body)
+        local b = CreateFrame("Button", P .. "Radial" .. suffix, UIParent, "SecureActionButtonTemplate")
+        b:RegisterForClicks("AnyUp", "AnyDown")
+        b:SetAttribute("useOnKeyDown", false)
+        b:SetSize(1, 1)
+        b:Hide()
+        SecureHandlerWrapScript(b, "OnClick", h, body)
+        return b
+    end
+    R.trigger = Button("", RADIAL.TRIGGER)
+    h:SetAttribute("kcr-btn-trigger", R.trigger:GetName())
+    local names = {}
+    for role, body in pairs({ use = RADIAL.A, back = RADIAL.B, open = RADIAL.X, alt = RADIAL.Y }) do
+        local b = Button(role:sub(1, 1):upper() .. role:sub(2), body)
+        names[role] = b:GetName()
+        h:SetAttribute("kcr-btn-" .. role, b:GetName())
+        h:SetAttribute("kcr-key-" .. role, RADIAL.KEYS[role])
+    end
+
+    -- The ring you see: shown and hidden by the snippets (so it's secure
+    -- itself), drawn by ordinary code on a plain frame inside it.
+    local d = CreateFrame("Frame", P .. "RadialRing", UIParent, "SecureHandlerBaseTemplate")
+    d:SetFrameStrata("DIALOG")
+    d:SetSize(2, 2)
+    d:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    d:Hide()
+    R.display = d
+    SecureHandlerSetFrameRef(h, "kcr-display", d)
+    local v = CreateFrame("Frame", nil, d)
+    v:SetSize(520, 600)
+    v:SetPoint("CENTER")
+    R.view = v
+    self:RadialArtParts()
+    d:HookScript("OnAttributeChanged", function(_, name)
+        if name == "kcr-cur" or name == "kcr-rot" then self:RadialDraw() end
+    end)
+    d:HookScript("OnShow", function()
+        local rc = self:RadialCfg()
+        if rc.camera ~= false then pcall(function() RADIAL.Holder():Hold(rc.stick) end) end
+        R.lastIndex = nil
+        self:RadialDraw()
+        GameTooltip:Hide()
+        if R.debug and C_Timer then C_Timer.After(0, function() self:RadialDebugState("opened") end) end
+    end)
+    d:HookScript("OnHide", function()
+        if C.radialHold then pcall(C.radialHold.Closed, C.radialHold) end
+        if R.debug then self:RadialDebug("closed") end
+    end)
+    R.trigger:HookScript("OnClick", function(_, button, down)
+        if R.debug then
+            self:RadialDebug(("trigger %s (%s): ring now %s"):format(down and "PRESS" or "RELEASE", tostring(button),
+                h:GetAttribute("kcr-isopen") and "open" or "closed"))
+        end
+    end)
+    v:SetScript("OnUpdate", function(_, elapsed) self:RadialTick(elapsed) end)
+    -- (the camera holder's frames are set up now, out of combat: whether they
+    -- pass stick input on can't be set in a fight)
+    pcall(RADIAL.Holder)
+end
+
+-- Debug readout (/<slash> radialdebug, out of combat): chat lines on what
+-- the ring sees, to find out in game where a press or release goes.
+-- English only, on purpose: it's for whoever is testing.
+function Kit:RadialDebug(msg)
+    print("|cffd8b4ff" .. self.prefix .. " radial:|r " .. tostring(msg))
+end
+
+local function PadKeyAction(key)
+    if not (key and GetBindingAction) then return "?" end
+    local a = GetBindingAction(key, true)
+    return (a and a ~= "") and a or "(nothing)"
+end
+
+function Kit:RadialDebugState(what)
+    local R = self.radial
+    if not (R and R.debug) then return end
+    local h = R.header
+    local held = {}
+    local st = C_GamePad and C_GamePad.GetDeviceMappedState and C_GamePad.GetDeviceMappedState()
+    if st and st.buttons then
+        for i, down in pairs(st.buttons) do
+            if down then
+                local name = C_GamePad.ButtonIndexToBinding and C_GamePad.ButtonIndexToBinding(i - 1)
+                held[#held + 1] = ("#%s %s, mapped as %s, bound to %s"):format(tostring(i), tostring(name),
+                    tostring(h:GetAttribute("kcr-pk" .. i)), PadKeyAction(name))
+            end
+        end
+    end
+    local wrapped = 0
+    for _ in pairs(R.barWrapped or {}) do wrapped = wrapped + 1 end
+    self:RadialDebug(("%s. pad state: %s; held now: %s; held flag: %s; keys mapped: %s; bar buttons wrapped: %d%s; opened by a bar button: %s"):format(what,
+        st and "yes" or "NONE", #held > 0 and table.concat(held, " | ") or "none",
+        tostring(h:GetAttribute("kcr-held")), tostring(h:GetAttribute("kcr-pkn")), wrapped,
+        R.barWrapErr and (" (error: " .. tostring(R.barWrapErr) .. ")") or "",
+        h:GetAttribute("kcr-opener") and "yes" or "no"))
+end
+
+function Kit:RadialDebugToggle()
+    local R = self.radial
+    if not R then self:Print("No radial in this kit.") return end
+    R.debug = not R.debug
+    if R.debug and not R.debugPad then
+        -- Sees every pad press and release first, passing it on to the game.
+        local f = CreateFrame("Frame")
+        pcall(f.SetPropagateKeyboardInput, f, true)
+        f:EnableGamePadButton(true)
+        f:SetScript("OnGamePadButtonDown", function(_, key)
+            if R.debug then self:RadialDebug(("pad PRESS %s, bound to %s"):format(tostring(key), PadKeyAction(key))) end
+        end)
+        f:SetScript("OnGamePadButtonUp", function(_, key)
+            if R.debug then self:RadialDebug(("pad RELEASE %s, bound to %s"):format(tostring(key), PadKeyAction(key))) end
+        end)
+        R.debugPad = f
+    end
+    if R.debugPad then R.debugPad:SetShown(R.debug) end
+    self:RadialDebug(R.debug and "debug on (same command turns it off)" or "debug off")
+    if R.debug then self:RadialDebugState("now") end
+end
+
+-- The parts of the ring you see (made once).
+function Kit:RadialArtParts()
+    local R, v = self.radial, self.radial.view
+    local M = self.media
+    local bg = v:CreateTexture(nil, "BACKGROUND", nil, -7)
+    bg:SetTexture(M .. "circle_mask")
+    bg:SetVertexColor(0.05, 0.04, 0.07, 0.82)
+    bg:SetPoint("CENTER", 0, 30)
+    R.bg = bg
+    local rim = v:CreateTexture(nil, "BACKGROUND", nil, -6)
+    rim:SetTexture(M .. "glow_ring")
+    rim:SetBlendMode("ADD")
+    rim:SetVertexColor(0.85, 0.7, 0.35, 0.55)
+    rim:SetPoint("CENTER", bg)
+    R.rim = rim
+    -- The middle: the kit's own button (or the slot a drawer came from).
+    local mid = CreateFrame("Frame", nil, v)
+    mid:SetSize(84, 84)
+    mid:SetPoint("CENTER", bg, "CENTER", 0, 8)
+    mid.icon = mid:CreateTexture(nil, "ARTWORK")
+    mid.icon:SetPoint("TOPLEFT", 9, -9)
+    mid.icon:SetPoint("BOTTOMRIGHT", -9, 9)
+    local mask = mid:CreateMaskTexture()
+    mask:SetTexture(M .. "circle_mask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+    mask:SetAllPoints(mid.icon)
+    mid.icon:AddMaskTexture(mask)
+    mid.ring = mid:CreateTexture(nil, "OVERLAY", nil, 6)
+    mid.ring:SetAllPoints()
+    mid.text = mid:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+    mid.text:SetPoint("CENTER", 0, 1)
+    mid.text:SetTextColor(1, 1, 1)
+    mid.text:SetShadowOffset(1, -1)
+    mid.badge = mid:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    mid.badge:SetPoint("BOTTOM", mid, "TOP", 0, 2)
+    mid.badge:SetTextColor(0.72, 0.68, 0.8)
+    R.mid = mid
+    -- What the stick points at, under the middle.
+    R.title = v:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    R.title:SetPoint("TOP", mid, "BOTTOM", 0, -6)
+    R.title:SetWidth(230)
+    R.title:SetWordWrap(false)
+    R.sub = v:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    R.sub:SetPoint("TOP", R.title, "BOTTOM", 0, -3)
+    R.sub:SetWidth(240)
+    R.sub:SetTextColor(0.75, 0.72, 0.82)
+    -- The pointer: a small arrow inside the ring, toward what's picked.
+    R.arrow = v:CreateTexture(nil, "OVERLAY")
+    R.arrow:SetTexture("Interface\\Minimap\\MinimapArrow")
+    R.arrow:SetVertexColor(0.95, 0.8, 0.45)
+    R.arrow:SetSize(26, 26)
+    R.arrow:Hide()
+    -- The divider, over the middle of the ring under the line.
+    if self.divider and self.divider.tex then
+        R.line = v:CreateTexture(nil, "ARTWORK")
+        R.line:SetSize(220, 14)
+        R.line:Hide()
+    end
+    -- The button prompts along the bottom.
+    R.prompts = {}
+    local bar = CreateFrame("Frame", nil, v)
+    bar:SetSize(10, 28)
+    bar:SetPoint("BOTTOM", v, "BOTTOM", 0, 0)
+    R.bar = bar
+    R.cells = {}
+end
+
+-- One button on the ring (made as needed).
+function Kit:RadialCell(i)
+    local R = self.radial
+    local w = R.cells[i]
+    if w then return w end
+    local M = self.media
+    w = CreateFrame("Frame", nil, R.view)
+    w:SetSize(RADIAL.ICON, RADIAL.ICON)
+    w.icon = w:CreateTexture(nil, "ARTWORK")
+    w.icon:SetPoint("TOPLEFT", 2, -2)
+    w.icon:SetPoint("BOTTOMRIGHT", -2, 2)
+    local mask = w:CreateMaskTexture()
+    mask:SetTexture(M .. "circle_mask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+    mask:SetAllPoints(w.icon)
+    w.icon:AddMaskTexture(mask)
+    w.ring = w:CreateTexture(nil, "OVERLAY", nil, 6)
+    w.ring:SetPoint("TOPLEFT", -1, 1)
+    w.ring:SetPoint("BOTTOMRIGHT", 1, -1)
+    w.glow = w:CreateTexture(nil, "BACKGROUND")
+    w.glow:SetTexture(M .. "glow_ring")
+    w.glow:SetBlendMode("ADD")
+    w.glow:SetPoint("CENTER")
+    w.glow:Hide()
+    C.glows[w.glow] = true
+    w.sel = w:CreateTexture(nil, "BACKGROUND", nil, 1)
+    w.sel:SetTexture(M .. "glow_ring")
+    w.sel:SetBlendMode("ADD")
+    w.sel:SetVertexColor(1, 0.88, 0.55)
+    w.sel:SetPoint("CENTER")
+    w.sel:Hide()
+    w.arrow = w:CreateTexture(nil, "OVERLAY", nil, 7)
+    w.arrow:SetTexture("Interface\\Minimap\\MinimapArrow")
+    w.arrow:SetVertexColor(0.95, 0.8, 0.45)
+    w.arrow:SetPoint("CENTER")
+    w.arrow:Hide()
+    -- (a button that opens something: a small gold chevron on its corner)
+    w.badge = w:CreateTexture(nil, "OVERLAY", nil, 7)
+    w.badge:SetTexture("Interface\\Minimap\\MinimapArrow")
+    w.badge:SetVertexColor(0.95, 0.8, 0.45)
+    w.badge:SetSize(14, 14)
+    w.badge:SetPoint("CENTER", w, "TOPRIGHT", -3, -3)
+    w.badge:SetRotation(-math.pi / 2)
+    w.count = w:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
+    w.count:SetPoint("BOTTOMRIGHT", -1, 1)
+    w.label = w:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    w.label:SetPoint("TOP", w, "BOTTOM", 0, -2)
+    w.label:SetWidth(110)
+    w.label:SetWordWrap(false)
+    R.cells[i] = w
+    return w
+end
+
+-- Draw the ring that's up (any time: it's all plain frames and textures).
+function Kit:RadialDraw()
+    local R = self.radial
+    if not R then return end
+    local d = R.display
+    local id = d:GetAttribute("kcr-cur")
+    local ring = id and R.rings and R.rings[id]
+    for _, w in ipairs(R.cells) do w:Hide() end
+    R.arrow:Hide()
+    if R.line then R.line:Hide() end
+    R.lastIndex, R.promptsFor = nil, false
+    if not ring then return end
+    local rc = self:RadialCfg()
+    R.view:SetScale(math.max(0.5, math.min(2, tonumber(rc.scale) or 1)))
+    local rot = tonumber(d:GetAttribute("kcr-rot")) or 0
+    R.id, R.ring, R.rot = id, ring, rot
+    local inner = id == "inner"
+    local radius = inner and RADIAL.RADIUS * 0.62 or RADIAL.RADIUS
+    local bgSize = (radius + RADIAL.ICON + 26) * 2
+    R.bg:SetSize(bgSize, bgSize)
+    R.rim:SetSize(bgSize * 1.04, bgSize * 1.04)
+    R.radius = radius
+    local cx, cy = 0, 30
+    for i, it in ipairs(ring.items) do
+        local w = self:RadialCell(i)
+        local size = it.small and RADIAL.SMALL or RADIAL.ICON
+        it.size = size
+        w:SetSize(size, size)
+        w.glow:SetSize(size * 1.7, size * 1.7)
+        w.sel:SetSize(size * 1.9, size * 1.9)
+        if it.small then
+            w.ring:SetTexture(self.media .. "ring_prof_" .. ArtSize(ScreenPx(w, size), PROF_RING_SIZES), nil, nil, "LINEAR")
+        else
+            w.ring:SetTexture(self.media .. "ring_slot_" .. ArtSize(ScreenPx(w, size + 2), ART_SIZES), nil, nil, "LINEAR")
+        end
+        local a = math.rad((it.a + rot) % 360)
+        w:ClearAllPoints()
+        w:SetPoint("CENTER", R.view, "CENTER", cx + radius * math.sin(a), cy + radius * math.cos(a))
+        w.label:SetShown(rc.names ~= false)
+        w.label:SetText(it.label or "")
+        w.badge:SetShown(it.open and not it.special and true or false)
+        w.arrow:Hide()
+        if it.special then
+            w.icon:SetColorTexture(0.09, 0.07, 0.12, 1)
+            w.icon:SetDesaturated(false)
+            w.arrow:SetSize(size * 0.5, size * 0.5)
+            w.arrow:SetRotation(it.special == "below" and math.pi or 0)
+            w.arrow:Show()
+        end
+        w:Show()
+    end
+    -- The middle: the kit's button, or for a drawer the slot it came from.
+    local mid, kit = R.mid, self.kit
+    mid.text:SetText("")
+    mid.badge:SetText("")
+    if ring.drawer and ring.slot then
+        local icon = ring.slot.icon and ring.slot.icon:GetTexture()
+        mid.icon:SetTexture(icon or 134400)
+        mid.icon:SetTexCoord(0, 1, 0, 1)
+        mid.ring:SetTexture(self.media .. "ring_slot_128", nil, nil, "LINEAR")
+        mid.badge:SetText(ring.slot.slot.label)
+    else
+        mid.icon:SetTexture(kit.icon:GetTexture())
+        mid.icon:SetTexCoord(kit.icon:GetTexCoord())
+        if kit.ring and kit.ring:GetTexture() then
+            mid.ring:SetTexture(kit.ring:GetTexture(), nil, nil, "LINEAR")
+        else
+            mid.ring:SetTexture(self.media .. "ring_slot_128", nil, nil, "LINEAR")
+        end
+        if kit.text then mid.text:SetText(kit.text:GetText() or "") end
+        if id == "inner" then mid.badge:SetText(Loc["Inner ring"]) end
+        if id == "below" then mid.badge:SetText(Loc["Below the line"]) end
+    end
+    mid:SetSize(inner and 60 or 84, inner and 60 or 84)
+    if R.line and id == "below" then
+        R.line:SetTexture(self.divider.tex:GetTexture(), nil, nil, "LINEAR")
+        R.line:ClearAllPoints()
+        R.line:SetPoint("BOTTOM", mid, "TOP", 0, 14)
+        R.line:Show()
+    end
+    self:RadialPaint()
+end
+
+-- Icons, glows and counts as they are now (on each tick, cheaply).
+function Kit:RadialPaint()
+    local R = self.radial
+    local ring = R and R.ring
+    if not ring then return end
+    for i, it in ipairs(ring.items) do
+        local w = R.cells[i]
+        if w and not it.special then
+            local tex, grey = RadialArt(self, it)
+            w.icon:SetTexture(tex or 134400)
+            w.icon:SetDesaturated(grey and true or false)
+            local v = grey and 0.6 or 1
+            w.icon:SetVertexColor(v, v, v)
+            local b = it.btn
+            local glow = not it.choice and b and b.glow and b.glow:IsShown()
+            if glow then
+                local c = self.cfg.glowColor or { 1, 0.82, 0.3 }
+                w.glow:SetVertexColor(c[1], c[2], c[3])
+            end
+            w.glow:SetShown(glow and true or false)
+            local n = it.choice and Val(it.choice.count) or (not it.choice and b and b.count and b.count:IsShown() and b.count:GetText())
+            w.count:SetText((n and n ~= 0 and n ~= "" and (tonumber(n) or 2) > 1) and n or "")
+        elseif w and it.special == "below" then
+            -- (something under the line wants you: the button glows)
+            local any = false
+            for _, x in ipairs(R.rings.below and R.rings.below.items or {}) do
+                if x.btn and x.btn.glow and x.btn.glow:IsShown() then any = true end
+            end
+            if any then
+                local c = self.cfg.glowColor or { 1, 0.82, 0.3 }
+                w.glow:SetVertexColor(c[1], c[2], c[3])
+            end
+            w.glow:SetShown(any)
+        end
+    end
+end
+
+-- A prompt: the pad button's own picture where the game has one, else its letter.
+local GLYPH_LETTER = { PAD1 = "A", PAD2 = "B", PAD3 = "X", PAD4 = "Y" }
+local GLYPH_COLOR = { PAD1 = { 0.14, 0.48, 0.21 }, PAD2 = { 0.79, 0.16, 0.16 }, PAD3 = { 0.11, 0.38, 0.74 }, PAD4 = { 0.88, 0.66, 0 } }
+function Kit:RadialPrompt(i, key, text)
+    local R = self.radial
+    local p = R.prompts[i]
+    if not p then
+        p = CreateFrame("Frame", nil, R.bar)
+        p:SetSize(10, 26)
+        p.disc = p:CreateTexture(nil, "ARTWORK")
+        p.disc:SetSize(24, 24)
+        p.disc:SetPoint("LEFT")
+        local mask = p:CreateMaskTexture()
+        mask:SetTexture(self.media .. "circle_mask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+        mask:SetAllPoints(p.disc)
+        p.disc:AddMaskTexture(mask)
+        p.pic = p:CreateTexture(nil, "OVERLAY")
+        p.pic:SetSize(26, 26)
+        p.pic:SetPoint("CENTER", p.disc)
+        p.letter = p:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        p.letter:SetPoint("CENTER", p.disc)
+        p.letter:SetTextColor(1, 1, 1)
+        p.text = p:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        p.text:SetPoint("LEFT", p.disc, "RIGHT", 6, 0)
+        R.prompts[i] = p
+    end
+    local pic
+    local util = _G.InputIconTextureSetUtility
+    if util and util.GetNormalActiveInputIconButtonTexture then
+        local ok, t = pcall(util.GetNormalActiveInputIconButtonTexture, key)
+        if ok and type(t) == "string" and t ~= "" then pic = t end
+    end
+    if pic then
+        if C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(pic) then p.pic:SetAtlas(pic) else p.pic:SetTexture(pic) end
+        p.pic:Show()
+        p.disc:Hide()
+        p.letter:SetText("")
+    else
+        local c = GLYPH_COLOR[key] or { 0.3, 0.3, 0.3 }
+        p.disc:SetColorTexture(c[1], c[2], c[3], 1)
+        p.disc:Show()
+        p.pic:Hide()
+        p.letter:SetText(GLYPH_LETTER[key] or key)
+        p.letter:SetTextColor(key == "PAD4" and 0.1 or 1, key == "PAD4" and 0.08 or 1, key == "PAD4" and 0.03 or 1)
+    end
+    p.text:SetText(text)
+    p:SetWidth(30 + p.text:GetStringWidth())
+    p:Show()
+    return p
+end
+
+-- Each frame while it's up: what the stick points at, lit, named, prompted.
+function Kit:RadialTick(elapsed)
+    local R = self.radial
+    local ring = R and R.ring
+    if not ring then return end
+    R.paintIn = (R.paintIn or 0) - (elapsed or 0)
+    if R.paintIn <= 0 then
+        R.paintIn = 0.2
+        self:RadialPaint()
+    end
+    local x, y, len = RADIAL.Stick(R.stick or 2)
+    local i = RADIAL.Index(ring.items, R.rot, x or 0, y or 0, len)
+    if i == R.lastIndex and R.promptsFor == i then return end
+    R.lastIndex = i
+    for j, w in ipairs(R.cells) do
+        local on = (j == i)
+        w.sel:SetShown(on)
+        local it = ring.items[j]
+        if it and w:IsShown() then
+            local size = (it.size or RADIAL.ICON) * (on and 1.18 or 1)
+            w:SetSize(size, size)
+            w.label:SetTextColor(on and 1 or 0.92, on and 0.95 or 0.86, on and 0.8 or 0.7)
+        end
+    end
+    local it = i and ring.items[i]
+    if it then
+        local a = math.rad((it.a + (R.rot or 0)) % 360)
+        local r = (R.id == "inner" and 40 or 58)
+        R.arrow:ClearAllPoints()
+        R.arrow:SetPoint("CENTER", R.view, "CENTER", r * math.sin(a), 30 + r * math.cos(a))
+        R.arrow:SetRotation(-a)
+        R.arrow:Show()
+        R.title:SetText(RadialName(self, it))
+        R.sub:SetText((it.slot and not it.choice and it.slot.label ~= R.title:GetText()) and it.slot.label or "")
+    else
+        R.arrow:Hide()
+        R.title:SetText("")
+        R.sub:SetText(R.id == "main" and R.rings.inner and Loc["Stick centred + X: inner ring"] or Loc["Tilt the stick"])
+    end
+    -- The prompts for what's under the stick.
+    R.promptsFor = i
+    for _, p in ipairs(R.prompts) do p:Hide() end
+    local K = RADIAL.KEYS
+    local list = {}
+    if it then
+        if it.kind == "use" then list[#list + 1] = { K.use, it.choice and Loc["Cast"] or Loc["Use"] }
+        else list[#list + 1] = { K.use, Loc["Open"] } end
+        if it.open and it.kind == "use" then list[#list + 1] = { K.open, Loc["Open"] } end
+        local alt = it.alt and it.slot and it.slot.radialAlt
+        if alt then
+            -- (offered unless ready says no; a ready that errors doesn't hide it)
+            local ok, ready = true, true
+            if alt.ready then ok, ready = pcall(alt.ready, self) end
+            if not ok or ready then list[#list + 1] = { K.alt, Val(alt.label, self) or Loc["Alternate"] } end
+        end
+    elseif R.id == "main" and R.rings.inner then
+        list[#list + 1] = { K.open, Loc["Inner ring"] }
+    end
+    list[#list + 1] = { K.back, R.id == "main" and Loc["Close"] or Loc["Back"] }
+    local wTotal, gap, cells = 0, 22, {}
+    for n, e in ipairs(list) do
+        local p = self:RadialPrompt(n, e[1], e[2])
+        cells[n] = p
+        wTotal = wTotal + p:GetWidth() + (n > 1 and gap or 0)
+    end
+    local xPos = -wTotal / 2
+    for _, p in ipairs(cells) do
+        p:ClearAllPoints()
+        p:SetPoint("LEFT", R.bar, "CENTER", xPos, 0)
+        xPos = xPos + p:GetWidth() + gap
+    end
+    R.bar:ClearAllPoints()
+    R.bar:SetPoint("TOP", R.bg, "BOTTOM", 0, -6)
+end
+
+-- The keys bound to bring the ring up (out of combat, as bindings change).
+-- Wraps the gamepad bar's buttons (RADIAL.BARPRE/BARPOST), once each, out
+-- of combat. The bars come with the Gamepad UI, which may load after the
+-- kit, so this runs again on every refresh until they're there.
+function Kit:RadialWrapBars()
+    local R = self.radial
+    if not R or InCombatLockdown() then return end
+    local unit = _G.GamepadMainActionBarFrame and _G.GamepadMainActionBarFrame.PageUnit
+    if not (unit and type(unit.actionBars) == "table" and SecureHandlerWrapScript) then return end
+    R.barWrapped = R.barWrapped or {}
+    for _, bar in pairs(unit.actionBars) do
+        if type(bar) == "table" and type(bar.actionButtons) == "table" then
+            for _, b in pairs(bar.actionButtons) do
+                if type(b) == "table" and not R.barWrapped[b] and b.IsProtected and b:IsProtected() then
+                    local ok, err = pcall(SecureHandlerWrapScript, b, "OnClick", R.header, RADIAL.BARPRE, RADIAL.BARPOST)
+                    if ok then R.barWrapped[b] = true else R.barWrapErr = err end
+                end
+            end
+        end
+    end
+end
+
+function Kit:RadialKeys()
+    local R = self.radial
+    if not R or InCombatLockdown() then return end
+    local k1, k2
+    if GetBindingKey then k1, k2 = GetBindingKey("CLICK " .. self.prefix .. "Radial:LeftButton") end
+    R.header:SetAttribute("kcr-trig1", k1)
+    R.header:SetAttribute("kcr-trig2", k2)
+    -- Pad button i's key, for kcr-roles to leave a held button alone.
+    -- Left out: anything the game must see let go of itself (the triggers,
+    -- buttons acting as Shift/Ctrl/Alt, the Gamepad UI's bar-swap and
+    -- targeting modifiers, which keep state between press and release) and
+    -- stick leans (PADLSTICKUP and so on: letting the stick go would count).
+    local skip = { [GAMEPAD_TRIGGER_LEFT or "PADLTRIGGER"] = true, [GAMEPAD_TRIGGER_RIGHT or "PADRTRIGGER"] = true }
+    local getCVar = (C_CVar and C_CVar.GetCVar) or GetCVar
+    for _, m in ipairs({ "Shift", "Ctrl", "Alt" }) do
+        local ok, v = pcall(getCVar, "GamePadEmulate" .. m)
+        if ok and type(v) == "string" and v ~= "" then skip[v] = true end
+    end
+    if GetBindingKey then
+        for _, action in ipairs({ "GAMEPADLEFTMOD", "GAMEPADRIGHTMOD", "GAMEPADLEFTTARGETMODIFIER",
+                "GAMEPADRIGHTTARGETMODIFIER", "TOGGLEPINGSYSTEM" }) do
+            local got = { pcall(GetBindingKey, action, true) }
+            for j = 2, got[1] and #got or 1 do
+                if type(got[j]) == "string" then skip[got[j]:match("([^%-]+)$") or got[j]] = true end
+            end
+        end
+    end
+    local toKey = C_GamePad and C_GamePad.ButtonIndexToBinding
+    local n = 0
+    for i = 1, 64 do
+        local key
+        if toKey then
+            local ok, b = pcall(toKey, i - 1)
+            if ok and type(b) == "string" and b ~= "" and not skip[b] and not b:find("STICK%u") then key = b end
+        end
+        R.header:SetAttribute("kcr-pk" .. i, key)
+        if key then n = i end
+    end
+    R.header:SetAttribute("kcr-pkn", n)
+end
+
+-- A macro for a gamepad bar (/click <prefix>Radial), picked up on the cursor
+-- to drop on a bar slot. Out of combat.
+function Kit:RadialMacro()
+    if InCombatLockdown() then self:Print(Loc["That can only change out of combat."]) return end
+    if not (CreateMacro and GetMacroIndexByName) then return end
+    local name = (self.prefix .. "Ring"):sub(1, 16)
+    local body = "/click " .. self.prefix .. "Radial"
+    local icon = self.cfg.macroIcon or "INV_MISC_QUESTIONMARK"
+    local index = GetMacroIndexByName(name)
+    if index == 0 then
+        local ok, made = pcall(CreateMacro, name, icon, body, false)
+        index = ok and made or 0
+    else
+        pcall(EditMacro, index, name, nil, body)
+    end
+    if not index or index == 0 then
+        self:Print(Loc["Couldn't make the macro: your macro slots may be full."], true)
+        return
+    end
+    if PickupMacro then PickupMacro(index) end
+    self:Print((Loc["Macro \"%s\" is on your cursor: drop it on a gamepad bar slot."]):format(name), true)
 end
 
 ---------------------------------------------------------------------------
@@ -8401,6 +9708,14 @@ function Kit:OnEvent(event, ...)
         self:PaintMana()
     elseif event == "UPDATE_BINDINGS" then
         self:UpdateHotkeys()
+        if self.radial then self:RadialKeys() end
+    elseif event:find("^GAME_PAD_") then
+        -- (another pad, or its sticks set up differently: which stick is which)
+        if self.radial and not InCombatLockdown() then
+            self.radial.sig = nil
+            self:RadialRefresh()
+            self:RadialKeys()
+        end
     elseif event == "ITEM_DATA_LOAD_RESULT" then
         -- Item info arriving (often in bursts at login): one refresh shortly after.
         if self.refreshQueued or not C_Timer then return end
@@ -8475,6 +9790,7 @@ function Kit:OnEvent(event, ...)
         self:StopGhost()
         self.combatPress = nil
         if self.qkbLeavePending then self:QkbRestore() end -- (Quick Keybind Mode closed in combat)
+        if self.radial then self:RadialKeys() end -- (bindings changed in combat)
         if self.editLeavePending then self:EditRestore() end -- (so did the layout's edit mode)
         self:Refresh(false)
         -- Moved or opened in combat: catch the dock up a frame from now (see
@@ -8761,6 +10077,13 @@ function Kit:Build()
     if cfg.AfterBuild then cfg.AfterBuild(self) end
     self:SetupSettings()
     self:SetupMinimap()
+    if cfg.radial then
+        self:BuildRadial()
+        self:RadialKeys()
+        for _, e in ipairs({ "GAME_PAD_ACTIVE_CHANGED", "GAME_PAD_CONNECTED", "GAME_PAD_DISCONNECTED", "GAME_PAD_CONFIGS_CHANGED" }) do
+            pcall(self.events.RegisterEvent, self.events, e)
+        end
+    end
 
     for _, e in ipairs(BASE_EVENTS) do pcall(self.events.RegisterEvent, self.events, e) end
     for e in pairs(cfg.events or {}) do pcall(self.events.RegisterEvent, self.events, e) end
