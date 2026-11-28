@@ -28,7 +28,7 @@ local addonName, ns = ...
 -- where it goes and whether it shows in each. A click on the button in combat
 -- runs a secure snippet that switches the slots between the two. Kits on the
 -- pin with other kits open in combat from v8 (in their slice), and kits in a
--- tuck box from v40; a kit open on the pin (taking it) closes out of combat
+-- tuck box from v42; a kit open on the pin (taking it) closes out of combat
 -- only.
 --
 -- From v6 the kit can be dragged in combat too (same kits): a faint copy of
@@ -98,13 +98,13 @@ local addonName, ns = ...
 -- into edit mode, edit mode's bar is the one bar while both run, and its
 -- Done (or Esc) ends both.
 --
--- From v40 a kit in a Kit Dock tuck box opens and closes in combat too (with
+-- From v42 a kit in a Kit Dock tuck box opens and closes in combat too (with
 -- Kit Dock v29), where it sits in the box: while it's open the other kits in
 -- the box put their buttons away, and they come back as it closes. See "In
 -- a tuck box, in combat".
 ---------------------------------------------------------------------------
 
-local VERSION = 40
+local VERSION = 42
 -- Builds of the same VERSION (test builds while a version is in a pull
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
@@ -345,6 +345,220 @@ do
         Loc["Press Escape to unbind."] = "按 Esc 解除绑定。"
         Loc["Not bound"] = "未绑定"
         Loc["Press a key to bind."] = "按下一个键进行绑定。"
+    elseif locale == "zhTW" then
+        -- Traditional Chinese: made from the zhCN lines above by Warlock Kit's
+        -- tools/make_zhtw.py. Change those (or its word list), not these.
+        Loc["Open / close the kit"] = "開啟/關閉套件"
+        Loc["Use %s"] = "使用%s"
+        Loc["Left-click: open / close"] = "左鍵點擊：開啟/關閉"
+        Loc["Drag: move"] = "拖曳：移動"
+        Loc["Right-click: menu   Shift-right-click: settings"] = "右鍵點擊：選單   Shift+右鍵點擊：設定"
+        Loc["That can only change out of combat."] = "只能在脫離戰鬥後更改。"
+        Loc["Pinned in place."] = "已固定位置。"
+        Loc["Unpinned. Drag the kit to move it."] = "已取消固定。拖曳套件即可移動。"
+        Loc["Place"] = "放置"
+        Loc["On the pin"] = "停靠點上"
+        Loc["Tuck box"] = "收納框"
+        Loc["Free"] = "自由"
+        Loc["Pin in place"] = "固定位置"
+        Loc["Done editing layout"] = "完成佈局編輯"
+        Loc["Edit layout"] = "編輯佈局"
+        Loc["Settings"] = "設定"
+        Loc["Click: open"] = "點擊：開啟"
+        Loc["Right-click: choose"] = "右鍵點擊：選擇"
+        Loc["On a bar: always shown"] = "在按鈕條上：始終顯示"
+        Loc["Shift-right-click: stop always showing"] = "Shift+右鍵點擊：取消始終顯示"
+        Loc["Shift-right-click: always show"] = "Shift+右鍵點擊：始終顯示"
+        Loc["Nothing to choose from."] = "沒有可選項。"
+        Loc["Drag: move it in this list"] = "拖曳：在此列表中移動"
+        Loc["the press didn't reach the kit's secure code"] = "按鍵沒有傳到套件的安全程式碼"
+        Loc["the game didn't give the kit the mouse position"] = "遊戲沒有把滑鼠位置交給套件"
+        Loc["the game didn't give the kit the mouse position on release"] = "鬆開時遊戲沒有把滑鼠位置交給套件"
+        Loc["the game didn't give the kit the button's position"] = "遊戲沒有把按鈕位置交給套件"
+        Loc["the game didn't let the kit move the button"] = "遊戲沒有允許套件移動按鈕"
+        Loc["Couldn't move the kit in combat: %s."] = "無法在戰鬥中移動套件：%s。"
+        Loc["stopped at %s"] = "停在了 %s"
+        Loc["Click the kit button to open or close it in combat."] = "戰鬥中請點擊套件按鈕來開啟或關閉它。"
+        Loc["%s is on a bar, so it's always shown. Edit the layout to move it."] = "%s在按鈕條上，所以始終顯示。編輯佈局可移動它。"
+        Loc["%s: always shown."] = "%s：始終顯示。"
+        Loc["%s: hides when the kit closes."] = "%s：套件關閉時隱藏。"
+        Loc["Left-click: settings"] = "左鍵點擊：設定"
+        Loc["Right-click: open / close the kit"] = "右鍵點擊：開啟/關閉套件"
+        Loc["Drag: move around the minimap"] = "拖曳：沿小地圖移動"
+        Loc["The settings panel isn't available on this build. %s help lists the slash commands."] = "此版本沒有設定面板。%s help 可列出斜線指令。"
+        Loc["Kit"] = "套件"
+        Loc["General"] = "常規"
+        Loc["Show %s"] = "顯示 %s"
+        Loc["Turn off to hide the whole kit (its button and every slot) without uninstalling it."] = "關閉即可隱藏整個套件（它的按鈕和所有欄位），無需解除安裝。"
+        Loc["Lock it in place"] = "鎖定位置"
+        Loc["Stop the kit from being dragged. Also in the kit's right-click menu."] = "禁止拖曳套件。也可在套件的右鍵選單中設定。"
+        Loc["Tuck at screen edge"] = "在螢幕邊緣收起"
+        Loc["On a screen edge on its own, the kit slides half off the screen until you mouse over it. Turn off to keep it fully on the screen. In a tuck box it still tucks with the box."] = "套件單獨位於螢幕邊緣時，會滑出螢幕一半，直到滑鼠移上去。關閉則始終完整留在螢幕上。在收納框中時它仍隨收納框一起收起。"
+        Loc["Minimap button"] = "小地圖按鈕"
+        Loc["Left-click for these settings, right-click to open the kit, drag to move it."] = "左鍵點擊開啟這些設定，右鍵點擊開啟套件，拖曳可移動它。"
+        Loc["Chat messages"] = "聊天訊息"
+        Loc["Notices in chat when something changes (pinned in place, always shown, snoozed and the like). Slash commands still answer in chat."] = "有變化時在聊天中提示（固定位置、始終顯示、暫停提醒等）。斜線指令仍會在聊天中回覆。"
+        Loc["In combat"] = "戰鬥中"
+        Loc["Hide the kit in combat"] = "戰鬥中隱藏套件"
+        Loc["Hide the kit while you're in combat."] = "戰鬥中隱藏套件。"
+        Loc["Drawers close after"] = "彈出欄關閉延遲"
+        Loc["In combat a drawer can't close when you click elsewhere, so it closes by itself this long after the mouse leaves it and its slot."] = "戰鬥中點擊別處無法關閉彈出欄，所以滑鼠離開它和它的欄位這麼久後會自動關閉。"
+        Loc["Fading"] = "淡出"
+        Loc["Fade the kit"] = "套件淡出"
+        Loc["When closed: the closed kit and its pinned slots fade until you mouse over them. When left open: the open kit fades once the mouse has been off it a while (it stays open). Mouse over to bring it back."] = "關閉時：關閉的套件及其固定欄位會淡出，直到滑鼠移上去。保持開啟時：滑鼠離開一段時間後，開啟的套件會淡出（仍保持開啟）。滑鼠移上去即恢復。"
+        Loc["Never"] = "從不"
+        Loc["When closed"] = "關閉時"
+        Loc["When left open"] = "保持開啟時"
+        Loc["Both"] = "兩者"
+        Loc["Fade when idle"] = "閒置時淡出"
+        Loc["With the kit closed, it and its pinned slots fade until you mouse over them."] = "套件關閉時，它和它的固定欄位會淡出，直到滑鼠移上去。"
+        Loc["Fade when left open"] = "保持開啟時淡出"
+        Loc["With the kit open, it and its slots fade once the mouse has been off them for a while. They stay open, and come back when you mouse over them."] = "套件開啟時，滑鼠離開一段時間後它和它的欄位會淡出。它們保持開啟，滑鼠移上去即恢復。"
+        Loc["Fade an open kit after"] = "開啟的套件淡出延遲"
+        Loc["How long the mouse has to be off the open kit before it fades."] = "滑鼠離開開啟的套件多久後它才淡出。"
+        Loc["How faded"] = "淡出程度"
+        Loc["How see-through the kit's slots get when it fades: 0% is gone until you mouse over. The kit button fades half as much, so you can still find it."] = "淡出時套件欄位的透明程度：0% 表示完全消失，直到滑鼠移上去。套件按鈕只淡出一半，方便你找到它。"
+        Loc["Look"] = "外觀"
+        Loc["Size"] = "大小"
+        Loc["Whole kit"] = "整個套件"
+        Loc["The whole kit: the center icon, the buttons round it and the space between them."] = "整個套件：中心圖示、周圍的按鈕以及它們之間的間距。"
+        Loc["Center icon"] = "中心圖示"
+        Loc["Just the icon in the middle: the buttons round it stay where they are."] = "只有中間的圖示：周圍的按鈕位置不變。"
+        Loc["Buttons"] = "按鈕"
+        Loc["Just the buttons round the center icon: each gets smaller in its place, so they spread out a little."] = "只有中心圖示周圍的按鈕：每個按鈕在原位變小，所以會稍微散開。"
+        Loc["Spread"] = "間距"
+        Loc["How far the buttons sit from the center icon: lower brings them in close, higher spreads them out."] = "按鈕離中心圖示多遠：數值小則靠攏，數值大則散開。"
+        Loc["Layout"] = "佈局"
+        Loc["Buttons open toward"] = "按鈕展開方向"
+        Loc["Which way the slots lay out round the kit while it's floating. On a screen edge they always face the middle of the screen."] = "套件浮動時欄位圍繞它排列的方向。在螢幕邊緣時它們始終朝向螢幕中央。"
+        Loc["Up"] = "向上"
+        Loc["Down"] = "向下"
+        Loc["Left"] = "向左"
+        Loc["Right"] = "向右"
+        Loc["Reminders"] = "提醒"
+        Loc["Tooltips"] = "滑鼠提示"
+        Loc["Where a slot's tooltip shows: beside the slot, or where the game normally puts tooltips."] = "欄位的滑鼠提示顯示在哪裡：欄位旁邊，或遊戲通常顯示滑鼠提示的位置。"
+        Loc["Beside the slot"] = "欄位旁邊"
+        Loc["Game's spot"] = "遊戲預設位置"
+        Loc["Default tooltip position"] = "預設滑鼠提示位置"
+        Loc["Show slot tooltips where the game normally shows tooltips, instead of beside the slot."] = "在遊戲通常顯示滑鼠提示的位置顯示欄位提示，而不是在欄位旁邊。"
+        Loc["Pinned buttons"] = "固定按鈕"
+        Loc["Keep it out when the kit is closed (this character only). You can also shift-right-click the slot."] = "套件關閉時保留在外（僅限此角色）。也可以 Shift+右鍵點擊欄位。"
+        Loc["Slot choices"] = "欄位選擇"
+        Loc["Reset"] = "重設"
+        Loc["Put every slot back to its starting choice, and every list back in its starting order."] = "把每個欄位恢復為初始選擇，每個列表恢復初始順序。"
+        Loc["Bars"] = "按鈕條"
+        Loc["Edit"] = "編輯"
+        Loc["Opens the kit and lets you drag its buttons. The shaded areas show where a button can go on the kit: drop it there, between two buttons or at an end. Drop a button away from the kit and it floats there, always shown. Drop another on it to make a bar, or between two to put it there. Drop a button on the kit's icon to put it back. Drag a bar by its box to move it. This character only; out of combat. Also in the kit's right-click menu."] = "開啟套件並允許你拖曳它的按鈕。陰影區域顯示按鈕可以放在套件上的哪些位置：放到那裡、兩個按鈕之間或末端。把按鈕拖離套件，它就會浮動在那裡並始終顯示。再拖一個到它上面可組成一個按鈕條，或拖到兩個之間插入。把按鈕拖到套件圖示上可放回去。拖曳按鈕條的框可移動整個按鈕條。僅限此角色；需脫離戰鬥。也可在套件的右鍵選單中開啟。"
+        Loc["Spacing"] = "間距"
+        Loc["Room between the buttons on a bar."] = "按鈕條上按鈕之間的間隔。"
+        Loc["Reset to defaults"] = "恢復預設"
+        Loc["Put every button back where it started: off the bars, and the kit's own buttons in their usual places and order."] = "把每個按鈕放回原處：從按鈕條上取下，套件自己的按鈕回到原來的位置和順序。"
+        Loc["Reminder panel"] = "提醒面板"
+        Loc["Put %s's reminders in the panel"] = "把 %s 的提醒放進面板"
+        Loc["One panel for all your kits that you can put anywhere. With this on and %s closed, its reminders show there, full size, instead of beside the kit. They stay in the panel while the kit is open too (and in their places in the kit). Each kit has its own switch, so some kits' reminders can be in the panel and others by their kit."] = "一個供所有套件共用、可隨意放置的面板。開啟後，%s 關閉時它的提醒會以完整大小顯示在面板裡，而不是在套件旁邊。套件開啟時它們也留在面板裡（同時也在套件中各自的位置）。每個套件有自己的開關，所以可以讓一些套件的提醒在面板裡，另一些在各自套件旁。"
+        Loc["A pinned button stays by its kit, and its reminder shows in the panel too."] = "固定的按鈕留在套件旁，它的提醒也會顯示在面板裡。"
+        Loc["A pinned button always stays by its kit."] = "固定的按鈕始終留在套件旁。"
+        Loc["The panel (every kit)"] = "面板（所有套件）"
+        Loc["Place the panel"] = "放置面板"
+        Loc["Move"] = "移動"
+        Loc["Shows a grid and the panel's box of buttons: drag it where you want it. It snaps to the grid, the middle of the screen and your kit buttons; hold Shift to place it freely."] = "顯示網格和面板的按鈕框：把它拖到想要的位置。它會吸附到網格、螢幕中線和你的套件按鈕；按住 Shift 可自由放置。"
+        Loc["Rows: buttons side by side, then a new row. Columns: one under another, then a new column."] = "行：按鈕並排，排滿後另起一行。列：按鈕上下排列，排滿後另起一列。"
+        Loc["Rows"] = "行"
+        Loc["Columns"] = "列"
+        Loc["Buttons per row"] = "每行按鈕數"
+        Loc["How many across before a new row starts."] = "一行排多少個後另起一行。"
+        Loc["Buttons per column"] = "每列按鈕數"
+        Loc["How many down before a new column starts."] = "一列排多少個後另起一列。"
+        Loc["Grow from the middle"] = "從中間展開"
+        Loc["The first button sits in the middle of the row (column), the next ones spread out evenly either side, and each new row (column) starts in the middle again. Off: they fill from the corner below."] = "第一個按鈕位於行（列）的中間，之後的按鈕向兩側均勻展開，每個新的行（列）再從中間開始。關閉：從下面選定的角落開始填充。"
+        Loc["Start from"] = "起始角落"
+        Loc["The corner the first button goes in (growing from the middle: the side new rows or columns are added toward). The panel grows away from it, and stays put there."] = "第一個按鈕所在的角落（從中間展開時：新的行或列新增的方向）。面板從這裡向外擴展，這個角落保持不動。"
+        Loc["Top left"] = "左上"
+        Loc["Top right"] = "右上"
+        Loc["Bottom left"] = "左下"
+        Loc["Bottom right"] = "右下"
+        Loc["Button size"] = "按鈕大小"
+        Loc["The buttons in the panel, the same for every kit (100% is a full slot)."] = "面板中的按鈕大小，所有套件相同（100% 為完整欄位大小）。"
+        Loc["Room between the buttons."] = "按鈕之間的間隔。"
+        Loc["Snap when placing"] = "放置時吸附"
+        Loc["Line the panel up with the grid, the middle of the screen and your kit buttons as you drag it."] = "拖曳面板時讓它對齊網格、螢幕中線和你的套件按鈕。"
+        Loc["Grid size"] = "網格大小"
+        Loc["How far apart the grid's lines are while placing it."] = "放置時網格線之間的距離。"
+        Loc["Reminders in the panel"] = "面板中的提醒"
+        Loc["When it pops out with the kit closed (missing or wanted), it shows in the panel."] = "套件關閉時它彈出（缺少或需要）會顯示在面板裡。"
+        Loc["Pinned, it shows in the panel too, and stays by the kit."] = "固定時，它也會顯示在面板裡，同時留在套件旁。"
+        Loc["Pinned, it stays by the kit."] = "固定時，它留在套件旁。"
+        Loc["Key bindings"] = "按鍵綁定"
+        Loc["Open"] = "開啟"
+        Loc["Bind each slot, and opening the kit."] = "為每個欄位以及開啟套件綁定按鍵。"
+        Loc["Slot choices reset."] = "欄位選擇已重設。"
+        Loc["Open Esc > Options > Keybindings and look for %s."] = "開啟 Esc > 選項 > 按鍵設定，找到 %s。"
+        Loc["Kit reminders"] = "套件提醒"
+        Loc["Drag to move. Hold Shift to place it freely."] = "拖曳以移動。按住 Shift 可自由放置。"
+        Loc["Right-click when you're done."] = "完成後右鍵點擊。"
+        Loc["Drag to move, Shift for free"] = "拖曳以移動，按住 Shift 自由放置"
+        Loc["Snap"] = "吸附"
+        Loc["Done"] = "完成"
+        Loc["Grid %s"] = "網格 %s"
+        Loc["Placing %s"] = "正在放置%s"
+        Loc["Moving everything"] = "全部移動中"
+        Loc["Things can only be moved out of combat."] = "只能在脫離戰鬥後移動。"
+        Loc["Nothing to move: turn on the reminder panel or a kit's timers first. The kits themselves move by dragging them."] = "沒有可移動的：請先開啟提醒面板或某個套件的計時器。套件本身直接拖曳即可移動。"
+        Loc["the reminder panel"] = "提醒面板"
+        Loc["The reminder panel can only move out of combat."] = "提醒面板只能在脫離戰鬥後移動。"
+        Loc["Turn on the reminder panel for a kit first (its Settings > Reminder panel)."] = "請先為某個套件開啟提醒面板（它的設定 > 提醒面板）。"
+        Loc["Layout reset: every button is back in its usual place."] = "佈局已重設：每個按鈕都回到了原來的位置。"
+        Loc["Drag to move it."] = "拖曳以移動。"
+        Loc["Drop it on the kit to put it back."] = "拖到套件上可放回去。"
+        Loc["Drop it away from the kit to float it."] = "拖離套件可讓它浮動。"
+        Loc["Bar"] = "按鈕條"
+        Loc["Drag to move the whole bar."] = "拖曳以移動整個按鈕條。"
+        Loc["On a bar"] = "放到按鈕條上"
+        Loc["Floating on its own"] = "單獨浮動"
+        Loc["Back in its place"] = "放回原位"
+        Loc["Drag a button into one of the kit's shaded areas to move it there: the one it would land in lights up, and the label under the button says where it'll go. Drop it away from the kit and it floats, always shown; drop another on it to make a bar. Drop it on the kit's icon to put it back. Drag a bar's box to move it."] = "把按鈕拖進套件的某個陰影區域即可移到那裡：它將落入的區域會亮起，按鈕下方的標籤會說明它的去向。拖離套件它就會浮動並始終顯示；再拖一個到它上面可組成一個按鈕條。拖到套件圖示上可放回去。拖曳按鈕條的框可移動它。"
+        Loc["Bars and buttons on their own snap to the grid, the middle of the screen, the kit buttons and other bars; hold Shift to place them freely."] = "按鈕條和單獨浮動的按鈕會吸附到網格、螢幕中線、套件按鈕和其他按鈕條；按住 Shift 可自由放置。"
+        Loc["Drag to move the whole bar. It snaps to the grid; hold Shift to place it freely."] = "拖曳以移動整個按鈕條。它會吸附到網格；按住 Shift 可自由放置。"
+        Loc["Editing %s's layout, placing %s"] = "正在編輯 %s 的佈局，放置 %s"
+        Loc["The reminder panel and the kits' timers and bars move by dragging them, snapping the same way."] = "提醒面板以及各套件的計時器和計時條也可拖曳移動，吸附方式相同。"
+        Loc["The kit's own buttons and bars too, as in Edit layout."] = "也包括本套件自己的按鈕和按鈕條，與編輯佈局相同。"
+        Loc["The layout can only be edited out of combat."] = "佈局只能在脫離戰鬥後編輯。"
+        Loc["Show the kit first."] = "請先顯示套件。"
+        Loc["Close Quick Keybind Mode first."] = "請先關閉快速按鍵綁定模式。"
+        Loc["Editing %s's layout"] = "正在編輯 %s 的佈局"
+        Loc["Custom..."] = "自訂…"
+        Loc["Custom"] = "自訂"
+        Loc["Pick any colour in the game's colour picker. Cancel puts back what you had."] = "在遊戲的顏色選擇器中選擇任意顏色。取消則恢復原來的顏色。"
+        Loc["No setting matches that. Try another word."] = "沒有匹配的設定。換個詞試試。"
+        Loc["Settings with \"%s\""] = "包含「%s」的設定"
+        Loc["%s settings"] = "%s 設定"
+        Loc["Find a setting"] = "搜尋設定"
+        Loc["Move everything"] = "全部移動"
+        Loc["The reminder panel and every timer and bar in use, shown where they sit on a grid so you can drag them all at once. Done (or Esc) when you're finished."] = "提醒面板以及所有使用中的計時器和條，在網格上顯示在各自的位置，可以一次全部拖曳。完成後點擊「完成」（或按 Esc）。"
+        Loc["Also %s move."] = "也可用 %s move。"
+        Loc["The kit's settings are in its own window. Also from the minimap button, the kit's right-click menu or %s."] = "套件的設定在它自己的視窗中。也可從小地圖按鈕、套件的右鍵選單或 %s 開啟。"
+        Loc["its slash command"] = "它的斜線指令"
+        Loc["Settings panel failed to load (%s). %s help lists the slash commands."] = "設定面板載入失敗（%s）。%s help 可列出斜線指令。"
+        Loc["%s - settings"] = "%s - 設定"
+        Loc["%s minimap - show or hide the minimap button"] = "%s minimap - 顯示或隱藏小地圖按鈕"
+        Loc["%s face up | down | left | right - which way the layout points"] = "%s face up | down | left | right - 佈局朝向"
+        Loc["%s move - move everything: the reminder panel and the kits' timers and bars, all at once"] = "%s move - 全部移動：提醒面板以及各套件的計時器和條，一次完成"
+        Loc["%s panel - move the reminder panel (shared by every kit)"] = "%s panel - 移動提醒面板（所有套件共用）"
+        Loc["%s layout - drag buttons off the kit onto bars"] = "%s layout - 把按鈕從套件拖到按鈕條上"
+        Loc["%s dock - dock every kit on the pin"] = "%s dock - 把所有套件停靠到停靠點"
+        Loc["Locked."] = "已鎖定。"
+        Loc["Unlocked. Drag the kit to move it."] = "已解鎖。拖曳套件即可移動。"
+        Loc["Kits docked together on the pin."] = "套件已一起停靠到停靠點。"
+        Loc["Docking needs another kit installed."] = "停靠需要安裝另一個套件。"
+        Loc["%s face up | down | left | right   (now %s)"] = "%s face up | down | left | right   （當前 %s）"
+        Loc["Kit moved back to its starting spot."] = "套件已回到初始位置。"
+        Loc["Minimap button shown."] = "小地圖按鈕已顯示。"
+        Loc["Minimap button hidden. %s minimap brings it back."] = "小地圖按鈕已隱藏。%s minimap 可恢復。"
+        Loc["Unknown command. %s help lists them."] = "未知指令。%s help 可列出指令。"
+        Loc["Press Escape to unbind."] = "按 Esc 解除綁定。"
+        Loc["Not bound"] = "未綁定"
+        Loc["Press a key to bind."] = "按下一個鍵進行綁定。"
     end
 end
 
@@ -1226,7 +1440,7 @@ end
 -- kit the usual way (animated, with the dock told). "kcready" is 0 when
 -- this kit has no layouts to switch to (the kit open on the pin). A kit
 -- shrunk on the pin opens in its own slice there, its slots fanned out in
--- rings of 4 (from v8). A kit in a Kit Dock tuck box (from v40) opens where
+-- rings of 4 (from v8). A kit in a Kit Dock tuck box (from v42) opens where
 -- it sits in the box, and the other kits in the box put their buttons away
 -- while it's open and bring them back as it closes (BOX_QUIET, BOX_BACK, run
 -- on each of their headers; "kcboxn" and the "kcbox<i>" refs on the kit
@@ -3294,14 +3508,14 @@ end
 -- Can the kit button open and close this kit in combat? Shrunk on the pin
 -- with other kits: yes, in place, every slot fanned out in its slice away
 -- from the pin (nothing else moves; out of combat it takes the pin as
--- usual once combat ends). Parked in a Kit Dock box: yes (from v40), where
+-- usual once combat ends). Parked in a Kit Dock box: yes (from v42), where
 -- it sits, with the box's other kits putting their buttons away while it's
 -- open (see "In a tuck box, in combat"). Open on the pin (taking it, the
 -- others tucked): no, closing would leave the others tucked.
 function Kit:CanSecureToggle()
     if self.noSecureToggle then return false end
     local D = self.Dock
-    -- In a Kit Dock box: it opens where it sits (from v40), with a Kit Dock
+    -- In a Kit Dock box: it opens where it sits (from v42), with a Kit Dock
     -- that keeps each kit's spots in the box's row (v29, D.BoxSpots).
     if self.parked or (D and D.IsParked and D.IsParked(self.key)) then
         return (D and D.BoxSpots and D.BoxMates) and true or false
@@ -3321,7 +3535,7 @@ function Kit:CanSecureMove()
 end
 
 ---------------------------------------------------------------------------
--- In a tuck box, in combat (from v40)
+-- In a tuck box, in combat (from v42)
 --
 -- A kit in a Kit Dock box opens and closes in combat where it sits, like a
 -- kit on a screen edge: its open layout is the trial one, and its closed one
