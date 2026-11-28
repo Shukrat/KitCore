@@ -28,7 +28,7 @@ local addonName, ns = ...
 -- where it goes and whether it shows in each. A click on the button in combat
 -- runs a secure snippet that switches the slots between the two. Kits on the
 -- pin with other kits open in combat from v8 (in their slice), and kits in a
--- tuck box from v42; a kit open on the pin (taking it) closes out of combat
+-- tuck box from v36; a kit open on the pin (taking it) closes out of combat
 -- only.
 --
 -- From v6 the kit can be dragged in combat too (same kits): a faint copy of
@@ -88,7 +88,7 @@ local addonName, ns = ...
 -- where it'll go (the zone's name, a bar, on its own, back in its place),
 -- and a gold ring marks the spot it would take.
 --
--- From v38 the bars go on the placing grid (the one Move everything uses):
+-- From v36 the bars go on the placing grid (the one Move everything uses):
 -- edit mode shows the grid under the kits, with its Grid size and Snap on
 -- edit mode's bar, and a bar dragged by its box, or a button floating on its
 -- own, snaps to the screen's middle lines, the kit buttons and the other
@@ -98,13 +98,13 @@ local addonName, ns = ...
 -- into edit mode, edit mode's bar is the one bar while both run, and its
 -- Done (or Esc) ends both.
 --
--- From v42 a kit in a Kit Dock tuck box opens and closes in combat too (with
+-- From v36 a kit in a Kit Dock tuck box opens and closes in combat too (with
 -- Kit Dock v29), where it sits in the box: while it's open the other kits in
 -- the box put their buttons away, and they come back as it closes. See "In
 -- a tuck box, in combat".
 ---------------------------------------------------------------------------
 
-local VERSION = 42
+local VERSION = 36
 -- Builds of the same VERSION (test builds while a version is in a pull
 -- request): the higher one wins too, so two kits carrying different builds
 -- of one version don't leave the older running for every kit. Raise it with
@@ -1440,7 +1440,7 @@ end
 -- kit the usual way (animated, with the dock told). "kcready" is 0 when
 -- this kit has no layouts to switch to (the kit open on the pin). A kit
 -- shrunk on the pin opens in its own slice there, its slots fanned out in
--- rings of 4 (from v8). A kit in a Kit Dock tuck box (from v42) opens where
+-- rings of 4 (from v8). A kit in a Kit Dock tuck box (from v36) opens where
 -- it sits in the box, and the other kits in the box put their buttons away
 -- while it's open and bring them back as it closes (BOX_QUIET, BOX_BACK, run
 -- on each of their headers; "kcboxn" and the "kcbox<i>" refs on the kit
@@ -3508,14 +3508,14 @@ end
 -- Can the kit button open and close this kit in combat? Shrunk on the pin
 -- with other kits: yes, in place, every slot fanned out in its slice away
 -- from the pin (nothing else moves; out of combat it takes the pin as
--- usual once combat ends). Parked in a Kit Dock box: yes (from v42), where
+-- usual once combat ends). Parked in a Kit Dock box: yes (from v36), where
 -- it sits, with the box's other kits putting their buttons away while it's
 -- open (see "In a tuck box, in combat"). Open on the pin (taking it, the
 -- others tucked): no, closing would leave the others tucked.
 function Kit:CanSecureToggle()
     if self.noSecureToggle then return false end
     local D = self.Dock
-    -- In a Kit Dock box: it opens where it sits (from v42), with a Kit Dock
+    -- In a Kit Dock box: it opens where it sits (from v36), with a Kit Dock
     -- that keeps each kit's spots in the box's row (v29, D.BoxSpots).
     if self.parked or (D and D.IsParked and D.IsParked(self.key)) then
         return (D and D.BoxSpots and D.BoxMates) and true or false
@@ -3535,7 +3535,7 @@ function Kit:CanSecureMove()
 end
 
 ---------------------------------------------------------------------------
--- In a tuck box, in combat (from v42)
+-- In a tuck box, in combat (from v36)
 --
 -- A kit in a Kit Dock box opens and closes in combat where it sits, like a
 -- kit on a screen edge: its open layout is the trial one, and its closed one
@@ -5365,8 +5365,8 @@ local function Nearest(values, targets)
 end
 
 -- What a piece can line up with, along one axis: the screen's middle line,
--- the other pieces being placed, the kit buttons and (v38) the kits' button
--- bars (edges and middles). ex (v38, for a bar or a floating button being
+-- the other pieces being placed, the kit buttons and (v36) the kits' button
+-- bars (edges and middles). ex (v36, for a bar or a floating button being
 -- dragged in edit mode): { kit = , bars = that kit's bars to use, skip = a
 -- bar to leave out }.
 local function Targets(skip, vertical, ex)
@@ -5434,7 +5434,7 @@ local function SmallButton(parent, text, w, fn)
     return b
 end
 
--- The grid size and Snap, along the foot of a bar from x (v38: the placing
+-- The grid size and Snap, along the foot of a bar from x (v36: the placing
 -- bar's and edit mode's, both the reminder panel's settings, so they're the
 -- same everywhere). Returns a function that shows what they're set to now.
 local GRID_SIZES = { 8, 16, 24, 32 }
@@ -5542,7 +5542,7 @@ function C.Place.Update(key, on)
     C.MoveUI()
 end
 
--- (v38) What's on screen while things move. The grid, while anything is
+-- (v36) What's on screen while things move. The grid, while anything is
 -- being placed or a layout edited. One bar at the top: edit mode's while a
 -- layout is being edited, placing or not (its Done ends both), otherwise the
 -- placing bar. With a layout being edited the grid goes under the kits, so
@@ -5627,7 +5627,7 @@ function C.MoveAll(kit)
         end
     end
     C.movingAll = nil
-    -- (v38) The kit's own layout too (its buttons and bars, as Edit layout),
+    -- (v36) The kit's own layout too (its buttons and bars, as Edit layout),
     -- when it has one to edit.
     if kit.cfg.bars and not kit.editing then kit:SetEdit(true, true) end
     if n == 0 and not kit.editing then
@@ -6005,7 +6005,7 @@ function Kit:BarCell()
     return (self.BTN * (self.db.buttonSize or 1) + (tonumber(self.db.barGap) or 4)) * (self.db.scale or 1)
 end
 
--- (v38) A bar's buttons as a box, for lining things up with it: its middle
+-- (v36) A bar's buttons as a box, for lining things up with it: its middle
 -- and half-size, in UIParent units from the screen's centre (the buttons'
 -- own edges, not edit mode's box round them). nil with none showing, or
 -- with the kit hidden.
@@ -6023,7 +6023,7 @@ function Kit:BarExtent(bar)
     return bar.x, bar.y, long / 2, size / 2
 end
 
--- (v38) One button on a bar, across, in UIParent units (a cell without its gap).
+-- (v36) One button on a bar, across, in UIParent units (a cell without its gap).
 function Kit:BarButtonSize()
     return self:BarCell() - (tonumber(self.db.barGap) or 4) * (self.db.scale or 1)
 end
@@ -6793,7 +6793,7 @@ end
 local editDriver = CreateFrame("Frame")
 editDriver:Hide()
 
--- (v38) Where a bar, or a button floating on its own, dragged so its middle
+-- (v36) Where a bar, or a button floating on its own, dragged so its middle
 -- would be at (x, y) goes: snapped the way a placed piece is (the screen's
 -- middle lines, the kit buttons, the other bars, else its left and top
 -- edges to the grid; Shift for free) and kept whole on the screen. hw, hh:
@@ -6887,7 +6887,7 @@ editDriver:SetScript("OnUpdate", function(f)
     local down = IsMouseButtonDown and IsMouseButtonDown("LeftButton")
     if d.kind == "bar" then
         if not down then C.StopEditDrag(false) return end
-        -- (v38: a click on the box doesn't nudge the bar onto the grid)
+        -- (v36: a click on the box doesn't nudge the bar onto the grid)
         if not d.moved and math.abs(mx - d.downX) + math.abs(my - d.downY) < 3 then return end
         d.moved = true
         local _, _, hw, hh = kit:BarExtent(d.bar)
@@ -6924,7 +6924,7 @@ editDriver:SetScript("OnUpdate", function(f)
     -- Show the layout as it would be if it were dropped here. Only a change
     -- of place is a refresh; a button floating on its own just follows.
     local t = kit:BarTarget(d.base, mx, my, d.zbase, d.key)
-    -- (v38) A button floating on its own goes on the grid like a bar; the
+    -- (v36) A button floating on its own goes on the grid like a bar; the
     -- copy under the mouse still follows the mouse.
     local gx, gy
     if t.new then
@@ -6984,11 +6984,11 @@ local function BuildEditBar()
         if kit then kit:ResetLayout() end
     end)
     reset:SetPoint("BOTTOMLEFT", 12, 10)
-    local paintGrid = GridControls(bar, 160) -- (v38: the grid's size and Snap, as when placing)
+    local paintGrid = GridControls(bar, 160) -- (v36: the grid's size and Snap, as when placing)
     local done = SmallButton(bar, Loc["Done"], 70, function() bar:Hide() end)
     done:SetPoint("BOTTOMRIGHT", -12, 10)
 
-    -- (v38) The title and words for what's going on: a layout being edited,
+    -- (v36) The title and words for what's going on: a layout being edited,
     -- and (Move everything, or a piece's Move) things being placed with it.
     function bar.paint()
         local kit = C.editKit
@@ -7027,7 +7027,7 @@ end
 -- Edit mode on or off. On: the kit opens fully (and stays open), its
 -- buttons take drags instead of clicks, and each bar shows its box. Off:
 -- everything works again, and the kit closes if it was closed before.
--- (v38) It goes along with placing (Move everything puts the kit it's
+-- (v36) It goes along with placing (Move everything puts the kit it's
 -- pressed from into it), and its Done ends that too. quiet: no message when
 -- it can't start; handover: off only because another kit's layout is
 -- taking over, so whatever's being placed carries on.
